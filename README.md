@@ -4,7 +4,7 @@
 
 This is a fork of [ananyatimalsina/pbanki](https://github.com/ananyatimalsina/pbanki), which got Anki's real scheduler running on PocketBook. This fork rebuilds the reading and studying experience around the e-ink screen, adds a way to turn book highlights into cards, and puts the codebase on a tested, documented footing.
 
-Developed and tested on a **PocketBook Verse (PB629)**, firmware 6.11. Every screenshot below is rendered at that screen's exact resolution (758 × 1024, 16 shades of grey) by the emulator included in this repo.
+Developed and tested on a **PocketBook Verse (PB629)**, firmware 6.11. Every screenshot below is rendered at that screen's exact resolution (758 × 1024, 16 shades of grey) by the emulator included in this repo, and the KOReader ones by KOReader itself running headless.
 
 <table>
   <tr>
@@ -52,7 +52,19 @@ The original stripped every card down to plain text, so the question and answer 
 
 ### Make cards while you read, in KOReader
 
-Highlight a passage in [KOReader](https://koreader.rocks), tap **Make Anki card**, and write a question and answer. The card waits in an inbox file until pbAnki next opens, then lands in a **KOReader** deck. Each card keeps its **context**: the full highlighted passage, book, author, chapter and page. A **Context** button on the answer side shows it.
+Highlight a passage in [KOReader](https://koreader.rocks) and tap **Create flashcard**. The passage is saved as a normal highlight and a card editor opens. Or keep reading and highlighting, then pick **Flashcards from highlights** in the Tools menu to turn the new highlights into cards one after another, skipping the ones you don't want. Each highlight is offered once; the plugin remembers which ones you've reviewed in the book's own KOReader settings.
+
+With the [AI Assistant](https://github.com/omer-faruq/assistant.koplugin) plugin installed, the editor opens with suggested cards: short questions with short answers, each asking something different about the highlight. The AI sees the book, chapter, the text around the highlight and your note on it. Edit them, drop them, or ask again. AI suggestions can be turned off, for example in flight mode.
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/koreader/01_highlight_menu.png" width="240" alt="KOReader's highlight menu with a Create flashcard button"></td>
+    <td><img src="docs/screenshots/koreader/03_suggested.png" width="240" alt="The card editor with two AI-suggested cards"></td>
+    <td><img src="docs/screenshots/koreader/09_batch_first.png" width="240" alt="Flashcards from highlights: highlight 1 of 3 with suggestions"></td>
+  </tr>
+</table>
+
+Cards wait in an inbox file until pbAnki next opens, then land in a **KOReader** deck. Each card keeps its **context**: the full highlighted passage, book, author, chapter and page. A **Context** button on the answer side shows it.
 
 <table>
   <tr>
@@ -132,7 +144,11 @@ Not ready yet. Firmware 6.x lists apps from `system/config/desktop/view.json`, a
 
 ### KOReader plugin
 
-Copy `koreader/pbanki.koplugin` to `applications/koreader/plugins/` and restart KOReader. Highlight text, then tap **Make Anki card**. Cards are queued in `applications/pbanki/inbox.jsonl` and imported when pbAnki starts or when you return to the deck list. If a line can't be imported, it is kept in `inbox.failed.jsonl` rather than dropped.
+Copy `koreader/pbanki.koplugin` to `applications/koreader/plugins/` and restart KOReader. Highlight text, then tap **Create flashcard**, or open **Tools → pbAnki flashcards → Flashcards from highlights**. The same menu turns AI suggestions on and off, sets how many cards to suggest per highlight (1 to 4), picks the AI model, and can make all of a book's highlights new again. Batch mode can also be put on a gesture.
+
+Cards are queued in `applications/pbanki/inbox.jsonl` and imported when pbAnki starts or when you return to the deck list. If a line can't be imported, it is kept in `inbox.failed.jsonl` rather than dropped.
+
+AI suggestions need the AI Assistant plugin with a version that has the flashcards API (`queryFlashcards`). The AI model menu opens Assistant's own provider and model picker; until you pick one, Assistant's main provider is used. When a suggestion is needed and the reader is offline, Wi-Fi is turned on.
 
 ## Configuration
 
@@ -182,14 +198,16 @@ For a sample collection with a few cards of each kind: `cargo run -p common --ex
 
 `docs/screenshots/render.sh` regenerates every screenshot in this README. The "before" images in `docs/screenshots/before/` were rendered from the original code and are kept as they are.
 
+`dev/koreader/render.sh` regenerates the KOReader screenshots in `docs/screenshots/koreader/`. It runs the official KOReader Linux release headless in Docker at the PocketBook's screen size, with this plugin installed, and plays `dev/koreader/screens.lua`: a list of steps that select text, press buttons and take screenshots. Set `ASSISTANT_DIR` to an AI Assistant checkout with a `configuration.lua` to include real AI suggestions.
+
 ## Project structure
 
 ```
 src/         PocketBook entry point (inkview-rs, keyboard, Wi-Fi)
 common/      App logic: Anki backend, card layout, KOReader inbox, settings
-dev/         Desktop build and the emulator
+dev/         Desktop build, the emulator and the KOReader screenshot runner
 ui/          Slint UI and the bundled JetBrains Mono font
-koreader/    KOReader plugin
+koreader/    KOReader plugin and its specs (lua koreader/spec/cardgen_spec.lua)
 pocketbook/  Device launcher, app icon and icon build script
 docs/        README screenshots and the script that renders them
 ```
