@@ -1,145 +1,210 @@
 # pbAnki
 
-Anki flashcard app for PocketBook e-readers.
+**Anki flashcards on PocketBook e-readers, designed for e-ink, with cards you make while reading in KOReader.**
 
-## What is this?
+This is a fork of [ananyatimalsina/pbanki](https://github.com/ananyatimalsina/pbanki), which got Anki's real scheduler running on PocketBook. This fork rebuilds the reading and studying experience around the e-ink screen, adds a way to turn book highlights into cards, and puts the codebase on a tested, documented footing.
 
-Port of Anki to PocketBook devices using:
-- Anki's official rslib backend for full collection compatibility
-- Slint UI framework with software rendering for e-ink displays
-- inkview-rs bindings for PocketBook SDK integration
+Developed and tested on a **PocketBook Verse (PB629)**, firmware 6.11. Every screenshot below is rendered at that screen's exact resolution (758 × 1024, 16 shades of grey) by the emulator included in this repo.
 
-## Building
+<table>
+  <tr>
+    <th>Before</th>
+    <th>This fork</th>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/before/answer.png" width="300" alt="Original answer screen: question and answer run together and the Easy button is cut off"></td>
+    <td><img src="docs/screenshots/answer.png" width="300" alt="New answer screen: question, divider, answer, and four rating buttons that fit"></td>
+  </tr>
+</table>
 
-Requires Rust (the version is pinned in `rust-toolchain.toml`) and `protoc`
-(`brew install protobuf` on macOS).
+## What's different in this fork
 
-The repo is a Cargo workspace:
-- `common/`: shared app logic, Anki backend, and Slint UI
-- `dev/`: desktop build for development
-- root crate: the PocketBook app
+### Text made for a 6-inch e-ink screen
 
-### Desktop (for development)
+The original UI ran at three times the intended size on the device, so about four short lines fit on a card and long cards were split across mostly empty pages. Text is now set in [JetBrains Mono](https://www.jetbrains.com/lp/mono/) at 20 px (adjustable from 12 to 40 px in Settings). Because every character has the same width, pbAnki works out exactly how much text fits, and pages are full: 59 × 24 characters at the default size.
 
-```bash
-cd dev
-cargo run
-```
+<table>
+  <tr>
+    <th>Before</th>
+    <th>This fork</th>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/before/question.png" width="300" alt="Original question screen"></td>
+    <td><img src="docs/screenshots/question.png" width="300" alt="New question screen"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/before/long_card.png" width="300" alt="Original: one sentence split over two mostly empty pages"></td>
+    <td><img src="docs/screenshots/long_card.png" width="300" alt="New: a long answer fills a single page"></td>
+  </tr>
+</table>
 
-Place your Anki collection at `./dev/pbanki/collection/`
+### Cards that look like Anki cards
 
-### Checks
+The original stripped every card down to plain text, so the question and answer ran together ("What is the capital of France? Paris") and line breaks disappeared ("novelPride and Prejudice"). pbAnki now lays out the card's HTML: bold, italic, line breaks, paragraphs, lists, and the divider between front and back. Cloze deletions highlight the active blank. Cards are centred vertically, and the answer opens on the page where the back begins.
 
-```bash
-cargo fmt --all --check
-cargo clippy --all-targets -- -D warnings
-cargo test
-```
+<table>
+  <tr>
+    <td><img src="docs/screenshots/formatting_answer.png" width="240" alt="Bold, italic and a line break preserved"></td>
+    <td><img src="docs/screenshots/cloze_question.png" width="240" alt="Cloze card with the active blank in bold"></td>
+    <td><img src="docs/screenshots/cloze_answer.png" width="240" alt="Cloze answer with the revealed word in bold"></td>
+  </tr>
+</table>
 
-### PocketBook
+### Make cards while you read, in KOReader
 
-```bash
-make          # debug build
-make release  # release build
-```
+Highlight a passage in [KOReader](https://koreader.rocks), tap **Make Anki card**, and write a question and answer. The card waits in an inbox file until pbAnki next opens, then lands in a **KOReader** deck. Each card keeps its **context**: the full highlighted passage, book, author, chapter and page. A **Context** button on the answer side shows it.
 
-Requires `cargo-zigbuild` (`cargo install --locked cargo-zigbuild`), `zig`,
-and the `armv7-unknown-linux-gnueabi` Rust target.
+<table>
+  <tr>
+    <td><img src="docs/screenshots/koreader_question.png" width="240" alt="A question written in KOReader"></td>
+    <td><img src="docs/screenshots/koreader_answer.png" width="240" alt="The answer, with a Context button"></td>
+    <td><img src="docs/screenshots/context.png" width="240" alt="The context screen: the quote, then book, author, chapter and page"></td>
+  </tr>
+</table>
 
-## Installation
+### A deck list you can read at a glance
 
-With the device connected over USB (it mounts as `PB629` or similar):
+Counts are labelled, due cards are bold, zeros are grey, and every row is a full-width tap target. Collapsing a deck hides all of its sub-decks and is saved in the collection, as in desktop Anki.
 
-1. Copy `target/armv7-unknown-linux-gnueabi/release/pbanki` to `applications/pbanki/pbanki`
-2. Copy the launcher `pocketbook/pbanki.app` to `applications/pbanki.app`
-3. Copy your Anki collection to `applications/pbanki/collection/collection.anki2`
-4. (Optional) Create configuration file at: `applications/pbanki/config.toml`
-5. Launch from Applications menu
+<table>
+  <tr>
+    <th>Before</th>
+    <th>This fork</th>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/before/decks_expanded.png" width="300" alt="Original deck list"></td>
+    <td><img src="docs/screenshots/decks_expanded.png" width="300" alt="New deck list with labelled columns"></td>
+  </tr>
+</table>
 
-The launcher writes the app's output to `applications/pbanki/log.txt`.
+### Settings on the device
 
-For a test collection, run `cargo run -p common --example sample_collection -- <dir>`.
+Text size has a live preview. The AnkiWeb login is typed with the PocketBook's own keyboard and must pass **Validate** (a real login to AnkiWeb) before it can be saved; a wrong password is caught on the spot instead of at the first sync.
 
-## Making cards in KOReader
+<table>
+  <tr>
+    <td><img src="docs/screenshots/settings.png" width="240" alt="Settings screen"></td>
+    <td><img src="docs/screenshots/login_failed.png" width="240" alt="Validate failed: AnkiWeb rejected the username or password"></td>
+    <td><img src="docs/screenshots/login_passed.png" width="240" alt="Validate passed: Save is enabled"></td>
+  </tr>
+</table>
 
-Copy `koreader/pbanki.koplugin` to `applications/koreader/plugins/` and restart KOReader.
-Highlight text, then tap **Make Anki card**. Saved cards are queued in
-`applications/pbanki/inbox.jsonl`, and pbAnki imports them into the **KOReader**
-deck when it starts or when you return to the deck list.
+### Studying
+
+- Tap anywhere on the question to reveal the answer.
+- Turn pages by tapping the left or right third of the card, swiping, or with the page buttons.
+- The physical buttons reveal the answer and rate the card.
+- Buttons are outlined and invert while pressed, which reads clearly on e-ink.
+- When a deck is done, a "Congratulations!" screen appears with a way back to the deck list.
+- Type-in cards are skipped (buried until tomorrow), since typing on e-ink is no fun.
+- If the collection can't be opened, pbAnki says why instead of quitting.
+
+### Under the hood
+
+- **One Cargo workspace** with a single lock file, and the Anki dependency pinned to an exact commit instead of tracking its `main` branch.
+- **48 tests** (from none), covering card layout, config, the KOReader inbox and the study flow against real Anki collections.
+- **CI** runs formatting, Clippy, tests and the PocketBook cross-build on every push.
+- **Bug fixes** from the original:
+  - Sync could never log in with the default config (an empty token counted as a real one).
+  - Settings were always saved to the device path, even in the desktop build.
+  - The sync status got stuck after a failure.
+  - A page size of 0 crashed the app.
+- **Firmware 6.11 support:** the launcher works around the firmware refusing to load `libinkview.so`.
+- **No translations:** the UI is plain English, which keeps it small.
+
+## Install on a PocketBook
+
+Connect the e-reader over USB; it mounts as a drive (for example `PB629`).
+
+1. Build the app (see [Building](#building)) or download a release.
+2. Copy `target/armv7-unknown-linux-gnueabi/release/pbanki` to `applications/pbanki/pbanki`.
+3. Copy the launcher `pocketbook/pbanki.app` to `applications/pbanki.app`.
+4. Copy your Anki collection to `applications/pbanki/collection/collection.anki2`.
+5. Open **pbAnki** from the Applications menu.
+
+The launcher appends the app's output to `applications/pbanki/log.txt`, which is the first place to look if something goes wrong.
+
+### Menu icon
+
+Not ready yet. Firmware 6.x lists apps from `system/config/desktop/view.json`, and the icon files are in `pocketbook/icons/`, but the entries tried so far stopped apps from launching. Leave `view.json` alone for now; pbAnki shows up in the Applications menu without an icon.
+
+### KOReader plugin
+
+Copy `koreader/pbanki.koplugin` to `applications/koreader/plugins/` and restart KOReader. Highlight text, then tap **Make Anki card**. Cards are queued in `applications/pbanki/inbox.jsonl` and imported when pbAnki starts or when you return to the deck list. If a line can't be imported, it is kept in `inbox.failed.jsonl` rather than dropped.
 
 ## Configuration
 
-pbAnki uses a TOML configuration file. On first launch, a default config will be created at `/mnt/ext1/applications/pbanki/config.toml` (or `./pbanki/config.toml` for desktop builds).
-
-### Configuration Options
+pbAnki creates `applications/pbanki/config.toml` on first launch (`./pbanki/config.toml` in the desktop build). The Settings screen edits it for you.
 
 ```toml
 [general]
-# Collection path (relative to app directory or absolute)
 collection_path = "/mnt/ext1/applications/pbanki/collection"
 
 [display]
-# Card text size in screen pixels
+# Card text size in screen pixels, 12 to 40
 font_size = 20
 
 [ankiweb]
-# AnkiWeb synchronization settings
-# Leave empty to disable sync
-
-# AnkiWeb username (email)
 username = ""
-
-# Password (plain text - will be encrypted in future versions)
-# WARNING: Do not share this file if password is filled
+# Stored in plain text: don't share this file once it's filled in
 password = ""
-
-# Session token (populated after successful login)
-# This avoids storing password long-term
+# Session token, saved when Validate passes
 token = ""
-
-# Sync automatically on app start
 auto_sync = false
-
-# Sync automatically after session ends
 sync_on_exit = false
 ```
 
-## Project Structure
+## Building
 
+Requires Rust (the version is pinned in `rust-toolchain.toml`) and `protoc` (`brew install protobuf` on macOS).
+
+```bash
+# Desktop build, for development
+cd dev && cargo run          # uses ./pbanki/collection/
+
+# PocketBook build
+make release                 # needs zig, cargo-zigbuild and the armv7-unknown-linux-gnueabi target
+
+# Checks
+cargo fmt --all --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+make clippy-device           # lints the PocketBook-only code
 ```
-src/        # PocketBook build (uses inkview-rs)
-common/     # Shared app logic: Anki backend, card layout, KOReader inbox
-dev/        # Desktop build and the PocketBook screen emulator
-ui/         # Slint UI and the bundled JetBrains Mono font
-koreader/   # KOReader plugin for making cards from highlights
-pocketbook/ # Device launcher script
-```
+
+For a sample collection with a few cards of each kind: `cargo run -p common --example sample_collection -- <dir>`.
 
 ### Emulator
 
-`cargo run -p dev --bin emulator -- <app dir> <output dir> <steps...>` renders the app
-as it appears on a PocketBook Verse (758×1024, 3× scale, 16 grays) and saves PNG
-screenshots. Steps are `shot:<name>`, `tap:<x>,<y>`, `swipe:<x>,<y1>,<y2>` and
-`key:<left|right|up|down|pageup|pagedown|menu|return>`.
+`cargo run -p dev --bin emulator -- <app dir> <output dir> <steps...>` runs the real UI headlessly as it appears on a PocketBook Verse and saves PNG screenshots. Steps are `shot:<name>`, `tap:<x>,<y>`, `swipe:<x>,<y1>,<y2>`, `key:<left|right|up|down|pageup|pagedown|menu|return>`, `type:<text>` (what the next keyboard prompt returns) and `wait:<ms>`.
 
-## Current Features
+`docs/screenshots/render.sh` regenerates every screenshot in this README. The "before" images in `docs/screenshots/before/` were rendered from the original code and are kept as they are.
 
-- Deck list with new/learn/due counts; collapse state is saved like desktop Anki
-- Cards laid out in JetBrains Mono, paged to fit the screen exactly
-- Bold, italic, line breaks, lists, cloze highlights and the front/back divider
-- Type-in cards show the expected answer
-- Page turns by tapping the left/right third, swiping, or the page buttons
-- Again/Hard/Good/Easy with intervals
-- Cards made in KOReader, with a Context screen showing the quote and its source
-- Configurable collection path
+## Project structure
 
-## TODOs
+```
+src/         PocketBook entry point (inkview-rs, keyboard, Wi-Fi)
+common/      App logic: Anki backend, card layout, KOReader inbox, settings
+dev/         Desktop build and the emulator
+ui/          Slint UI and the bundled JetBrains Mono font
+koreader/    KOReader plugin
+pocketbook/  Device launcher, app icon and icon build script
+docs/        README screenshots and the script that renders them
+```
 
-- [ ] **AnkiWeb Sync** - Implement synchronization with AnkiWeb
-- [ ] **MathJax Rendering** - Add support for LaTeX/MathJax formulas in cards
-- [ ] **Image Support** - Display images embedded in cards from media folder
-- [ ] **UI Polishing** - Improve e-ink optimized interface and user experience
+## Roadmap
 
-## License
+- [ ] AnkiWeb sync (login and validation work; syncing the collection is next)
+- [ ] Open a card's source passage in KOReader
+- [ ] Close the collection cleanly when the firmware closes the app
+- [ ] Applications menu icon
+- [ ] Images from the collection's media folder
+- [ ] MathJax / LaTeX
 
-See [LICENSE](LICENSE)
+## Credits and license
+
+- Original pbAnki by [Ananya Timalsina](https://github.com/ananyatimalsina/pbanki).
+- Built on [Anki](https://apps.ankiweb.net)'s Rust backend, [Slint](https://slint.dev) and [inkview-rs](https://github.com/ananyatimalsina/inkview-rs).
+- [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) is bundled under the SIL Open Font License (`ui/fonts/OFL.txt`).
+
+pbAnki is released under the [MIT License](LICENSE).
