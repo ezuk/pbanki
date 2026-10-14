@@ -91,6 +91,7 @@ export component SettingsScreen {
     in-out property <string> password;
     // Card text size in device pixels
     in-out property <int> font_size;
+    in-out property <bool> sync_on_startup;
     in property <LoginState> login_state;
     in property <string> login_message;
     property <bool> can_save: login_state == LoginState.unchanged || login_state == LoginState.cleared || login_state == LoginState.passed;
@@ -176,6 +177,28 @@ export component SettingsScreen {
                     enabled: username != "" && password != "" && login_state != LoginState.checking;
                     clicked => {
                         validate();
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                height: Constants.nav_height;
+                spacing: Constants.spacing;
+
+                Text {
+                    horizontal-stretch: 1;
+                    text: "Sync on startup";
+                    font-family: Constants.font_family;
+                    font-size: Constants.font_size_small;
+                    vertical-alignment: center;
+                }
+
+                InkButton {
+                    width: 30%;
+                    text: sync_on_startup ? "On" : "Off";
+                    font-size: Constants.font_size_small;
+                    clicked => {
+                        sync_on_startup = !sync_on_startup;
                     }
                 }
             }

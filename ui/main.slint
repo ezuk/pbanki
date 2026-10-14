@@ -32,6 +32,18 @@ export component MainWindow inherits Window {
     in-out property <int> settings_font_size;
     in property <LoginState> settings_login_state;
     in property <string> settings_login_message;
+    in-out property <bool> settings_sync_on_startup;
+
+    // AnkiWeb sync status on the deck list
+    in-out property <bool> syncing;
+    in property <string> sync_message;
+    in property <bool> sync_failed;
+    // AnkiWeb asks which collection to keep
+    in property <bool> sync_choice;
+    in property <bool> sync_upload_ok;
+    in property <bool> sync_download_ok;
+    // "download" or "upload" while asking to confirm
+    in-out property <string> sync_confirm;
 
     // Text grid available to a card page; must match LearnScreen's layout
     property <length> content-width: root.width - 2 * Constants.padding;
@@ -50,6 +62,9 @@ export component MainWindow inherits Window {
     callback credentials_edited();
     callback validate_login();
     callback save_settings();
+    callback sync();
+    callback full_sync(upload: bool);
+    callback dismiss_sync();
 
     VerticalLayout {
         padding: Constants.padding;
@@ -76,6 +91,7 @@ export component MainWindow inherits Window {
             username <=> settings_username;
             password <=> settings_password;
             font_size <=> settings_font_size;
+            sync_on_startup <=> settings_sync_on_startup;
             login_state: settings_login_state;
             login_message: settings_login_message;
             request_text(field) => {
@@ -100,6 +116,22 @@ export component MainWindow inherits Window {
             learn_total: deck_tree.learn_total;
             due_total: deck_tree.due_total;
             deck_nodes: deck_tree.deck_nodes;
+            syncing: syncing;
+            sync_message: sync_message;
+            sync_failed: sync_failed;
+            sync_choice: sync_choice;
+            sync_upload_ok: sync_upload_ok;
+            sync_download_ok: sync_download_ok;
+            sync_confirm <=> sync_confirm;
+            sync_clicked => {
+                sync();
+            }
+            full_sync(upload) => {
+                full_sync(upload);
+            }
+            dismiss_sync => {
+                dismiss_sync();
+            }
             deck_clicked(deck) => {
                 deck_clicked(deck, columns, rows);
                 learning = true;

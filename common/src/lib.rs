@@ -2,10 +2,12 @@ slint::include_modules!();
 
 pub mod api;
 pub mod background;
+pub mod collection;
 pub mod config;
 pub mod inbox;
 pub mod render;
 pub mod sync;
+pub mod sync_ui;
 pub mod utils;
 
 pub use api::{
@@ -13,4 +15,4 @@ pub use api::{
     setup_ui, undo_rating, update_deck_tree,
 };
 pub use config::Config;
-pub use sync::{SyncManager, SyncResult, SyncStatus};
+pub use sync::{SyncFn, SyncLogin, SyncMode, SyncOutcome, SyncReport, SyncStep};

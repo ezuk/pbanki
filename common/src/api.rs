@@ -5,19 +5,15 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
-use anki::collection::{Collection, CollectionBuilder};
 use anki::error::{OrNotFound, Result as AnkiResult};
 use anki::notetype::{Notetype, NotetypeKind};
 use anki::ops::Op;
-use anki::prelude::I18n;
 use anki::scheduler::answering::{CardAnswer, Rating};
 use anki::scheduler::states::SchedulingStates;
 use anki::timestamp::{TimestampMillis, TimestampSecs};
 
-use crate::{
-    CardNode, Config, Constants, DeckNode, DeckTree, LoginState, MainWindow, SyncManager,
-    SyncResult, SyncStatus,
-};
+use crate::collection::{SharedCollection, open_collection};
+use crate::{CardNode, Config, Constants, DeckNode, DeckTree, LoginState, MainWindow};
 
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
@@ -25,11 +21,10 @@ use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 pub const DEVICE_SCALE_FACTOR: f32 = 3.0;
 
 pub struct LearnSession {
-    pub collection: Rc<RefCell<Collection>>,
+    pub collection: SharedCollection,
     pub current_card: RefCell<Option<i64>>,
     pub states: RefCell<Option<SchedulingStates>>,
     pub start_time: RefCell<Option<Instant>>,
-    pub sync_manager: Rc<SyncManager>,
     /// Suspensions made from the learn screen that undo may reverse
     pub user_suspensions: RefCell<u32>,
     /// Folder holding the collection directory and the KOReader inbox.
@@ -51,9 +46,7 @@ pub fn init_session(config: &Config) -> Result<Rc<LearnSession>, String> {
         Ok(meta) => eprintln!("Opening {} ({} bytes)", col_file.display(), meta.len()),
         Err(_) => eprintln!("Creating {}", col_file.display()),
     }
-    let mut col = CollectionBuilder::new(&col_file)
-        .set_tr(I18n::new(&["en"]))
-        .build()
+    let mut col = open_collection(&col_file)
         .map_err(|e| format!("Cannot open collection at {}: {e}", col_file.display()))?;
 
     match col.search_notes_unordered("") {
@@ -71,11 +64,10 @@ pub fn init_session(config: &Config) -> Result<Rc<LearnSession>, String> {
     }
 
     Ok(Rc::new(LearnSession {
-        collection: Rc::new(RefCell::new(col)),
+        collection: SharedCollection::new(col, col_file),
         current_card: RefCell::new(None),
         states: RefCell::new(None),
         start_time: RefCell::new(None),
-        sync_manager: Rc::new(SyncManager::new()),
         user_suspensions: RefCell::new(0),
         app_dir: collection_dir
             .parent()
@@ -105,6 +97,7 @@ pub struct PlatformHooks {
     /// Turns on networking before going online
     pub connect_network: Option<Rc<dyn Fn() -> Result<(), String>>>,
     pub login: LoginFn,
+    pub sync: crate::SyncFn,
 }
 
 impl Default for PlatformHooks {
@@ -113,6 +106,7 @@ impl Default for PlatformHooks {
             text_prompt: None,
             connect_network: None,
             login: Arc::new(crate::sync::login_blocking),
+            sync: Arc::new(crate::sync::sync_blocking),
         }
     }
 }
@@ -125,7 +119,8 @@ pub fn setup_ui(ui: &MainWindow, config: &Config, hooks: PlatformHooks) {
     constants.set_max_font_size(*crate::config::FONT_SIZES.end() as i32);
     constants.set_font_size_px(config.display.font_size() as i32);
 
-    setup_settings(ui, Rc::new(RefCell::new(config.clone())), hooks);
+    let shared_config = Rc::new(RefCell::new(config.clone()));
+    setup_settings(ui, shared_config.clone(), hooks.clone());
 
     let session = match init_session(config) {
         Ok(session) => session,
@@ -135,6 +130,8 @@ pub fn setup_ui(ui: &MainWindow, config: &Config, hooks: PlatformHooks) {
             return;
         }
     };
+
+    crate::sync_ui::setup_sync(ui, &session, &shared_config, &hooks);
 
     let session_for_deck_tree = session.clone();
     let ui_weak = ui.as_weak();
@@ -198,7 +195,7 @@ pub fn setup_ui(ui: &MainWindow, config: &Config, hooks: PlatformHooks) {
 
 /// Imports cards queued by the KOReader plugin.
 pub fn import_inbox(session: &LearnSession) {
-    let mut col = session.collection.borrow_mut();
+    let mut col = session.collection.lock();
     match crate::inbox::import_inbox(&mut col, &session.app_dir) {
         Ok(summary) if summary.added + summary.failed > 0 => {
             eprintln!(
@@ -288,6 +285,7 @@ fn setup_settings(ui: &MainWindow, config: Rc<RefCell<Config>>, hooks: PlatformH
         ui.set_settings_username(config.ankiweb.username.as_str().into());
         ui.set_settings_password(config.ankiweb.password.as_str().into());
         ui.set_settings_font_size(config.display.font_size() as i32);
+        ui.set_settings_sync_on_startup(config.ankiweb.auto_sync);
         drop(config);
         refresh(&ui);
     });
@@ -412,6 +410,7 @@ fn setup_settings(ui: &MainWindow, config: Rc<RefCell<Config>>, hooks: PlatformH
             LoginState::Edited | LoginState::Checking | LoginState::Failed => return,
         }
         config.set_font_size(ui.get_settings_font_size().max(0) as u32);
+        config.ankiweb.auto_sync = ui.get_settings_sync_on_startup();
         ui.global::<Constants>()
             .set_font_size_px(config.display.font_size as i32);
         if let Err(e) = config.save() {
@@ -425,7 +424,7 @@ pub fn update_deck_tree(session: &LearnSession) -> DeckTree {
     import_inbox(session);
     match session
         .collection
-        .borrow_mut()
+        .lock()
         .deck_tree(Some(TimestampSecs::now()))
     {
         Ok(deck_tree) => DeckTree {
@@ -443,7 +442,7 @@ pub fn update_deck_tree(session: &LearnSession) -> DeckTree {
 
 /// Collapses or expands a deck in the study screen's deck list.
 pub fn toggle_deck(session: &LearnSession, deck: &DeckNode) {
-    if let Err(e) = session.collection.borrow_mut().set_deck_collapsed(
+    if let Err(e) = session.collection.lock().set_deck_collapsed(
         anki::decks::DeckId(deck.id),
         !deck.collapsed,
         anki_proto::decks::set_deck_collapsed_request::Scope::Reviewer,
@@ -514,7 +513,7 @@ fn load_next_card(
     deck: DeckNode,
     grid: Grid,
 ) -> AnkiResult<Option<CardNode>> {
-    let mut col = session.collection.borrow_mut();
+    let mut col = session.collection.lock();
     col.set_current_deck(anki::decks::DeckId(deck.id))?;
     // Bury type-in cards until one pbAnki can show is at the front
     let (queued_cards, card, note, notetype) = loop {
@@ -592,7 +591,7 @@ fn load_next_card(
 /// if there is nothing to undo.
 pub fn undo_rating(session: &LearnSession, deck: DeckNode, grid: Grid) -> Option<CardNode> {
     let undone = {
-        let mut col = session.collection.borrow_mut();
+        let mut col = session.collection.lock();
         // Type-in cards buried after the rating come off the undo stack first
         while col.undo_status().undo == Some(Op::Bury) {
             if col.undo().is_err() {
@@ -624,7 +623,7 @@ pub fn undo_rating(session: &LearnSession, deck: DeckNode, grid: Grid) -> Option
 /// Suspends the current card and returns the next one.
 pub fn suspend_card(session: &LearnSession, deck: DeckNode, grid: Grid) -> CardNode {
     if let Some(card_id) = session.current_card.borrow_mut().take() {
-        let result = session.collection.borrow_mut().bury_or_suspend_cards(
+        let result = session.collection.lock().bury_or_suspend_cards(
             &[anki::card::CardId(card_id)],
             anki_proto::scheduler::bury_or_suspend_cards_request::Mode::Suspend,
         );
@@ -670,63 +669,13 @@ pub fn rate_card(session: &LearnSession, rating: i32, deck: DeckNode, grid: Grid
         from_queue: true,
     };
 
-    if let Err(e) = session.collection.borrow_mut().answer_card(&mut answer) {
+    if let Err(e) = session.collection.lock().answer_card(&mut answer) {
         eprintln!("Failed to answer card {card_id}: {e}");
     }
     *session.current_card.borrow_mut() = None;
     *session.states.borrow_mut() = None;
 
     next_card(session, deck, grid)
-}
-
-#[expect(
-    clippy::await_holding_refcell_ref,
-    reason = "block_on drives the future on this thread"
-)]
-pub fn sync_ankiweb(session: &LearnSession, config: &Config) -> SyncResult {
-    let failure = |message: String| SyncResult {
-        success: false,
-        message,
-        server_message: None,
-    };
-
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(e) => return failure(format!("Cannot start sync runtime: {e}")),
-    };
-
-    let ankiweb_config = &config.ankiweb;
-
-    let hkey = match ankiweb_config.token() {
-        Some(token) => token.to_owned(),
-        None => {
-            let login = session
-                .sync_manager
-                .login(&ankiweb_config.username, &ankiweb_config.password);
-            match rt.block_on(login) {
-                Ok(token) => {
-                    let mut cfg = config.clone();
-                    cfg.ankiweb.token = Some(token.clone());
-                    if let Err(e) = cfg.save() {
-                        eprintln!("Failed to save sync token: {e}");
-                    }
-                    token
-                }
-                Err(e) => return failure(format!("Login failed: {e}")),
-            }
-        }
-    };
-
-    let result = rt.block_on(async {
-        let mut col = session.collection.borrow_mut();
-        session.sync_manager.sync_collection(&mut col, &hkey).await
-    });
-
-    result.unwrap_or_else(|e| failure(format!("Sync failed: {e}")))
-}
-
-pub fn get_sync_status(session: &LearnSession) -> SyncStatus {
-    session.sync_manager.get_status()
 }
 
 #[cfg(test)]
@@ -742,7 +691,7 @@ mod tests {
     }
 
     fn add_basic_note(session: &LearnSession, front: &str, back: &str) {
-        let mut col = session.collection.borrow_mut();
+        let mut col = session.collection.lock();
         let notetype = col.get_notetype_by_name("Basic").unwrap().unwrap();
         let mut note = notetype.new_note();
         note.set_field(0, front).unwrap();
@@ -778,7 +727,7 @@ mod tests {
     }
 
     fn add_note(session: &LearnSession, notetype: &str, fields: &[&str]) {
-        let mut col = session.collection.borrow_mut();
+        let mut col = session.collection.lock();
         let notetype = col.get_notetype_by_name(notetype).unwrap().unwrap();
         let mut note = notetype.new_note();
         for (i, field) in fields.iter().enumerate() {
@@ -935,7 +884,7 @@ mod tests {
         let card = next_card(&session, default_deck(), GRID);
         session
             .collection
-            .borrow_mut()
+            .lock()
             .bury_or_suspend_cards(
                 &[anki::card::CardId(card.id)],
                 anki_proto::scheduler::bury_or_suspend_cards_request::Mode::Suspend,
@@ -1001,7 +950,7 @@ mod tests {
         let session = session_in(dir.path());
         session
             .collection
-            .borrow_mut()
+            .lock()
             .get_or_create_normal_deck("Parent::Child")
             .unwrap();
 
@@ -1031,7 +980,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let session = session_in(dir.path());
         {
-            let mut col = session.collection.borrow_mut();
+            let mut col = session.collection.lock();
             let mut notetype = (*col.get_notetype_by_name("Basic").unwrap().unwrap()).clone();
             notetype.id = Default::default();
             notetype.name = "Image Occlusion Enhanced".into();

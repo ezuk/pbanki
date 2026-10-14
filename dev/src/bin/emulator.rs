@@ -2,7 +2,8 @@
 //!
 //! Usage: cargo run -p dev --bin emulator -- <app dir> <output dir> <steps...>
 //!
-//! `<app dir>` holds `collection/collection.anki2` (and optionally `inbox.jsonl`);
+//! `<app dir>` holds `collection/collection.anki2` (and optionally `inbox.jsonl`
+//! and `config.toml`);
 //! it is copied to a temporary directory so runs are repeatable.
 //!
 //! Steps:
@@ -63,9 +64,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     window.set_size(PhysicalSize::new(WIDTH, HEIGHT));
 
-    let mut config = Config::default();
+    let config_path = work_dir.join("config.toml");
+    let mut config = if config_path.exists() {
+        Config::load_or_create(&config_path).map_err(|e| e.to_string())?
+    } else {
+        Config::default()
+    };
     config.general.collection_path = work_dir.join("collection").to_string_lossy().into();
-    config.path = Some(work_dir.join("config.toml"));
+    config.path = Some(config_path);
 
     // Stands in for the PocketBook keyboard
     let typed: Rc<RefCell<VecDeque<String>>> = Rc::default();
@@ -86,6 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok("emulator-token".into())
             }
         }),
+        sync: std::sync::Arc::new(fake_sync),
     };
     setup_ui(&ui, &config, hooks);
     ui.show()?;
@@ -226,4 +233,45 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Stands in for AnkiWeb sync. `PBANKI_EMULATOR_SYNC` picks the result of a
+/// normal sync: `ok` (default), `full` (collections can't be merged) or `fail`.
+fn fake_sync(
+    _col: &common::collection::SharedCollection,
+    _login: &common::SyncLogin,
+    mode: common::SyncMode,
+    progress: &(dyn Fn(common::SyncStep) + Sync),
+) -> common::SyncReport {
+    use common::{SyncMode, SyncOutcome, SyncReport, SyncStep};
+    let pause = || std::thread::sleep(Duration::from_millis(1200));
+    let outcome = match mode {
+        SyncMode::Normal => {
+            progress(SyncStep::Syncing);
+            pause();
+            match std::env::var("PBANKI_EMULATOR_SYNC").as_deref() {
+                Ok("full") => SyncOutcome::FullSyncNeeded {
+                    upload_ok: true,
+                    download_ok: true,
+                },
+                Ok("fail") => SyncOutcome::Failed(
+                    "Couldn't reach AnkiWeb. Check the Wi-Fi connection.".into(),
+                ),
+                _ => SyncOutcome::Synced,
+            }
+        }
+        SyncMode::Download => {
+            progress(SyncStep::BackingUp);
+            pause();
+            progress(SyncStep::Downloading);
+            pause();
+            SyncOutcome::Downloaded
+        }
+        SyncMode::Upload => {
+            progress(SyncStep::Uploading);
+            pause();
+            SyncOutcome::Uploaded
+        }
+    };
+    SyncReport::new(outcome)
 }

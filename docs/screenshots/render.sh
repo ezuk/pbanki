@@ -44,6 +44,46 @@ emulate tap:$settings shot:settings \
     tap:$validate wait:300 shot:login_failed \
     type:correct-password tap:$password tap:$validate wait:300 shot:login_passed
 
+# AnkiWeb sync, against the emulator's stand-in for AnkiWeb
+sync=462,50
+toggle=626,388
+save=564,944
+keep_ankiweb=194,256
+replace=550,256
+login="tap:$settings type:reader@example.com tap:$username type:correct-password tap:$password tap:$validate wait:300"
+fresh() {
+    rm -rf "$tmp/sync"
+    mkdir -p "$tmp/sync"
+    cp -R "$tmp/app/collection" "$tmp/sync/"
+}
+fresh
+target/debug/emulator "$tmp/sync" "$out" tap:$sync wait:100 shot:sync_logged_out >/dev/null
+# shellcheck disable=SC2086
+target/debug/emulator "$tmp/sync" "$out" $login tap:$toggle shot:settings_sync tap:$save \
+    tap:$sync wait:200 shot:sync_running wait:1500 shot:sync_done >/dev/null
+# Sync on startup runs as the app opens
+cat > "$tmp/sync/config.toml" <<'TOML'
+[general]
+collection_path = ""
+[display]
+font_size = 20
+[ankiweb]
+username = "reader@example.com"
+password = "correct-password"
+token = "emulator-token"
+auto_sync = true
+TOML
+target/debug/emulator "$tmp/sync" "$out" wait:600 shot:sync_startup >/dev/null
+fresh
+# shellcheck disable=SC2086
+PBANKI_EMULATOR_SYNC=full target/debug/emulator "$tmp/sync" "$out" $login tap:$save \
+    tap:$sync wait:1500 shot:sync_full tap:$keep_ankiweb shot:sync_confirm \
+    tap:$replace wait:200 shot:sync_downloading wait:3000 shot:sync_downloaded >/dev/null
+fresh
+# shellcheck disable=SC2086
+PBANKI_EMULATOR_SYNC=fail target/debug/emulator "$tmp/sync" "$out" $login tap:$save \
+    tap:$sync wait:1500 shot:sync_failed >/dev/null
+
 # A file where the collection folder should be
 mkdir "$tmp/broken"
 touch "$tmp/broken/collection"

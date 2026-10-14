@@ -43,6 +43,10 @@ pub struct AnkiWebConfig {
     pub password: String,
     #[serde(default)]
     pub token: Option<String>,
+    /// Sync server AnkiWeb assigned to the account
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    /// Sync when the app starts
     #[serde(default)]
     pub auto_sync: bool,
     #[serde(default)]
@@ -60,6 +64,7 @@ impl Default for Config {
                 username: String::new(),
                 password: String::new(),
                 token: None,
+                endpoint: None,
                 auto_sync: false,
                 sync_on_exit: false,
             },
@@ -79,6 +84,19 @@ impl AnkiWebConfig {
     /// The saved session token, if one is set.
     pub fn token(&self) -> Option<&str> {
         self.token.as_deref().filter(|t| !t.is_empty())
+    }
+
+    /// The saved login, or `None` when sync is off.
+    pub fn sync_login(&self) -> Option<crate::sync::SyncLogin> {
+        if self.username.is_empty() || (self.password.is_empty() && self.token().is_none()) {
+            return None;
+        }
+        Some(crate::sync::SyncLogin {
+            username: self.username.clone(),
+            password: self.password.clone(),
+            token: self.token().map(str::to_owned),
+            endpoint: self.endpoint.clone(),
+        })
     }
 }
 
@@ -135,6 +153,7 @@ impl Config {
         self.ankiweb.username = username.trim().to_owned();
         self.ankiweb.password = password.to_owned();
         self.ankiweb.token = token;
+        self.ankiweb.endpoint = None;
     }
 
     /// Sets the card text size, limited to [`FONT_SIZES`].

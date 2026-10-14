@@ -1,202 +1,257 @@
-use anki::collection::Collection;
+//! AnkiWeb login and collection sync.
+
+use std::sync::Arc;
+
 use anki::error::{AnkiError, SyncErrorKind};
-use anki::sync::collection::normal::SyncOutput;
+use anki::sync::collection::normal::SyncActionRequired;
 use anki::sync::login::{SyncAuth, sync_login};
-use anki_proto::sync::sync_status_response;
-use std::sync::{Arc, Mutex};
 
-#[derive(Debug, Clone)]
-pub enum SyncStatus {
-    Idle,
-    Authenticating,
-    CheckingStatus,
-    SyncingCollection {
-        progress: String,
-    },
-    SyncingMedia {
-        checked: String,
-        added: String,
-        removed: String,
-    },
-    Complete {
-        message: String,
-    },
-    Error {
-        message: String,
-    },
+use crate::collection::SharedCollection;
+
+/// Saved AnkiWeb login.
+#[derive(Debug, Clone, Default)]
+pub struct SyncLogin {
+    pub username: String,
+    pub password: String,
+    pub token: Option<String>,
+    /// Sync server AnkiWeb assigned to this account
+    pub endpoint: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-pub struct SyncResult {
-    pub success: bool,
-    pub message: String,
-    pub server_message: Option<String>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncMode {
+    /// Merge changes both ways
+    Normal,
+    /// Replace this collection with AnkiWeb's
+    Download,
+    /// Replace AnkiWeb's collection with this one
+    Upload,
 }
 
-pub struct SyncManager {
-    http_client: reqwest::Client,
-    sync_status: Arc<Mutex<SyncStatus>>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncStep {
+    LoggingIn,
+    Syncing,
+    BackingUp,
+    Downloading,
+    Uploading,
 }
 
-impl SyncManager {
-    pub fn new() -> Self {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SyncOutcome {
+    Synced,
+    Downloaded,
+    Uploaded,
+    /// The two collections can't be merged; one has to replace the other
+    FullSyncNeeded {
+        upload_ok: bool,
+        download_ok: bool,
+    },
+    Failed(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncReport {
+    pub outcome: SyncOutcome,
+    /// Token from a fresh login, to save
+    pub new_token: Option<String>,
+    /// Sync server to use from now on
+    pub new_endpoint: Option<String>,
+    /// The saved token was rejected and should be dropped
+    pub token_rejected: bool,
+    /// Announcement from AnkiWeb
+    pub server_message: String,
+}
+
+impl SyncReport {
+    pub fn new(outcome: SyncOutcome) -> Self {
         Self {
-            http_client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(60))
-                .build()
-                .unwrap(),
-            sync_status: Arc::new(Mutex::new(SyncStatus::Idle)),
+            outcome,
+            new_token: None,
+            new_endpoint: None,
+            token_rejected: false,
+            server_message: String::new(),
         }
-    }
-
-    pub fn get_status(&self) -> SyncStatus {
-        self.sync_status.lock().unwrap().clone()
-    }
-
-    fn set_status(&self, status: SyncStatus) {
-        *self.sync_status.lock().unwrap() = status;
-    }
-
-    fn fail<T>(&self, error: Box<dyn std::error::Error>) -> Result<T, Box<dyn std::error::Error>> {
-        self.set_status(SyncStatus::Error {
-            message: error.to_string(),
-        });
-        Err(error)
-    }
-
-    pub async fn login(
-        &self,
-        username: &str,
-        password: &str,
-    ) -> Result<String, Box<dyn std::error::Error>> {
-        self.set_status(SyncStatus::Authenticating);
-
-        match sync_login(username, password, None, self.http_client.clone()).await {
-            Ok(auth) => {
-                self.set_status(SyncStatus::Idle);
-                Ok(auth.hkey)
-            }
-            Err(e) => self.fail(e.into()),
-        }
-    }
-
-    pub async fn sync_collection(
-        &self,
-        collection: &mut Collection,
-        hkey: &str,
-    ) -> Result<SyncResult, Box<dyn std::error::Error>> {
-        match self.try_sync_collection(collection, hkey).await {
-            Ok(result) => Ok(result),
-            Err(e) => self.fail(e),
-        }
-    }
-
-    async fn try_sync_collection(
-        &self,
-        collection: &mut Collection,
-        hkey: &str,
-    ) -> Result<SyncResult, Box<dyn std::error::Error>> {
-        let auth = SyncAuth {
-            hkey: hkey.to_string(),
-            endpoint: None,
-            io_timeout_secs: Some(60),
-        };
-
-        self.set_status(SyncStatus::CheckingStatus);
-
-        let sync_required = collection.sync_status_offline()?;
-
-        let mut result = SyncResult {
-            success: true,
-            message: String::new(),
-            server_message: None,
-        };
-
-        match sync_required {
-            sync_status_response::Required::NoChanges => {
-                result.message = "No changes to sync".into();
-                self.set_status(SyncStatus::Complete {
-                    message: result.message.clone(),
-                });
-            }
-            sync_status_response::Required::NormalSync => {
-                self.set_status(SyncStatus::SyncingCollection {
-                    progress: "Syncing collection...".into(),
-                });
-
-                let sync_output: SyncOutput = collection
-                    .normal_sync(auth.clone(), self.http_client.clone())
-                    .await?;
-
-                result.message = "Collection synced successfully".into();
-                result.server_message = Some(sync_output.server_message);
-
-                self.set_status(SyncStatus::Complete {
-                    message: result.message.clone(),
-                });
-            }
-            sync_status_response::Required::FullSync => {
-                result.success = false;
-                result.message = "Full sync required. Please sync via desktop Anki first.".into();
-                self.set_status(SyncStatus::Error {
-                    message: result.message.clone(),
-                });
-            }
-        }
-
-        Ok(result)
-    }
-
-    pub async fn sync_media(
-        &self,
-        _collection: &mut Collection,
-        _hkey: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        Err("Media sync not yet implemented - requires progress handler refactoring".into())
-    }
-
-    pub async fn full_sync(
-        &self,
-        _collection: &mut Collection,
-        _hkey: &str,
-        _upload: bool,
-    ) -> Result<SyncResult, Box<dyn std::error::Error>> {
-        Err("Full sync not yet implemented - requires Collection ownership transfer".into())
     }
 }
 
-impl Default for SyncManager {
-    fn default() -> Self {
-        Self::new()
+/// Syncs the collection, reporting each step. Runs on a background thread.
+pub type SyncFn = Arc<
+    dyn Fn(&SharedCollection, &SyncLogin, SyncMode, &(dyn Fn(SyncStep) + Sync)) -> SyncReport
+        + Send
+        + Sync,
+>;
+
+fn http_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Cannot start the network: {e}"))
+}
+
+fn runtime() -> Result<tokio::runtime::Runtime, String> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("Cannot start the network: {e}"))
+}
+
+/// Syncs with AnkiWeb. Blocks the calling thread.
+pub fn sync_blocking(
+    col: &SharedCollection,
+    login: &SyncLogin,
+    mode: SyncMode,
+    progress: &(dyn Fn(SyncStep) + Sync),
+) -> SyncReport {
+    let failed = |message: String| SyncReport::new(SyncOutcome::Failed(message));
+    let (rt, client) = match (runtime(), http_client()) {
+        (Ok(rt), Ok(client)) => (rt, client),
+        (Err(e), _) | (_, Err(e)) => return failed(e),
+    };
+
+    let mut report = SyncReport::new(SyncOutcome::Synced);
+    let hkey = match &login.token {
+        Some(token) => token.clone(),
+        None => {
+            progress(SyncStep::LoggingIn);
+            let login_future = sync_login(
+                &login.username,
+                &login.password,
+                login.endpoint.clone(),
+                client.clone(),
+            );
+            match rt.block_on(login_future) {
+                Ok(auth) => {
+                    report.new_token = Some(auth.hkey.clone());
+                    auth.hkey
+                }
+                Err(e) => return failed(login_error_message(&e)),
+            }
+        }
+    };
+    let auth = SyncAuth {
+        hkey,
+        endpoint: login
+            .endpoint
+            .as_deref()
+            .and_then(|e| reqwest::Url::parse(e).ok()),
+        io_timeout_secs: Some(60),
+    };
+
+    let result = match mode {
+        SyncMode::Normal => {
+            progress(SyncStep::Syncing);
+            let output = rt.block_on(col.lock().normal_sync(auth, client));
+            output.map(|output| {
+                report.new_endpoint = output.new_endpoint;
+                report.server_message = output.server_message;
+                match output.required {
+                    SyncActionRequired::FullSyncRequired {
+                        upload_ok,
+                        download_ok,
+                    } => SyncOutcome::FullSyncNeeded {
+                        upload_ok,
+                        download_ok,
+                    },
+                    _ => SyncOutcome::Synced,
+                }
+            })
+        }
+        SyncMode::Download => {
+            progress(SyncStep::BackingUp);
+            if let Err(message) = back_up(col) {
+                return failed(message);
+            }
+            progress(SyncStep::Downloading);
+            replace(col, |c| rt.block_on(c.full_download(auth, client)))
+                .map(|()| SyncOutcome::Downloaded)
+        }
+        SyncMode::Upload => {
+            progress(SyncStep::Uploading);
+            replace(col, |c| rt.block_on(c.full_upload(auth, client)))
+                .map(|()| SyncOutcome::Uploaded)
+        }
+    };
+
+    match result {
+        Ok(outcome) => report.outcome = outcome,
+        Err(e) => {
+            report.token_rejected = is_auth_failure(&e) && login.token.is_some();
+            report.outcome = SyncOutcome::Failed(sync_error_message(&e));
+        }
     }
+    report
+}
+
+/// Runs a full sync on the closed collection, then opens it again.
+fn replace(
+    col: &SharedCollection,
+    full_sync: impl FnOnce(anki::collection::Collection) -> Result<(), AnkiError>,
+) -> Result<(), AnkiError> {
+    col.replace(full_sync).and_then(|result| result)
+}
+
+/// Saves the collection to `backups/before-download-<time>.colpkg` next to it,
+/// a file desktop Anki can import.
+fn back_up(col: &SharedCollection) -> Result<(), String> {
+    let folder = col
+        .path()
+        .parent()
+        .map(|dir| dir.join("backups"))
+        .ok_or("Cannot find the collection folder.")?;
+    std::fs::create_dir_all(&folder)
+        .map_err(|e| format!("Cannot create the backup folder: {e}"))?;
+    let file = folder.join(format!(
+        "before-download-{}.colpkg",
+        anki::timestamp::TimestampSecs::now().0
+    ));
+    col.replace(|c| c.export_colpkg(&file, false, false))
+        .and_then(|result| result)
+        .map_err(|e| format!("Backup failed, nothing was downloaded: {e}"))
 }
 
 /// Logs in to AnkiWeb and returns the session key. Blocks the calling thread.
 pub fn login_blocking(username: &str, password: &str) -> Result<String, String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| format!("Cannot start the network: {e}"))?;
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Cannot start the network: {e}"))?;
+    let (runtime, client) = (runtime()?, http_client()?);
     runtime
         .block_on(sync_login(username, password, None, client))
         .map(|auth| auth.hkey)
         .map_err(|e| login_error_message(&e))
 }
 
+fn is_auth_failure(error: &AnkiError) -> bool {
+    matches!(error, AnkiError::SyncError { source } if source.kind == SyncErrorKind::AuthFailed)
+}
+
 /// Explains a failed login in plain words.
 pub fn login_error_message(error: &AnkiError) -> String {
     match error {
-        AnkiError::SyncError { source } if source.kind == SyncErrorKind::AuthFailed => {
-            "AnkiWeb rejected the username or password.".into()
-        }
+        _ if is_auth_failure(error) => "AnkiWeb rejected the username or password.".into(),
         AnkiError::NetworkError { .. } => {
             "Couldn't reach AnkiWeb. Check the Wi-Fi connection.".into()
         }
         other => format!("Login failed: {other}"),
+    }
+}
+
+/// Explains a failed sync in plain words.
+pub fn sync_error_message(error: &AnkiError) -> String {
+    match error {
+        _ if is_auth_failure(error) => {
+            "AnkiWeb rejected the saved login. Sync again to log in with the saved password, or check it in Settings.".into()
+        }
+        AnkiError::NetworkError { .. } => {
+            "Couldn't reach AnkiWeb. Check the Wi-Fi connection.".into()
+        }
+        AnkiError::SyncError { source } => match source.kind {
+            SyncErrorKind::ClockIncorrect => {
+                "The reader's clock is wrong. Set the date and time, then sync again.".into()
+            }
+            SyncErrorKind::UploadTooLarge => "The collection is too big for AnkiWeb.".into(),
+            SyncErrorKind::ServerMessage => source.info.clone(),
+            _ => format!("Sync failed: {error}"),
+        },
+        other => format!("Sync failed: {other}"),
     }
 }
 
@@ -205,16 +260,19 @@ mod tests {
     use super::*;
     use anki::error::{NetworkError, NetworkErrorKind, SyncError};
 
+    fn sync_error(kind: SyncErrorKind) -> AnkiError {
+        AnkiError::SyncError {
+            source: SyncError {
+                info: "from server".into(),
+                kind,
+            },
+        }
+    }
+
     #[test]
     fn explains_login_errors() {
-        let wrong_password = AnkiError::SyncError {
-            source: SyncError {
-                info: String::new(),
-                kind: SyncErrorKind::AuthFailed,
-            },
-        };
         assert_eq!(
-            login_error_message(&wrong_password),
+            login_error_message(&sync_error(SyncErrorKind::AuthFailed)),
             "AnkiWeb rejected the username or password."
         );
 
@@ -225,5 +283,31 @@ mod tests {
             },
         };
         assert!(login_error_message(&offline).starts_with("Couldn't reach AnkiWeb"));
+        assert!(sync_error_message(&offline).starts_with("Couldn't reach AnkiWeb"));
+    }
+
+    #[test]
+    fn explains_sync_errors() {
+        assert!(
+            sync_error_message(&sync_error(SyncErrorKind::AuthFailed))
+                .starts_with("AnkiWeb rejected the saved login")
+        );
+        assert!(sync_error_message(&sync_error(SyncErrorKind::ClockIncorrect)).contains("clock"));
+        assert_eq!(
+            sync_error_message(&sync_error(SyncErrorKind::ServerMessage)),
+            "from server"
+        );
+    }
+
+    #[test]
+    fn download_backs_up_before_replacing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("collection.anki2");
+        let col = SharedCollection::new(crate::collection::open_collection(&path).unwrap(), path);
+        back_up(&col).unwrap();
+        let backups: Vec<_> = std::fs::read_dir(dir.path().join("backups"))
+            .unwrap()
+            .collect();
+        assert_eq!(backups.len(), 1);
     }
 }

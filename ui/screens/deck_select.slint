@@ -7,6 +7,8 @@ component Header {
     in property <int> new_total;
     in property <int> learn_total;
     in property <int> due_total;
+    in property <bool> syncing;
+    callback sync_clicked();
     callback settings_clicked();
 
     VerticalLayout {
@@ -22,13 +24,29 @@ component Header {
                 vertical-alignment: center;
             }
 
-            InkButton {
-                width: Constants.nav_height * 3.5;
-                height: Constants.nav_height;
-                text: "Settings";
-                font-size: Constants.font_size_small;
-                clicked => {
-                    settings_clicked();
+            HorizontalLayout {
+                spacing: Constants.spacing;
+
+                InkButton {
+                    width: Constants.nav_height * 2.5;
+                    height: Constants.nav_height;
+                    text: "Sync";
+                    font-size: Constants.font_size_small;
+                    enabled: !syncing;
+                    clicked => {
+                        sync_clicked();
+                    }
+                }
+
+                InkButton {
+                    width: Constants.nav_height * 3.5;
+                    height: Constants.nav_height;
+                    text: "Settings";
+                    font-size: Constants.font_size_small;
+                    enabled: !syncing;
+                    clicked => {
+                        settings_clicked();
+                    }
                 }
             }
         }
@@ -60,12 +78,108 @@ component Header {
     }
 }
 
+// Sync progress and result; asks which collection to keep when AnkiWeb can't merge
+component SyncBar {
+    in property <string> message;
+    in property <bool> busy;
+    in property <bool> failed;
+    in property <bool> choice;
+    in property <bool> upload_ok;
+    in property <bool> download_ok;
+    in-out property <string> confirm;
+    callback full_sync(upload: bool);
+    callback dismiss();
+
+    // Tap a finished message to hide it
+    TouchArea {
+        enabled: !busy && !choice;
+        clicked => {
+            dismiss();
+        }
+    }
+
+    Rectangle {
+        border-width: Constants.border * (busy || failed || choice ? 2 : 1);
+        border-color: Constants.ink;
+        border-radius: Constants.radius;
+
+        VerticalLayout {
+            padding: Constants.spacing;
+            spacing: Constants.spacing;
+
+            Text {
+                text: confirm == "download" ? "Replace this reader's cards and progress with AnkiWeb's? A backup of this reader's collection is saved first."
+                    : confirm == "upload" ? "Replace everything on AnkiWeb with this reader's collection? Your other devices will have to download it."
+                    : message;
+                font-family: Constants.font_family;
+                font-size: Constants.font_size_small;
+                font-weight: busy || failed || choice ? 700 : 400;
+                wrap: word-wrap;
+            }
+
+            if choice && confirm == "": HorizontalLayout {
+                height: Constants.nav_height;
+                spacing: Constants.spacing;
+                InkButton {
+                    text: "Keep AnkiWeb's";
+                    font-size: Constants.font_size_small;
+                    enabled: download_ok;
+                    clicked => {
+                        confirm = "download";
+                    }
+                }
+                InkButton {
+                    text: "Keep this reader's";
+                    font-size: Constants.font_size_small;
+                    enabled: upload_ok;
+                    clicked => {
+                        confirm = "upload";
+                    }
+                }
+            }
+
+            if choice: HorizontalLayout {
+                height: Constants.nav_height;
+                spacing: Constants.spacing;
+                InkButton {
+                    text: "Cancel";
+                    font-size: Constants.font_size_small;
+                    clicked => {
+                        if confirm == "" {
+                            dismiss();
+                        } else {
+                            confirm = "";
+                        }
+                    }
+                }
+                if confirm != "": InkButton {
+                    text: "Replace";
+                    font-size: Constants.font_size_small;
+                    clicked => {
+                        full_sync(confirm == "upload");
+                    }
+                }
+            }
+        }
+    }
+}
+
 export component DeckSelectScreen {
     in property <int> new_total;
     in property <int> learn_total;
     in property <int> due_total;
     in property <[DeckNode]> deck_nodes;
+    in property <bool> syncing;
+    in property <string> sync_message;
+    in property <bool> sync_failed;
+    in property <bool> sync_choice;
+    in property <bool> sync_upload_ok;
+    in property <bool> sync_download_ok;
+    in-out property <string> sync_confirm;
 
+    callback sync_clicked();
+    callback full_sync(upload: bool);
+    callback dismiss_sync();
     callback deck_clicked(deck: DeckNode);
     callback deck_toggled(deck: DeckNode);
     callback settings_clicked();
@@ -78,8 +192,29 @@ export component DeckSelectScreen {
             new_total: new_total;
             learn_total: learn_total;
             due_total: due_total;
+            syncing: syncing;
+            sync_clicked => {
+                sync_clicked();
+            }
             settings_clicked => {
                 settings_clicked();
+            }
+        }
+
+        if sync_message != "": SyncBar {
+            vertical-stretch: 0;
+            message: sync_message;
+            busy: syncing;
+            failed: sync_failed;
+            choice: sync_choice;
+            upload_ok: sync_upload_ok;
+            download_ok: sync_download_ok;
+            confirm <=> sync_confirm;
+            full_sync(upload) => {
+                full_sync(upload);
+            }
+            dismiss => {
+                dismiss_sync();
             }
         }
 
@@ -89,13 +224,18 @@ export component DeckSelectScreen {
 
             VerticalLayout {
                 alignment: start;
+                // The collection is busy while syncing or choosing what to keep
                 for deck in deck_nodes: Deck {
-                deck: deck;
-                toggle => {
-                    deck_toggled(deck);
-                }
+                    deck: deck;
+                    toggle => {
+                        if !syncing && !sync_choice {
+                            deck_toggled(deck);
+                        }
+                    }
                     deck_clicked => {
-                        deck_clicked(deck);
+                        if !syncing && !sync_choice {
+                            deck_clicked(deck);
+                        }
                     }
                 }
             }

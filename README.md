@@ -101,6 +101,20 @@ Text size has a live preview. The AnkiWeb login is typed with the PocketBook's o
   </tr>
 </table>
 
+### Sync with AnkiWeb
+
+Tap **Sync** on the deck list, or turn on **Sync on startup** in Settings. Wi-Fi is turned on if it's off, and a status bar shows each step: turning on Wi-Fi, logging in, syncing, then the result. Cards made in KOReader are imported first, so they go up in the same sync. The deck list can't be opened while a sync runs.
+
+When AnkiWeb can't merge the two collections (after a reset on another device, for example), pbAnki asks which one to keep and confirms before replacing anything. Before AnkiWeb's collection replaces this one, the reader's collection is saved to `collection/backups/before-download-<time>.colpkg`, which desktop Anki can import. Media files aren't synced.
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/sync_running.png" width="240" alt="Syncing with AnkiWeb"></td>
+    <td><img src="docs/screenshots/sync_done.png" width="240" alt="Synced with AnkiWeb"></td>
+    <td><img src="docs/screenshots/sync_full.png" width="240" alt="AnkiWeb asks which collection to keep"></td>
+  </tr>
+</table>
+
 ### Studying
 
 - Tap anywhere on the question to reveal the answer, and tap the answer to rate it **Good**. On an answer longer than one page, a tap turns the page first.
@@ -168,6 +182,7 @@ username = ""
 password = ""
 # Session token, saved when Validate passes
 token = ""
+# Sync when the app starts (Settings: Sync on startup)
 auto_sync = false
 sync_on_exit = false
 ```
@@ -214,7 +229,8 @@ docs/        README screenshots and the script that renders them
 
 ## Roadmap
 
-- [ ] AnkiWeb sync (login and validation work; syncing the collection is next)
+- [x] AnkiWeb sync of the collection
+- [ ] Media sync
 - [ ] Open a card's source passage in KOReader
 - [ ] Close the collection cleanly when the firmware closes the app
 - [ ] Applications menu icon
