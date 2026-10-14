@@ -1,66 +1,102 @@
-import { ListView } from "std-widgets.slint";
-import { Deck } from "../components/deck.slint";
-import { Constants, Translations } from "../constants.slint";
-import { DeckNode, SyncState } from "../types.slint";
+import { Count, Deck } from "../components/deck.slint";
+import { InkButton } from "../components/ink_button.slint";
+import { Constants } from "../constants.slint";
+import { DeckNode } from "../types.slint";
 
-component Menu {
-    in property <Translations> tr;
-    in property <int> due;
+component Header {
+    in property <int> new_total;
+    in property <int> learn_total;
+    in property <int> due_total;
+    callback settings_clicked();
 
-    HorizontalLayout {
-        VerticalLayout {
-            alignment: start;
-            spacing: Constants.spacing_standard;
+    VerticalLayout {
+        spacing: Constants.spacing;
+
+        HorizontalLayout {
             Text {
+                horizontal-stretch: 1;
                 text: "pbAnki";
-                font-family: Constants.font_family_standard;
+                font-family: Constants.font_family;
                 font-size: Constants.font_size_heading;
                 font-weight: 800;
+                vertical-alignment: center;
             }
 
-            Text {
-                text: due + tr.cards_due_suffix;
-                font-family: Constants.font_family_standard;
+            InkButton {
+                width: Constants.nav_height * 3.5;
+                height: Constants.nav_height;
+                text: "Settings";
+                font-size: Constants.font_size_small;
+                clicked => {
+                    settings_clicked();
+                }
             }
         }
 
         HorizontalLayout {
-            alignment: end;
-            TouchArea {
-                Image {
-                    source: @image-url("../icons/reload.svg");
-                }
-
-                clicked => {
-                }
+            Text {
+                horizontal-stretch: 1;
+                text: new_total + learn_total + due_total == 0 ? "No cards are due yet." : "";
+                font-family: Constants.font_family;
+                font-size: Constants.font_size_small;
+                vertical-alignment: bottom;
             }
+
+            for label in ["New", "Learn", "Due"]: Text {
+                width: Constants.count_width;
+                text: label;
+                font-family: Constants.font_family;
+                font-size: Constants.font_size_small;
+                color: Constants.faded;
+                horizontal-alignment: right;
+                vertical-alignment: bottom;
+            }
+        }
+
+        Rectangle {
+            height: Constants.border * 2;
+            background: Constants.ink;
         }
     }
 }
 
 export component DeckSelectScreen {
-    in property <Translations> tr;
+    in property <int> new_total;
+    in property <int> learn_total;
     in property <int> due_total;
-    in-out property <[DeckNode]> deck_nodes;
+    in property <[DeckNode]> deck_nodes;
 
     callback deck_clicked(deck: DeckNode);
+    callback deck_toggled(deck: DeckNode);
+    callback settings_clicked();
 
     VerticalLayout {
-        Menu {
-            due: due_total;
-            tr: tr;
+        spacing: Constants.spacing;
+
+        Header {
+            vertical-stretch: 0;
+            new_total: new_total;
+            learn_total: learn_total;
+            due_total: due_total;
+            settings_clicked => {
+                settings_clicked();
+            }
         }
 
-        ListView {
-            mouse-drag-pan-enabled: true;
-            for deck[index] in deck_nodes: Deck {
+        Flickable {
+            vertical-stretch: 1;
+            interactive: true;
+
+            VerticalLayout {
+                alignment: start;
+                for deck in deck_nodes: Deck {
                 deck: deck;
-                shown: deck_nodes[deck.parent_index].collapsed == false;
                 toggle => {
-                    deck_nodes[index].collapsed = !deck_nodes[index].collapsed;
+                    deck_toggled(deck);
                 }
-                deck_clicked => {
-                    deck_clicked(deck);
+                    deck_clicked => {
+                        deck_clicked(deck);
+                    }
                 }
             }
         }

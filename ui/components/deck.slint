@@ -1,71 +1,82 @@
 import { Constants } from "../constants.slint";
 import { DeckNode } from "../types.slint";
 
+export component Count {
+    in property <int> value;
+    in property <bool> bold;
+
+    width: Constants.count_width;
+
+    Text {
+        width: 100%;
+        text: value;
+        font-family: Constants.font_family;
+        font-size: Constants.font_size_content;
+        font-weight: bold && value > 0 ? 700 : 400;
+        color: value > 0 ? Constants.ink : Constants.faded;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+    }
+}
+
 export component Deck {
-    in-out property <DeckNode> deck;
-    in property <bool> shown;
+    in property <DeckNode> deck;
 
     callback toggle();
     callback deck_clicked();
 
+    height: Constants.deck_row_height;
+
+    TouchArea {
+        clicked => {
+            deck_clicked();
+        }
+    }
+
     HorizontalLayout {
-        if shown: TouchArea {
-            clicked => {
-                deck_clicked();
-            }
-            HorizontalLayout {
-                padding-left: (deck.level - 1) * Constants.padding_standard;
-                HorizontalLayout {
-                    alignment: start;
-                    padding-top: Constants.padding_standard;
-                    if deck.has_children: TouchArea {
-                        Image {
-                            source: deck.collapsed ? @image-url("../icons/angle_right.svg") : @image-url("../icons/angle_down.svg");
-                        }
+        padding-left: (deck.level - 1) * Constants.indent;
 
-                        clicked => {
-                            deck.collapsed = !deck.collapsed;
-                            toggle();
-                        }
-                    }
-                    Text {
-                        text: deck.name;
-                        font-family: Constants.font_family_standard;
-                        font-size: Constants.font_size_content;
-                        vertical-alignment: center;
-                    }
+        // Expander, or a blank of the same width
+        Rectangle {
+            width: Constants.indent * 1.5;
+            if deck.has_children: TouchArea {
+                clicked => {
+                    toggle();
                 }
-
-                HorizontalLayout {
-                    alignment: end;
-                    padding-top: Constants.padding_standard;
-                    spacing: Constants.spacing_standard;
-
-                    Text {
-                        text: deck.new;
-                        font-family: Constants.font_family_standard;
-                        color: #808080;
-                        font-size: Constants.font_size_subcontent;
-                        vertical-alignment: center;
-                    }
-
-                    Text {
-                        text: deck.learn;
-                        font-family: Constants.font_family_standard;
-                        color: #808080;
-                        font-size: Constants.font_size_subcontent;
-                        vertical-alignment: center;
-                    }
-
-                    Text {
-                        text: deck.due;
-                        font-family: Constants.font_family_standard;
-                        color: #008000;
-                        font-size: Constants.font_size_subcontent;
-                        vertical-alignment: center;
-                    }
+                Image {
+                    width: Constants.indent;
+                    source: deck.collapsed ? @image-url("../icons/angle_right.svg") : @image-url("../icons/angle_down.svg");
                 }
             }
         }
+
+        Text {
+            horizontal-stretch: 1;
+            text: deck.name;
+            font-family: Constants.font_family;
+            font-size: Constants.font_size_content;
+            font-weight: deck.level == 1 ? 700 : 400;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+
+        Count {
+            value: deck.new;
+        }
+
+        Count {
+            value: deck.learn;
+        }
+
+        Count {
+            value: deck.due;
+            bold: true;
+        }
+    }
+
+    Rectangle {
+        y: parent.height - self.height;
+        height: Constants.border;
+        background: Constants.faded;
     }
 }

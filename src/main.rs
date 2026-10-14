@@ -1,8 +1,85 @@
 use common::*;
 
+use std::cell::RefCell;
+use std::ffi::{CStr, CString, c_char};
 use std::rc::Rc;
+use std::sync::Mutex;
+use std::time::Duration;
 
 use inkview::Event;
+use inkview::bindings::{Inkview, KBD_NORMAL, KBD_PASSWORD};
+
+const KEYBOARD_MAX_LEN: usize = 256;
+
+/// Result of the last keyboard: `Some(None)` when it was cancelled.
+static KEYBOARD_RESULT: Mutex<Option<Option<String>>> = Mutex::new(None);
+
+unsafe extern "C" fn keyboard_closed(text: *mut c_char) {
+    let text = (!text.is_null()).then(|| {
+        unsafe { CStr::from_ptr(text) }
+            .to_string_lossy()
+            .into_owned()
+    });
+    *KEYBOARD_RESULT.lock().unwrap() = Some(text);
+}
+
+/// Turns on Wi-Fi with the default network.
+fn connect_network(iv: &'static Inkview) -> Result<(), String> {
+    match unsafe { iv.NetConnect(std::ptr::null()) } {
+        0 => Ok(()),
+        code => Err(format!("Couldn't turn on Wi-Fi (error {code}).")),
+    }
+}
+
+/// Opens the PocketBook keyboard and polls for its result on the UI thread.
+fn keyboard_prompt(iv: &'static Inkview) -> TextPrompt {
+    let timer = Rc::new(slint::Timer::default());
+    Rc::new(move |request: TextRequest, done| {
+        *KEYBOARD_RESULT.lock().unwrap() = None;
+
+        // The keyboard keeps these pointers while open, so they are leaked
+        let mut buffer = vec![0u8; KEYBOARD_MAX_LEN];
+        let current = request.current.as_bytes();
+        let len = current.len().min(KEYBOARD_MAX_LEN - 1);
+        buffer[..len].copy_from_slice(&current[..len]);
+        let buffer: &'static mut [u8] = Box::leak(buffer.into_boxed_slice());
+        let title: &'static CString =
+            Box::leak(Box::new(CString::new(request.title).unwrap_or_default()));
+        let flags = if request.password {
+            KBD_PASSWORD
+        } else {
+            KBD_NORMAL
+        };
+
+        unsafe {
+            iv.OpenKeyboard(
+                title.as_ptr(),
+                buffer.as_mut_ptr().cast(),
+                (KEYBOARD_MAX_LEN - 1) as i32,
+                flags as i32,
+                Some(keyboard_closed),
+            );
+        }
+
+        let done = RefCell::new(Some(done));
+        let timer_weak = Rc::downgrade(&timer);
+        timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(200),
+            move || {
+                let Some(text) = KEYBOARD_RESULT.lock().unwrap().take() else {
+                    return;
+                };
+                if let Some(done) = done.borrow_mut().take() {
+                    done(text);
+                }
+                if let Some(timer) = timer_weak.upgrade() {
+                    timer.stop();
+                }
+            },
+        );
+    })
+}
 
 fn main() {
     let iv = Box::leak(Box::new(inkview::load())) as &_;
@@ -24,47 +101,17 @@ fn main() {
 
             let config = Config::load_or_create("/mnt/ext1/applications/pbanki/config.toml")
                 .unwrap_or_else(|e| {
-                    eprintln!("Config error: {:?}, using defaults", e);
+                    eprintln!("Config error: {e}, using defaults");
                     Config::default()
                 });
 
-            let session = init_session(&config);
-            let translations = init_translations(&session);
-
-            let ui = Rc::new(MainWindow::new().unwrap());
-
-            let session_for_deck_tree = session.clone();
-            let ui_weak_for_deck_tree = ui.as_weak();
-            ui.on_update_deck_tree(move || {
-                let deck_tree = update_deck_tree(&session_for_deck_tree);
-                if let Some(ui) = ui_weak_for_deck_tree.upgrade() {
-                    ui.set_deck_tree(deck_tree);
-                }
-            });
-
-            let session_for_rate = session.clone();
-            let ui_weak_for_rate = ui.as_weak();
-
-            ui.on_rate(move |rating, deck, chars_per_page| {
-                let next = rate_card(&session_for_rate, rating, deck, chars_per_page);
-                if let Some(ui) = ui_weak_for_rate.upgrade() {
-                    ui.set_current_card(next);
-                }
-            });
-
-            let session_for_deck = session.clone();
-            let ui_weak_for_deck = ui.as_weak();
-
-            ui.on_deck_clicked(move |deck, chars_per_page| {
-                let next = next_card(&session_for_deck, deck, chars_per_page);
-                if let Some(ui) = ui_weak_for_deck.upgrade() {
-                    ui.set_current_card(next);
-                }
-            });
-
-            ui.set_tr(translations);
-
-            ui.set_deck_tree(update_deck_tree(&session));
+            let ui = MainWindow::new().unwrap();
+            let hooks = PlatformHooks {
+                text_prompt: Some(keyboard_prompt(iv)),
+                connect_network: Some(Rc::new(move || connect_network(iv))),
+                ..PlatformHooks::default()
+            };
+            setup_ui(&ui, &config, hooks);
 
             ui.run().unwrap();
         }

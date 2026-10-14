@@ -1,25 +1,20 @@
 use std::rc::Rc;
 
 use anki_proto::decks::DeckTreeNode;
+use slint::{ModelRc, SharedString, VecModel};
 
-use slint::Model;
+use crate::render::Page;
+use crate::{DeckNode, Line, Span};
 
-use crate::DeckNode;
-
-pub fn flatten_tree(node: &DeckTreeNode) -> Rc<slint::VecModel<DeckNode>> {
-    let result = Rc::new(slint::VecModel::<DeckNode>::default());
-    flatten_tree_recursive(node, -1, &result);
+/// Flattens the deck tree into list rows, leaving out children of collapsed decks.
+pub fn flatten_tree(node: &DeckTreeNode) -> Rc<VecModel<DeckNode>> {
+    let result = Rc::new(VecModel::<DeckNode>::default());
+    flatten_tree_recursive(node, &result);
     result
 }
 
-fn flatten_tree_recursive(
-    node: &DeckTreeNode,
-    parent_index: i32,
-    result: &Rc<slint::VecModel<DeckNode>>,
-) {
+fn flatten_tree_recursive(node: &DeckTreeNode, result: &Rc<VecModel<DeckNode>>) {
     for child in &node.children {
-        let current_index = result.row_count() as i32;
-
         result.push(DeckNode {
             id: child.deck_id,
             name: child.name.clone().into(),
@@ -29,148 +24,107 @@ fn flatten_tree_recursive(
             learn: child.learn_count as i32,
             due: child.review_count as i32,
             has_children: !child.children.is_empty(),
-            parent_index,
         });
-        flatten_tree_recursive(child, current_index, result);
+        if !child.collapsed {
+            flatten_tree_recursive(child, result);
+        }
     }
 }
 
-pub fn paginate_text(text: &str, chars_per_page: usize) -> Vec<slint::SharedString> {
-    if text.is_empty() {
-        return vec![slint::SharedString::new()];
-    }
-
-    let estimated_pages = (text.len() / chars_per_page).max(1);
-    let mut pages = Vec::with_capacity(estimated_pages + 1);
-    let mut current_page = String::with_capacity(chars_per_page);
-    let mut current_len = 0;
-    let mut first_word_in_page = true;
-
-    for word in text.split_whitespace() {
-        let word_len = word.chars().count();
-        let space_needed = if first_word_in_page { 0 } else { 1 };
-
-        if current_len + word_len + space_needed > chars_per_page && !current_page.is_empty() {
-            pages.push(current_page.as_str().into());
-            current_page.clear();
-            current_len = 0;
-            first_word_in_page = true;
-        }
-
-        if !first_word_in_page {
-            current_page.push(' ');
-            current_len += 1;
-        }
-        current_page.push_str(word);
-        current_len += word_len;
-        first_word_in_page = false;
-    }
-
-    if !current_page.is_empty() {
-        pages.push(current_page.as_str().into());
-    }
-
-    if pages.is_empty() {
-        pages.push(slint::SharedString::new());
-    }
-
-    pages
+/// Converts laid-out pages into the UI's page model.
+pub fn pages_model(pages: Vec<Page>) -> ModelRc<crate::Page> {
+    let pages: Vec<crate::Page> = pages
+        .into_iter()
+        .map(|lines| crate::Page {
+            lines: ModelRc::new(VecModel::from(
+                lines
+                    .into_iter()
+                    .map(|line| Line {
+                        spans: ModelRc::new(VecModel::from(
+                            line.runs
+                                .into_iter()
+                                .map(|run| Span {
+                                    text: SharedString::from(run.text),
+                                    bold: run.style.bold,
+                                    italic: run.style.italic,
+                                })
+                                .collect::<Vec<_>>(),
+                        )),
+                        rule: line.rule,
+                        centered: line.centered,
+                    })
+                    .collect::<Vec<_>>(),
+            )),
+        })
+        .collect();
+    ModelRc::new(VecModel::from(pages))
 }
 
-pub fn strip_html_remove_brackets_and_paginate(
-    html: &str,
-    remove_brackets: bool,
-    chars_per_page: usize,
-) -> Vec<slint::SharedString> {
-    let stripped = anki::text::strip_html(html);
-    let text = stripped.as_ref();
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use slint::Model;
 
-    if text.is_empty() {
-        return vec![slint::SharedString::new()];
-    }
-
-    let estimated_pages = (text.len() / chars_per_page).max(1);
-    let mut pages = Vec::with_capacity(estimated_pages + 1);
-    let mut current_page = String::with_capacity(chars_per_page);
-    let mut current_len = 0;
-    let mut first_word_in_page = true;
-
-    let mut chars = text.chars().peekable();
-    let mut word_buffer = String::with_capacity(128);
-    let mut skipping_brackets = false;
-
-    while let Some(c) = chars.next() {
-        if remove_brackets {
-            if !skipping_brackets {
-                if c == '[' {
-                    if let Some(&'[') = chars.peek() {
-                        chars.next();
-                        skipping_brackets = true;
-                        continue;
-                    }
-                }
-            } else {
-                if c == ']' {
-                    if let Some(&']') = chars.peek() {
-                        chars.next();
-                        skipping_brackets = false;
-                    }
-                }
-                continue;
-            }
-        }
-
-        if c.is_whitespace() {
-            if !word_buffer.is_empty() {
-                let word_len = word_buffer.chars().count();
-                let space_needed = if first_word_in_page { 0 } else { 1 };
-
-                if current_len + word_len + space_needed > chars_per_page
-                    && !current_page.is_empty()
-                {
-                    pages.push(current_page.as_str().into());
-                    current_page.clear();
-                    current_len = 0;
-                    first_word_in_page = true;
-                }
-
-                if !first_word_in_page {
-                    current_page.push(' ');
-                    current_len += 1;
-                }
-                current_page.push_str(&word_buffer);
-                current_len += word_len;
-                first_word_in_page = false;
-                word_buffer.clear();
-            }
-        } else {
-            word_buffer.push(c);
+    fn leaf(id: i64, name: &str, level: u32) -> DeckTreeNode {
+        DeckTreeNode {
+            deck_id: id,
+            name: name.into(),
+            level,
+            ..Default::default()
         }
     }
 
-    if !word_buffer.is_empty() {
-        let word_len = word_buffer.chars().count();
-        let space_needed = if first_word_in_page { 0 } else { 1 };
+    #[test]
+    fn flattens_deck_tree_in_order() {
+        let root = DeckTreeNode {
+            children: vec![
+                DeckTreeNode {
+                    children: vec![leaf(2, "Child", 2)],
+                    review_count: 5,
+                    ..leaf(1, "Parent", 1)
+                },
+                leaf(3, "Other", 1),
+            ],
+            ..Default::default()
+        };
 
-        if current_len + word_len + space_needed > chars_per_page && !current_page.is_empty() {
-            pages.push(current_page.as_str().into());
-            current_page.clear();
-            first_word_in_page = true;
-        }
+        let model = flatten_tree(&root);
+        let ids: Vec<_> = model.iter().map(|n| n.id).collect();
+        assert_eq!(ids, vec![1, 2, 3]);
 
-        if !first_word_in_page {
-            current_page.push(' ');
-        }
-        current_page.push_str(&word_buffer);
+        let parent = model.row_data(0).unwrap();
+        assert!(parent.has_children);
+        assert_eq!(parent.due, 5);
+        assert_eq!(parent.name, "Parent");
     }
 
-    if !current_page.is_empty() {
-        pages.push(current_page.as_str().into());
+    #[test]
+    fn hides_all_descendants_of_collapsed_decks() {
+        let root = DeckTreeNode {
+            children: vec![DeckTreeNode {
+                collapsed: true,
+                children: vec![DeckTreeNode {
+                    children: vec![leaf(3, "Grandchild", 3)],
+                    ..leaf(2, "Child", 2)
+                }],
+                ..leaf(1, "Parent", 1)
+            }],
+            ..Default::default()
+        };
+
+        let ids: Vec<_> = flatten_tree(&root).iter().map(|n| n.id).collect();
+        assert_eq!(ids, vec![1]);
     }
 
-    if pages.is_empty() {
-        pages.push(slint::SharedString::new());
+    #[test]
+    fn converts_pages_to_ui_model() {
+        let pages = crate::render::layout("<b>Hi</b> there<hr>x", 40, 10);
+        let model = pages_model(pages);
+        let page = model.row_data(0).unwrap();
+        let first = page.lines.row_data(0).unwrap();
+        let span = first.spans.row_data(0).unwrap();
+        assert_eq!(span.text, "Hi");
+        assert!(span.bold);
+        assert!(page.lines.row_data(1).unwrap().rule);
     }
-
-    pages
 }

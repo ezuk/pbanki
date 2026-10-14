@@ -1,0 +1,47 @@
+import { Constants } from "../constants.slint";
+
+// Outlined button that inverts while pressed
+export component InkButton {
+    in property <string> text;
+    in property <string> detail;
+    in property <bool> enabled: true;
+    in property <length> font-size: Constants.font_size_content;
+    callback clicked();
+
+    
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    Rectangle {
+        border-width: Constants.border;
+        border-color: root.enabled ? Constants.ink : Constants.faded;
+        border-radius: Constants.radius;
+        background: touch.pressed ? Constants.ink : Constants.paper;
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+
+            Text {
+                text: root.text;
+                font-family: Constants.font_family;
+                font-size: root.font-size;
+                font-weight: 700;
+                color: touch.pressed ? Constants.paper : root.enabled ? Constants.ink : Constants.faded;
+                horizontal-alignment: center;
+            }
+
+            if root.detail != "": Text {
+                text: root.detail;
+                font-family: Constants.font_family;
+                font-size: Constants.font_size_small;
+                color: touch.pressed ? Constants.paper : Constants.ink;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}

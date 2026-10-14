@@ -1,48 +1,124 @@
-import { Constants, Translations } from "constants.slint";
-import { DeckNode, DeckTree, CardNode } from "types.slint";
+import "fonts/JetBrainsMono-Regular.ttf";
+import "fonts/JetBrainsMono-Bold.ttf";
+import "fonts/JetBrainsMono-Italic.ttf";
+import "fonts/JetBrainsMono-BoldItalic.ttf";
+
+import { Constants } from "constants.slint";
+
+export { Constants }
+import { DeckNode, DeckTree, CardNode, LoginState } from "types.slint";
 import { LearnScreen } from "screens/learn.slint";
 import { DeckSelectScreen } from "screens/deck_select.slint";
+import { SettingsScreen } from "screens/settings.slint";
 
 export component MainWindow inherits Window {
-    preferred-width: 500px;
-    preferred-height: 400px;
-    in property <Translations> tr;
+    // PocketBook Verse screen in logical pixels (758x1024 at 3x)
+    preferred-width: 252.67px;
+    preferred-height: 341.33px;
+    default-font-family: Constants.font_family;
+    background: Constants.paper;
+
+    in property <string> error_message;
 
     in-out property <bool> learning;
     in-out property <CardNode> current_card;
-
     in-out property <DeckTree> deck_tree;
-    in property <string> dummy: "ÄÖÜäöüßÀÂÆÇÈÉÊËÎÏÔŒÙÛàâæçèéêëîïôœùû„“”‘’—–@&$%+=¡¿¢£$¥€²³¼½¬¤¦§©®™°";
 
-    property <length> available-content-height: root.height - 3 * Constants.font_size_content - 2 * Constants.padding_standard - 100px;
-    property <length> available-content-width: root.width - 2 * Constants.padding_standard;
-    property <int> chars-per-page: 
-        Math.floor(available-content-width / (Constants.font_size_content * 0.6)) * Math.floor(available-content-height / (Constants.font_size_content * 1.3));
+    // Settings screen; values are filled in by open_settings
+    in property <bool> native_keyboard;
+    in-out property <bool> showing_settings;
+    in-out property <string> settings_username;
+    in-out property <string> settings_password;
+    in-out property <int> settings_font_size;
+    in property <LoginState> settings_login_state;
+    in property <string> settings_login_message;
+
+    // Text grid available to a card page; must match LearnScreen's layout
+    property <length> content-width: root.width - 2 * Constants.padding;
+    property <length> content-height: root.height - 2 * Constants.padding - Constants.top_bar_height - 2 * Constants.border - Constants.nav_height - Constants.button_bar_height - 4 * Constants.spacing;
+    property <int> columns: Math.floor(content-width / Constants.char_width);
+    property <int> rows: Math.floor(content-height / Constants.line_height);
 
     callback update_deck_tree();
-    callback deck_clicked(deck: DeckNode, chars-per-page: int);
-    callback rate(rating: int, deck: DeckNode, chars-per-page: int);
+    callback toggle_deck(deck: DeckNode);
+    callback deck_clicked(deck: DeckNode, columns: int, rows: int);
+    callback rate(rating: int, deck: DeckNode, columns: int, rows: int);
+    callback open_settings();
+    callback request_text(field: string);
+    callback credentials_edited();
+    callback validate_login();
+    callback save_settings();
 
     VerticalLayout {
-        padding: Constants.padding_standard;
-        if !learning: DeckSelectScreen {
-            tr: tr;
+        padding: Constants.padding;
+
+        if error_message != "": VerticalLayout {
+            alignment: center;
+            spacing: Constants.spacing;
+            Text {
+                text: "pbAnki";
+                font-size: Constants.font_size_heading;
+                font-weight: 800;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: error_message;
+                font-size: Constants.font_size_content;
+                wrap: word-wrap;
+                horizontal-alignment: center;
+            }
+        }
+
+        if error_message == "" && showing_settings: SettingsScreen {
+            native_keyboard: native_keyboard;
+            username <=> settings_username;
+            password <=> settings_password;
+            font_size <=> settings_font_size;
+            login_state: settings_login_state;
+            login_message: settings_login_message;
+            request_text(field) => {
+                request_text(field);
+            }
+            credentials_edited => {
+                credentials_edited();
+            }
+            validate => {
+                validate_login();
+            }
+            save => {
+                save_settings();
+            }
+            cancel => {
+                showing_settings = false;
+            }
+        }
+
+        if error_message == "" && !showing_settings && !learning: DeckSelectScreen {
+            new_total: deck_tree.new_total;
+            learn_total: deck_tree.learn_total;
             due_total: deck_tree.due_total;
             deck_nodes: deck_tree.deck_nodes;
             deck_clicked(deck) => {
-                deck_clicked(deck, chars-per-page);
+                deck_clicked(deck, columns, rows);
                 learning = true;
             }
+            deck_toggled(deck) => {
+                toggle_deck(deck);
+            }
+            settings_clicked => {
+                open_settings();
+                showing_settings = true;
+            }
         }
-        if learning: LearnScreen {
-            tr: tr;
+
+        if error_message == "" && !showing_settings && learning: LearnScreen {
             card: current_card;
             home_clicked => {
                 update_deck_tree();
                 learning = false;
             }
             rate(rating) => {
-                rate(rating, current_card.deck, chars-per-page);
+                rate(rating, current_card.deck, columns, rows);
             }
             init => {
                 self.focus();

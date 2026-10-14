@@ -7,24 +7,62 @@ export struct DeckNode {
 	learn: int,
 	due: int,
 	has_children: bool,
-	parent_index: int,
 }
 
 export struct DeckTree {
+	new_total: int,
+	learn_total: int,
 	due_total: int,
 	deck_nodes: [DeckNode],
+}
+
+// A run of text with one style
+export struct Span {
+	text: string,
+	bold: bool,
+	italic: bool,
+}
+
+export struct Line {
+	spans: [Span],
+	rule: bool,
+	centered: bool,
+}
+
+export struct Page {
+	lines: [Line],
 }
 
 export struct CardNode {
 	id: duration,
 	deck: DeckNode,
-	question: [string],
-	answer: [string],
+	question: [Page],
+	answer: [Page],
+	// First answer page to show, where the back of the card begins
+	answer_start: int,
 	durations: [string],
+	// Quote and book details of KOReader cards
+	context: [Page],
+	can_open_book: bool,
+	// Shown instead of a card when there is none
+	message: string,
 }
 
 export struct SyncState {
 	is_syncing: bool,
 	status_message: string,
 	has_error: bool,
+}
+
+// Whether the AnkiWeb login on the settings screen may be saved
+export enum LoginState {
+	// Same as saved; can be saved
+	unchanged,
+	// Both fields empty, which turns sync off; can be saved
+	cleared,
+	// Changed and not yet validated
+	edited,
+	checking,
+	passed,
+	failed,
 }

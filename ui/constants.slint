@@ -1,21 +1,38 @@
+// Sizes are logical pixels; the PocketBook backend renders at 3x (758x1024 → 252x341).
 export global Constants {
-    out property <string> font_family_standard: "Monospace";
+    out property <string> font_family: "JetBrains Mono";
 
-    out property <length> font_size_heading: 30px;
-    out property <length> font_size_content: 20px;
-    out property <length> font_size_subcontent: 15px;
+    // Device pixels per logical pixel on the PocketBook
+    out property <float> device_scale: 3;
 
-    out property <length> padding_standard: 20px;
-    out property <length> spacing_standard: 5px;
-    out property <length> spacing_medium: 10px;
-}
+    // Card and list text size in device pixels; set from the config's display.font_size
+    in-out property <int> font_size_px: 20;
+    in-out property <int> min_font_size: 12;
+    in-out property <int> max_font_size: 40;
+    out property <length> font_size_content: font_size_px * 1px / device_scale;
+    out property <length> font_size_heading: 10px;
+    out property <length> font_size_small: 6px;
 
-export struct Translations {
-	show_answer: string,
-	again: string,
-	hard: string,
-	good: string,
-	easy: string,
-	cards_due_suffix: string,
-	no_cards_due: string,
+    // JetBrains Mono advances 0.6em per character
+    out property <length> char_width: font_size_content * 0.6;
+    out property <length> line_height: font_size_content * 1.4;
+
+    out property <length> padding: 8px;
+    out property <length> spacing: 5px;
+    out property <length> border: 1px;
+    out property <length> radius: 3px;
+
+    out property <length> top_bar_height: 16px;
+    out property <length> button_bar_height: 36px;
+    // Holds the page indicator and the Context button
+    out property <length> nav_height: button_bar_height / 2;
+    out property <length> deck_row_height: Math.max(20px, font_size_content * 2.6);
+    out property <length> indent: 8px;
+
+    // Count columns in the deck list
+    out property <length> count_width: Math.max(20px, font_size_content * 2.6);
+
+    out property <color> ink: #000000;
+    out property <color> faded: #808080;
+    out property <color> paper: #ffffff;
 }

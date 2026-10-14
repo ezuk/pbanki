@@ -1,17 +1,38 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
+use std::ops::RangeInclusive;
+use std::path::{Path, PathBuf};
+
+/// Allowed card text sizes in device pixels.
+pub const FONT_SIZES: RangeInclusive<u32> = 12..=40;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub general: GeneralConfig,
+    #[serde(default)]
+    pub display: DisplayConfig,
     pub ankiweb: AnkiWebConfig,
+    /// File this config was loaded from and is saved to.
+    #[serde(skip)]
+    pub path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneralConfig {
-    pub language: String,
     pub collection_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DisplayConfig {
+    /// Card text size in screen pixels.
+    pub font_size: u32,
+}
+
+impl Default for DisplayConfig {
+    fn default() -> Self {
+        Self { font_size: 20 }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,9 +53,9 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             general: GeneralConfig {
-                language: "en-GB".into(),
                 collection_path: "/mnt/ext1/applications/pbanki/collection".into(),
             },
+            display: DisplayConfig::default(),
             ankiweb: AnkiWebConfig {
                 username: String::new(),
                 password: String::new(),
@@ -42,7 +63,22 @@ impl Default for Config {
                 auto_sync: false,
                 sync_on_exit: false,
             },
+            path: None,
         }
+    }
+}
+
+impl DisplayConfig {
+    /// The font size, limited to [`FONT_SIZES`].
+    pub fn font_size(&self) -> u32 {
+        self.font_size.clamp(*FONT_SIZES.start(), *FONT_SIZES.end())
+    }
+}
+
+impl AnkiWebConfig {
+    /// The saved session token, if one is set.
+    pub fn token(&self) -> Option<&str> {
+        self.token.as_deref().filter(|t| !t.is_empty())
     }
 }
 
@@ -50,11 +86,12 @@ const DEFAULT_CONFIG_WITH_COMMENTS: &str = r#"# pbAnki Configuration File
 # Generated automatically - edit with care
 
 [general]
-# Language code for Anki i18n (e.g., "en-GB", "de", "fr", "ja", "es", "pt", "ru", "zh", "ko")
-language = "en-GB"
-
 # Collection path (relative to app directory or absolute)
 collection_path = "/mnt/ext1/applications/pbanki/collection"
+
+[display]
+# Card text size in screen pixels
+font_size = 20
 
 [ankiweb]
 # AnkiWeb synchronization settings
@@ -79,42 +116,156 @@ sync_on_exit = false
 "#;
 
 impl Config {
-    pub fn load_or_create(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let path = Path::new(path);
+    pub fn load_or_create(path: impl AsRef<Path>) -> Result<Self, Box<dyn std::error::Error>> {
+        let path = path.as_ref();
 
-        if path.exists() {
-            let contents = fs::read_to_string(path)?;
-            let config: Config = toml::from_str(&contents)?;
-            Ok(config)
+        let mut config = if path.exists() {
+            toml::from_str(&fs::read_to_string(path)?)?
         } else {
-            let config = Config::default();
-            config.save_with_comments(path.to_str().unwrap())?;
-            Ok(config)
-        }
+            write_file(path, DEFAULT_CONFIG_WITH_COMMENTS)?;
+            Config::default()
+        };
+
+        config.path = Some(path.to_path_buf());
+        Ok(config)
+    }
+
+    /// Replaces the AnkiWeb login and its session key.
+    pub fn set_login(&mut self, username: &str, password: &str, token: Option<String>) {
+        self.ankiweb.username = username.trim().to_owned();
+        self.ankiweb.password = password.to_owned();
+        self.ankiweb.token = token;
+    }
+
+    /// Sets the card text size, limited to [`FONT_SIZES`].
+    pub fn set_font_size(&mut self, font_size: u32) {
+        self.display.font_size = font_size;
+        self.display.font_size = self.display.font_size();
     }
 
     pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let path = "/mnt/ext1/applications/pbanki/config.toml";
-        let toml_string = toml::to_string_pretty(self)?;
+        let path = self
+            .path
+            .as_deref()
+            .ok_or("config has no file path to save to")?;
+        write_file(path, &toml::to_string_pretty(self)?)
+    }
+}
 
-        if let Some(parent) = Path::new(path).parent() {
-            fs::create_dir_all(parent)?;
-        }
+fn write_file(path: &Path, contents: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, contents)?;
+    Ok(())
+}
 
-        fs::write(path, toml_string)?;
-        Ok(())
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn creates_commented_default_file_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested/config.toml");
+
+        let config = Config::load_or_create(&path).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            DEFAULT_CONFIG_WITH_COMMENTS
+        );
+        assert_eq!(config.path.as_deref(), Some(path.as_path()));
     }
 
-    fn save_with_comments(&self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(parent) = Path::new(path).parent() {
-            fs::create_dir_all(parent)?;
-        }
+    #[test]
+    fn default_file_parses_to_default_values() {
+        let parsed: Config = toml::from_str(DEFAULT_CONFIG_WITH_COMMENTS).unwrap();
+        let default = Config::default();
 
-        fs::write(path, DEFAULT_CONFIG_WITH_COMMENTS)?;
-        Ok(())
+        assert_eq!(
+            parsed.general.collection_path,
+            default.general.collection_path
+        );
+        assert!(!parsed.ankiweb.auto_sync);
+        assert!(!parsed.ankiweb.sync_on_exit);
+        assert_eq!(parsed.display.font_size, default.display.font_size);
+        assert_eq!(parsed.ankiweb.token(), None);
     }
 
-    pub fn update_and_save(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.save()
+    #[test]
+    fn empty_token_counts_as_missing() {
+        let mut ankiweb = Config::default().ankiweb;
+        assert_eq!(ankiweb.token(), None);
+        ankiweb.token = Some(String::new());
+        assert_eq!(ankiweb.token(), None);
+        ankiweb.token = Some("abc".into());
+        assert_eq!(ankiweb.token(), Some("abc"));
+    }
+
+    #[test]
+    fn missing_ankiweb_fields_use_defaults() {
+        let config: Config =
+            toml::from_str("[general]\ncollection_path = \"/tmp/col\"\n[ankiweb]\n").unwrap();
+        assert_eq!(config.general.collection_path, "/tmp/col");
+        assert_eq!(config.ankiweb.username, "");
+        assert_eq!(config.display.font_size, 20);
+        assert_eq!(config.ankiweb.token(), None);
+    }
+
+    #[test]
+    fn save_round_trips_to_loaded_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        let mut config = Config::load_or_create(&path).unwrap();
+        config.general.collection_path = "/books/col".into();
+        config.ankiweb.token = Some("token123".into());
+        config.save().unwrap();
+
+        let reloaded = Config::load_or_create(&path).unwrap();
+        assert_eq!(reloaded.general.collection_path, "/books/col");
+        assert_eq!(reloaded.ankiweb.token(), Some("token123"));
+    }
+
+    #[test]
+    fn font_size_is_clamped() {
+        let mut display = DisplayConfig { font_size: 2 };
+        assert_eq!(display.font_size(), 12);
+        display.font_size = 99;
+        assert_eq!(display.font_size(), 40);
+        display.font_size = 22;
+        assert_eq!(display.font_size(), 22);
+    }
+
+    #[test]
+    fn set_login_replaces_token() {
+        let mut config = Config::default();
+        config.ankiweb.token = Some("old".into());
+
+        config.set_login(" me@example.com ", "secret", Some("new".into()));
+        assert_eq!(config.ankiweb.username, "me@example.com");
+        assert_eq!(config.ankiweb.password, "secret");
+        assert_eq!(config.ankiweb.token(), Some("new"));
+
+        config.set_login("", "", None);
+        assert_eq!(config.ankiweb.token(), None);
+
+        config.set_font_size(100);
+        assert_eq!(config.display.font_size, 40);
+    }
+
+    #[test]
+    fn save_without_path_fails() {
+        assert!(Config::default().save().is_err());
+    }
+
+    #[test]
+    fn malformed_file_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "[general\nlanguage = ").unwrap();
+
+        assert!(Config::load_or_create(&path).is_err());
     }
 }

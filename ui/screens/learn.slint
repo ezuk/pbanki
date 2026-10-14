@@ -1,185 +1,272 @@
-import { Constants, Translations } from "../constants.slint";
-import { DeckNode, CardNode } from "../types.slint";
-import { Button, ListView, ScrollView } from "std-widgets.slint";
-import { RatingButton } from "../components/rating_button.slint";
+import { Constants } from "../constants.slint";
+import { DeckNode, CardNode, Page } from "../types.slint";
+import { Count } from "../components/deck.slint";
+import { InkButton } from "../components/ink_button.slint";
+import { PageView } from "../components/page_view.slint";
 
-component Menu {
+component TopBar {
     in property <CardNode> card;
     callback home_clicked();
 
+    height: Constants.top_bar_height;
+
     HorizontalLayout {
-        padding-bottom: Constants.padding_standard;
-        HorizontalLayout {
-            horizontal-stretch: 1;
-            alignment: start;
-            TouchArea {
+        spacing: Constants.spacing;
 
-                Image {
-                    source: @image-url("../icons/home.svg");
-                }
-
-                clicked => {
-                    home_clicked();
-                }
+        TouchArea {
+            width: Constants.top_bar_height;
+            clicked => {
+                home_clicked();
+            }
+            Image {
+                width: Constants.top_bar_height * 0.7;
+                source: @image-url("../icons/home.svg");
             }
         }
 
-        HorizontalLayout {
-            spacing: Constants.spacing_standard;
-
-            Text {
-                text: card.deck.new;
-                font-family: Constants.font_family_standard;
-                color: #0000FF;
-                font-size: Constants.font_size_subcontent;
-                vertical-alignment: center;
-            }
-
-            Text {
-                text: card.deck.learn;
-                font-family: Constants.font_family_standard;
-                color: #FF0000;
-                font-size: Constants.font_size_subcontent;
-                vertical-alignment: center;
-            }
-
-            Text {
-                text: card.deck.due;
-                font-family: Constants.font_family_standard;
-                color: #008000;
-                font-size: Constants.font_size_subcontent;
-                vertical-alignment: center;
-            }
+        Text {
+            horizontal-stretch: 1;
+            text: card.deck.name;
+            font-family: Constants.font_family;
+            font-size: Constants.font_size_content;
+            font-weight: 700;
+            overflow: elide;
+            vertical-alignment: center;
         }
 
-        HorizontalLayout {
-            horizontal-stretch: 1;
-            alignment: end;
+        Count {
+            value: card.deck.new;
+        }
+
+        Count {
+            value: card.deck.learn;
+        }
+
+        Count {
+            value: card.deck.due;
+            bold: true;
         }
     }
 }
 
 export component LearnScreen {
-    in property <Translations> tr;
     in property <CardNode> card;
     in-out property <bool> show_answer;
-    property <bool> valid_deck: card.id != (-1 * 1ms) && card.answer != [];
-    property <[string]> pages: show_answer ? card.answer : card.question;
-    out property <int> current-page: 0;
+    in-out property <bool> show_context;
+    property <bool> has_card: card.message == "";
+    property <[Page]> pages: show_context ? card.context : show_answer ? card.answer : card.question;
+    property <int> current-page: 0;
     property <int> total-pages: pages.length;
-
-    changed total-pages => {
-        if current-page > total-pages {
-            current-page = 0;
-        }
-    }
+    property <bool> on_last_page: current-page >= total-pages - 1;
 
     callback home_clicked();
     callback rate(rating: int);
+    callback open_book();
+
+    function previous_page() {
+        if current-page > 0 {
+            current-page -= 1;
+        }
+    }
+
+    function next_page() {
+        if current-page < total-pages - 1 {
+            current-page += 1;
+        }
+    }
+
+    function reveal() {
+        show_answer = true;
+        current-page = Math.min(card.answer_start, card.answer.length - 1);
+    }
+
+    function toggle_context() {
+        show_context = !show_context;
+        current-page = show_context ? 0 : Math.min(card.answer_start, card.answer.length - 1);
+    }
+
+    function answer(rating: int) {
+        show_answer = false;
+        show_context = false;
+        current-page = 0;
+        rate(rating);
+    }
 
     forward-focus: focus-scope;
 
     focus-scope := FocusScope {
         key-pressed(event) => {
-            if valid_deck {
-                if current-page > 0 && (event.text == Key.LeftArrow || event.text == Key.DownArrow || event.text == Key.PageDown) {
-                    current-page -= 1;
-                    accept
-                } else if current-page < total-pages - 1 && (event.text == Key.RightArrow || event.text == Key.UpArrow || event.text == Key.PageUp) {
-                    current-page += 1;
-                    accept
-                } else if !show_answer && (current-page == total-pages - 1 || current-page == 0) {
-                    show_answer = true;
-                    accept
-                } else if show_answer && (current-page == total-pages - 1 || current-page == 0) {
-                    if event.text == Key.LeftArrow || event.text == Key.DownArrow || event.text == Key.PageDown {
-                        rate(0);
-                        show_answer = false;
-
-                        accept
-                    } else if event.text == Key.RightArrow || event.text == Key.Return {
-                        rate(1);
-                        show_answer = false;
-
-                        accept
-                    } else if event.text == Key.Menu || event.text == Key.UpArrow || event.text == Key.PageUp {
-                        rate(2);
-                        show_answer = false;
-
-                        accept
-                    }
+            if !has_card {
+                return reject;
+            }
+            if show_context {
+                if event.text == Key.LeftArrow || event.text == Key.DownArrow || event.text == Key.PageDown {
+                    if current-page > 0 { previous_page(); } else { toggle_context(); }
+                    return accept;
                 }
+                if event.text == Key.RightArrow || event.text == Key.UpArrow || event.text == Key.PageUp {
+                    next_page();
+                    return accept;
+                }
+                return reject;
+            }
+            if event.text == Key.LeftArrow || event.text == Key.DownArrow || event.text == Key.PageDown {
+                if current-page > 0 {
+                    previous_page();
+                } else if show_answer {
+                    answer(0);
+                }
+                return accept;
+            }
+            if event.text == Key.RightArrow || event.text == Key.UpArrow || event.text == Key.PageUp || event.text == Key.Return || event.text == Key.Menu {
+                if !on_last_page {
+                    next_page();
+                } else if !show_answer {
+                    reveal();
+                } else if event.text == Key.Menu || event.text == Key.UpArrow || event.text == Key.PageUp {
+                    answer(2);
+                } else {
+                    answer(1);
+                }
+                return accept;
             }
             reject
         }
 
         VerticalLayout {
-            VerticalLayout {
-                alignment: start;
-                Menu {
-                    card: card;
-                    home_clicked => {
-                        home_clicked();
-                    }
+            spacing: Constants.spacing;
+
+            TopBar {
+                card: card;
+                home_clicked => {
+                    home_clicked();
+                }
+            }
+
+            Rectangle {
+                height: Constants.border * 2;
+                background: Constants.ink;
+            }
+
+            // Card text; tap the left or right third to turn pages
+            content := Rectangle {
+                vertical-stretch: 1;
+
+                if has_card: PageView {
+                    width: 100%;
+                    height: 100%;
+                    page: current-page < pages.length ? pages[current-page] : { lines: [] };
+                    vertically-centered: !show_context;
                 }
 
-                sgr := SwipeGestureHandler {
-                    handle-swipe-down: current-page > 0;
+                if !has_card: Text {
+                    width: 100%;
+                    text: card.message;
+                    font-family: Constants.font_family;
+                    font-size: Constants.font_size_content;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                SwipeGestureHandler {
                     handle-swipe-up: current-page < total-pages - 1;
+                    handle-swipe-down: current-page > 0;
                     swiped => {
-                        if self.current-position.y > self.pressed-position.y + self.height / 4 {
-                            if current-page > 0 {
-                                current-page -= 1;
-                            }
-                        } else if self.current-position.y < self.pressed-position.y - self.height / 4 {
-                            if current-page < total-pages - 1 {
-                                current-page += 1;
-                            }
+                        if self.current-position.y < self.pressed-position.y {
+                            next_page();
+                        } else {
+                            previous_page();
                         }
                     }
 
-                    VerticalLayout {
-                        Text {
-                            text: (current-page < pages.length ? pages[current-page] : "") + (pages.length > 1 ? "\n\n[" + (current-page + 1) + "/" + total-pages + "]" : "");
-                            font-family: Constants.font_family_standard;
-                            font-size: Constants.font_size_content;
-                            wrap: TextWrap.word-wrap;
-                            overflow: TextOverflow.clip;
-                            vertical-alignment: center;
-                            horizontal-alignment: center;
+                    TouchArea {
+                        clicked => {
+                            if self.mouse-x < self.width / 3 {
+                                previous_page();
+                            } else if self.mouse-x > self.width * 2 / 3 {
+                                next_page();
+                            }
                         }
                     }
                 }
             }
 
-            if valid_deck: VerticalLayout {
-                alignment: end;
-                HorizontalLayout {
-                    alignment: center;
-                    padding-top: Constants.padding_standard;
+            HorizontalLayout {
+                height: Constants.nav_height;
+                spacing: Constants.spacing;
 
-                    if !show_answer: Button {
-                        width: self.preferred-width * 2;
-                        height: self.preferred-height * 2;
-                        text: tr.show-answer;
+                // Columns mirror the rating buttons: blank, indicator, Context
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
 
+                Text {
+                    horizontal-stretch: 2;
+                    text: total-pages > 1 ? (current-page > 0 ? "‹ " : "  ") + (current-page + 1) + "/" + total-pages + (on_last_page ? "  " : " ›") : "";
+                    font-family: Constants.font_family;
+                    font-size: Constants.font_size_small;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    if has_card && show_answer && !show_context && card.context.length > 0: InkButton {
+                        width: 100%;
+                        height: 100%;
+                        text: "Context";
+                        font-size: Constants.font_size_small;
                         clicked => {
-                            show_answer = true;
+                            toggle_context();
                         }
                     }
+                }
+            }
 
-                    if show_answer: HorizontalLayout {
-                        spacing: Constants.spacing_medium;
-                        for rating in 4: RatingButton {
-                            duration: card.durations[rating];
-                            label: rating == 0 ? tr.again : rating == 1 ? tr.hard : rating == 2 ? tr.good : tr.easy;
-                            color: rating == 0 ? #FF0000 : rating == 2 ? #008000 : rating == 3 ? #0000FF : #000000;
+            HorizontalLayout {
+                height: Constants.button_bar_height;
+                spacing: Constants.spacing;
 
-                            clicked => {
-                                rate(rating);
-                                show_answer = false;
-                            }
+                if has_card && !show_answer: InkButton {
+                    text: "Show Answer";
+                    clicked => {
+                        reveal();
+                    }
+                }
+
+                if has_card && show_context: HorizontalLayout {
+                    spacing: Constants.spacing;
+                    InkButton {
+                        text: "‹ Back";
+                        clicked => {
+                            toggle_context();
                         }
+                    }
+                    InkButton {
+                        text: "Open in book";
+                        enabled: card.can_open_book;
+                        clicked => {
+                            open_book();
+                        }
+                    }
+                }
+
+                if has_card && show_answer && !show_context: HorizontalLayout {
+                    spacing: Constants.spacing;
+                    for rating in 4: InkButton {
+                        text: ["Again", "Hard", "Good", "Easy"][rating];
+                        detail: card.durations[rating];
+                        clicked => {
+                            answer(rating);
+                        }
+                    }
+                }
+
+                if !has_card: InkButton {
+                    text: "‹ Decks";
+                    clicked => {
+                        home_clicked();
                     }
                 }
             }

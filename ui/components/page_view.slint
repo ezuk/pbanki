@@ -1,0 +1,34 @@
+import { Constants } from "../constants.slint";
+import { Page } from "../types.slint";
+
+// One page of pre-wrapped card text; each line is one row of monospace text
+export component PageView {
+    in property <Page> page;
+    in property <bool> vertically-centered;
+
+    VerticalLayout {
+        alignment: vertically-centered ? center : start;
+        for line in page.lines: HorizontalLayout {
+            height: Constants.line_height;
+            alignment: line.rule ? stretch : line.centered ? center : start;
+
+            if line.rule: Rectangle {
+                horizontal-stretch: 1;
+                Rectangle {
+                    height: Constants.border;
+                    background: Constants.ink;
+                }
+            }
+
+            for span in line.spans: Text {
+                text: span.text;
+                font-family: Constants.font_family;
+                font-size: Constants.font_size_content;
+                font-weight: span.bold ? 700 : 400;
+                font-italic: span.italic;
+                color: Constants.ink;
+                vertical-alignment: center;
+            }
+        }
+    }
+}

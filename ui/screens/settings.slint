@@ -1,0 +1,282 @@
+import { LineEdit } from "std-widgets.slint";
+import { Constants } from "../constants.slint";
+import { InkButton } from "../components/ink_button.slint";
+import { LoginState } from "../types.slint";
+
+component SectionTitle inherits Text {
+    font-family: Constants.font_family;
+    font-size: Constants.font_size_small;
+    font-weight: 700;
+    color: Constants.faded;
+}
+
+// Shows a value; tapping it asks the platform keyboard for a new one
+component KeyboardField {
+    in property <string> value;
+    in property <bool> password;
+    callback edit();
+
+    height: Constants.nav_height;
+
+    TouchArea {
+        clicked => {
+            edit();
+        }
+    }
+
+    Rectangle {
+        border-width: Constants.border;
+        border-color: Constants.ink;
+        border-radius: Constants.radius;
+
+        HorizontalLayout {
+            padding-left: Constants.spacing;
+            padding-right: Constants.spacing;
+
+            Text {
+                text: value == "" ? "Not set" : password ? "••••••••" : value;
+                font-family: Constants.font_family;
+                font-size: Constants.font_size_small;
+                color: value == "" ? Constants.faded : Constants.ink;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+component Field {
+    in property <string> label;
+    in property <bool> password;
+    in property <bool> native_keyboard;
+    in-out property <string> value;
+    callback edit();
+    // The desktop text field changed
+    callback changed();
+
+    HorizontalLayout {
+        spacing: Constants.spacing;
+
+        Text {
+            width: 30%;
+            text: label;
+            font-family: Constants.font_family;
+            font-size: Constants.font_size_small;
+            vertical-alignment: center;
+        }
+
+        if native_keyboard: KeyboardField {
+            horizontal-stretch: 1;
+            value: value;
+            password: password;
+            edit => {
+                edit();
+            }
+        }
+
+        if !native_keyboard: LineEdit {
+            horizontal-stretch: 1;
+            text <=> value;
+            input-type: password ? InputType.password : InputType.text;
+            edited => {
+                changed();
+            }
+        }
+    }
+}
+
+export component SettingsScreen {
+    in property <bool> native_keyboard;
+    in-out property <string> username;
+    in-out property <string> password;
+    // Card text size in device pixels
+    in-out property <int> font_size;
+    in property <LoginState> login_state;
+    in property <string> login_message;
+    property <bool> can_save: login_state == LoginState.unchanged || login_state == LoginState.cleared || login_state == LoginState.passed;
+
+    callback request_text(field: string);
+    callback credentials_edited();
+    callback validate();
+    callback save();
+    callback cancel();
+
+    VerticalLayout {
+        spacing: Constants.spacing * 2;
+
+        VerticalLayout {
+            vertical-stretch: 0;
+            spacing: Constants.spacing;
+
+            Text {
+                text: "Settings";
+                font-family: Constants.font_family;
+                font-size: Constants.font_size_heading;
+                font-weight: 800;
+            }
+
+            Rectangle {
+                height: Constants.border * 2;
+                background: Constants.ink;
+            }
+        }
+
+        VerticalLayout {
+            vertical-stretch: 0;
+            spacing: Constants.spacing;
+
+            SectionTitle {
+                text: "ANKIWEB";
+            }
+
+            Field {
+                label: "Username";
+                native_keyboard: native_keyboard;
+                value <=> username;
+                edit => {
+                    request_text("username");
+                }
+                changed => {
+                    credentials_edited();
+                }
+            }
+
+            Field {
+                label: "Password";
+                password: true;
+                native_keyboard: native_keyboard;
+                value <=> password;
+                edit => {
+                    request_text("password");
+                }
+                changed => {
+                    credentials_edited();
+                }
+            }
+
+            HorizontalLayout {
+                height: Constants.nav_height;
+                spacing: Constants.spacing;
+
+                Text {
+                    horizontal-stretch: 1;
+                    text: (login_state == LoginState.passed ? "✓ " : login_state == LoginState.failed ? "✗ " : "") + login_message;
+                    font-family: Constants.font_family;
+                    font-size: Constants.font_size_small;
+                    font-weight: login_state == LoginState.passed || login_state == LoginState.failed ? 700 : 400;
+                    color: login_state == LoginState.passed || login_state == LoginState.failed ? Constants.ink : Constants.faded;
+                    wrap: word-wrap;
+                    vertical-alignment: center;
+                }
+
+                InkButton {
+                    width: 30%;
+                    text: login_state == LoginState.checking ? "Checking…" : "Validate";
+                    font-size: Constants.font_size_small;
+                    enabled: username != "" && password != "" && login_state != LoginState.checking;
+                    clicked => {
+                        validate();
+                    }
+                }
+            }
+        }
+
+        VerticalLayout {
+            vertical-stretch: 1;
+            spacing: Constants.spacing;
+
+            SectionTitle {
+                text: "TEXT SIZE";
+            }
+
+            HorizontalLayout {
+                height: Constants.nav_height;
+                spacing: Constants.spacing;
+
+                InkButton {
+                    width: Constants.nav_height * 2;
+                    text: "−";
+                    enabled: font_size > Constants.min_font_size;
+                    clicked => {
+                        font_size = Math.max(Constants.min_font_size, font_size - 2);
+                    }
+                }
+
+                Text {
+                    horizontal-stretch: 1;
+                    text: font_size + " px";
+                    font-family: Constants.font_family;
+                    font-size: Constants.font_size_content;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                InkButton {
+                    width: Constants.nav_height * 2;
+                    text: "+";
+                    enabled: font_size < Constants.max_font_size;
+                    clicked => {
+                        font_size = Math.min(Constants.max_font_size, font_size + 2);
+                    }
+                }
+            }
+
+            // Sample card at the chosen size
+            Rectangle {
+                vertical-stretch: 1;
+                border-width: Constants.border;
+                border-color: Constants.faded;
+                border-radius: Constants.radius;
+                clip: true;
+
+                VerticalLayout {
+                    padding: Constants.spacing;
+                    spacing: Constants.spacing;
+                    alignment: center;
+
+                    Text {
+                        text: "What is the capital of France?";
+                        font-family: Constants.font_family;
+                        font-size: font_size * 1px / Constants.device_scale;
+                        wrap: word-wrap;
+                        horizontal-alignment: center;
+                    }
+
+                    Rectangle {
+                        height: Constants.border;
+                        background: Constants.ink;
+                    }
+
+                    Text {
+                        text: "Paris, on the Seine. It has been the capital since the 10th century.";
+                        font-family: Constants.font_family;
+                        font-size: font_size * 1px / Constants.device_scale;
+                        wrap: word-wrap;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            height: Constants.button_bar_height;
+            spacing: Constants.spacing;
+
+            InkButton {
+                text: "Cancel";
+                clicked => {
+                    cancel();
+                }
+            }
+
+            InkButton {
+                text: "Save";
+                enabled: can_save;
+                clicked => {
+                    save();
+                }
+            }
+        }
+    }
+}
