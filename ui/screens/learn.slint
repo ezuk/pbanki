@@ -180,9 +180,12 @@ export component LearnScreen {
                         }
                     }
 
+                    // On the front, any tap reveals the answer; otherwise the outer thirds turn pages
                     TouchArea {
                         clicked => {
-                            if self.mouse-x < self.width / 3 {
+                            if has_card && !show_answer {
+                                reveal();
+                            } else if self.mouse-x < self.width / 3 {
                                 previous_page();
                             } else if self.mouse-x > self.width * 2 / 3 {
                                 next_page();
