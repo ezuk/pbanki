@@ -64,13 +64,14 @@ With the [AI Assistant](https://github.com/omer-faruq/assistant.koplugin) plugin
   </tr>
 </table>
 
-Cards wait in an inbox file until pbAnki next opens, then land in a **KOReader** deck. Each card keeps its **context**: the full highlighted passage, book, author, chapter and page. A **Context** button on the answer side shows it.
+Cards wait in an inbox file until pbAnki next opens, then land in a sub-deck per book under **KOReader**, such as `KOReader::Pride and Prejudice`. Study the KOReader deck to review every book at once, or open one book's deck. Each card keeps its **context**: the full highlighted passage, book, author, chapter and page. A **Context** button on the answer side shows it.
 
 <table>
   <tr>
     <td><img src="docs/screenshots/koreader_question.png" width="240" alt="A question written in KOReader"></td>
     <td><img src="docs/screenshots/koreader_answer.png" width="240" alt="The answer, with a Context button"></td>
     <td><img src="docs/screenshots/context.png" width="240" alt="The context screen: the quote, then book, author, chapter and page"></td>
+    <td><img src="docs/screenshots/decks_koreader.png" width="240" alt="The KOReader deck with a sub-deck for Pride and Prejudice"></td>
   </tr>
 </table>
 

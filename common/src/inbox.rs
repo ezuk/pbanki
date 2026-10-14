@@ -75,6 +75,21 @@ pub struct ImportSummary {
     pub failed: usize,
 }
 
+/// Deck for a card from `book`: a sub-deck of KOReader named after the book.
+pub fn deck_name(book: &str) -> String {
+    // "::" would nest decks further
+    let title = book
+        .replace("::", ":")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if title.is_empty() {
+        DECK_NAME.into()
+    } else {
+        format!("{DECK_NAME}::{title}")
+    }
+}
+
 /// Adds every queued card to the collection and clears the inbox.
 pub fn import_inbox(col: &mut Collection, dir: &Path) -> Result<ImportSummary, String> {
     let inbox = dir.join(INBOX_FILE);
@@ -91,10 +106,7 @@ pub fn import_inbox(col: &mut Collection, dir: &Path) -> Result<ImportSummary, S
     let contents = fs::read_to_string(&importing).map_err(|e| format!("Cannot read inbox: {e}"))?;
 
     let notetype = koreader_notetype(col)?;
-    let deck_id = col
-        .get_or_create_normal_deck(DECK_NAME)
-        .map_err(|e| format!("Cannot create deck {DECK_NAME}: {e}"))?
-        .id;
+    let mut deck_ids = std::collections::HashMap::new();
 
     let mut summary = ImportSummary::default();
     let mut failed_lines = Vec::new();
@@ -111,6 +123,18 @@ pub fn import_inbox(col: &mut Collection, dir: &Path) -> Result<ImportSummary, S
                     note.set_field(index, value).map_err(|e| e.to_string())?;
                 }
                 note.tags.push(TAG.into());
+                let deck_name = deck_name(&card.book);
+                let deck_id = match deck_ids.get(&deck_name) {
+                    Some(&id) => id,
+                    None => {
+                        let id = col
+                            .get_or_create_normal_deck(&deck_name)
+                            .map_err(|e| format!("Cannot create deck {deck_name}: {e}"))?
+                            .id;
+                        deck_ids.insert(deck_name, id);
+                        id
+                    }
+                };
                 col.add_note(&mut note, deck_id).map_err(|e| e.to_string())
             });
 
@@ -268,6 +292,40 @@ mod tests {
             .collect();
         notes.sort();
         notes
+    }
+
+    #[test]
+    fn names_a_sub_deck_per_book() {
+        assert_eq!(deck_name("Pride and Prejudice"), "KOReader::Pride and Prejudice");
+        assert_eq!(deck_name("  Dune:: Part  One\n"), "KOReader::Dune: Part One");
+        assert_eq!(deck_name("  "), "KOReader");
+    }
+
+    #[test]
+    fn files_cards_under_their_book() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut col = collection(dir.path());
+        fs::write(
+            dir.path().join(INBOX_FILE),
+            concat!(
+                r#"{"front":"Q1","book":"Hamlet"}"#,
+                "\n",
+                r#"{"front":"Q2","book":"Hamlet"}"#,
+                "\n",
+                r#"{"front":"Q3"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        import_inbox(&mut col, dir.path()).unwrap();
+
+        let count = |col: &mut Collection, search: &str| {
+            col.search_cards(search, anki::search::SortMode::NoOrder)
+                .unwrap()
+                .len()
+        };
+        assert_eq!(count(&mut col, "\"deck:KOReader::Hamlet\""), 2);
+        assert_eq!(count(&mut col, "deck:KOReader -deck:KOReader::*"), 1);
     }
 
     #[test]

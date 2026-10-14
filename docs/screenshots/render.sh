@@ -32,6 +32,7 @@ password=490,252
 validate=627,320
 
 emulate shot:decks tap:$expand shot:decks_expanded
+emulate tap:42,182 shot:decks_koreader
 emulate tap:$koreader shot:koreader_question tap:$show shot:koreader_answer \
     tap:$context shot:context tap:150,946 tap:$easy shot:finished
 emulate tap:$expand tap:$basics shot:question tap:$show shot:answer \
