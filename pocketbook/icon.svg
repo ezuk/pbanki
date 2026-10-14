@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- pbAnki app icon: a stack of index cards with a bookmark, black on white for e-ink -->
+  <rect width="256" height="256" fill="#ffffff"/>
+
+  <!-- Back card -->
+  <g transform="rotate(-10 128 140)">
+    <rect x="30" y="74" width="196" height="132" rx="14" fill="#ffffff" stroke="#000000" stroke-width="10"/>
+  </g>
+
+  <!-- Front card -->
+  <g transform="rotate(3 128 136)">
+    <rect x="24" y="66" width="208" height="140" rx="14" fill="#ffffff" stroke="#000000" stroke-width="12"/>
+
+    <!-- Bookmark ribbon -->
+    <path d="M176 60 h28 v58 l-14 -12 l-14 12 z" fill="#000000"/>
+
+    <!-- Question line -->
+    <rect x="48" y="94" width="104" height="14" rx="7" fill="#000000"/>
+
+    <!-- Front/back divider, as drawn in the app -->
+    <rect x="44" y="132" width="168" height="8" fill="#000000"/>
+
+    <!-- Answer line -->
+    <rect x="48" y="160" width="132" height="14" rx="7" fill="#000000"/>
+  </g>
+</svg>
