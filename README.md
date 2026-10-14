@@ -91,9 +91,10 @@ Text size has a live preview. The AnkiWeb login is typed with the PocketBook's o
 
 ### Studying
 
-- Tap anywhere on the question to reveal the answer.
-- Turn pages by tapping the left or right third of the card, swiping, or with the page buttons.
-- The physical buttons reveal the answer and rate the card.
+- Tap anywhere on the question to reveal the answer, and tap the answer to rate it **Good**. On an answer longer than one page, a tap turns the page first.
+- Rated too fast? Swipe from right to left, or press the **prev** button, to undo the last rating and see that card's answer again.
+- The **next** button does the same as a tap: next page, reveal, then Good. **Prev** goes back a page, or undoes on a card's first page.
+- Swipe up and down to turn pages. Again, Hard and Easy are on the on-screen buttons.
 - Buttons are outlined and invert while pressed, which reads clearly on e-ink.
 - When a deck is done, a "Congratulations!" screen appears with a way back to the deck list.
 - Type-in cards are skipped (buried until tomorrow), since typing on e-ink is no fun.
@@ -176,7 +177,7 @@ For a sample collection with a few cards of each kind: `cargo run -p common --ex
 
 ### Emulator
 
-`cargo run -p dev --bin emulator -- <app dir> <output dir> <steps...>` runs the real UI headlessly as it appears on a PocketBook Verse and saves PNG screenshots. Steps are `shot:<name>`, `tap:<x>,<y>`, `swipe:<x>,<y1>,<y2>`, `key:<left|right|up|down|pageup|pagedown|menu|return>`, `type:<text>` (what the next keyboard prompt returns) and `wait:<ms>`.
+`cargo run -p dev --bin emulator -- <app dir> <output dir> <steps...>` runs the real UI headlessly as it appears on a PocketBook Verse and saves PNG screenshots. Steps are `shot:<name>`, `tap:<x>,<y>`, `swipe:<x1>,<y1>,<x2>,<y2>`, `key:<left|right|up|down|pageup|pagedown|menu|return>`, `type:<text>` (what the next keyboard prompt returns) and `wait:<ms>`.
 
 `docs/screenshots/render.sh` regenerates every screenshot in this README. The "before" images in `docs/screenshots/before/` were rendered from the original code and are kept as they are.
 

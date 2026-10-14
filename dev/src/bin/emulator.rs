@@ -8,7 +8,7 @@
 //! Steps:
 //!   shot:<name>     save <output dir>/<name>.png
 //!   tap:<x>,<y>     tap at physical pixel coordinates
-//!   swipe:<x>,<y1>,<y2>  vertical swipe at x from y1 to y2
+//!   swipe:<x1>,<y1>,<x2>,<y2>  swipe from one point to another
 //!   key:<name>      press left|right|up|down|pageup|pagedown|menu|return
 //!   type:<text>     text the next keyboard prompt returns
 //!   wait:<ms>       let timers and background work run
@@ -107,13 +107,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 window.dispatch_event(WindowEvent::PointerReleased { position, button });
             }
             "swipe" => {
-                let [x, y1, y2] = parse_numbers::<3>(arg)?;
+                let [x1, y1, x2, y2] = parse_numbers::<4>(arg)?;
                 let button = PointerEventButton::Left;
                 window.dispatch_event(WindowEvent::PointerPressed {
-                    position: logical(x, y1),
+                    position: logical(x1, y1),
                     button,
                 });
                 for i in 1..=10 {
+                    let x = x1 + (x2 - x1) * i / 10;
                     let y = y1 + (y2 - y1) * i / 10;
                     window.dispatch_event(WindowEvent::PointerMoved {
                         position: logical(x, y),
@@ -121,7 +122,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     settle();
                 }
                 window.dispatch_event(WindowEvent::PointerReleased {
-                    position: logical(x, y2),
+                    position: logical(x2, y2),
                     button,
                 });
             }
