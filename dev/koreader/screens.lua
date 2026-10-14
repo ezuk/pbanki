@@ -31,16 +31,23 @@ return {
     function(ui, shot)
         closeTop()
         ui.pbanki:createFromSelection(ui.highlight, nil)
+    end,
+    function(ui, shot) shot("02_card_count") end,
+    function(ui, shot)
+        local spin = top()
+        spin.value = 2
+        UIManager:close(spin)
+        spin.callback(spin)
         return 1.5
     end,
-    function(ui, shot) shot("02_suggesting"); return waitAI() end,
-    function(ui, shot) shot("03_suggested") end,
+    function(ui, shot) shot("03_suggesting"); return waitAI() end,
+    function(ui, shot) shot("04_suggested") end,
     function(ui, shot) editor():editCard(1) end,
-    function(ui, shot) shot("04_edit_card") end,
+    function(ui, shot) shot("05_edit_card") end,
     function(ui, shot) closeTop() end,
     function(ui, shot) local e = editor(); e.on_save(e, e.cards) end,
-    function(ui, shot) shot("05_saved"); return 2.5 end,
-    function(ui, shot) shot("06_page_highlighted") end,
+    function(ui, shot) shot("06_saved"); return 2.5 end,
+    function(ui, shot) shot("07_page_highlighted") end,
     -- Plain highlights made while reading
     function(ui, shot)
         select(ui, 60, 674, 505, 674); ui.highlight:saveHighlight(true); ui.highlight:clear()
@@ -50,7 +57,7 @@ return {
     function(ui, shot)
         select(ui, 40, 150, 700, 260); ui.highlight:saveHighlight(true); ui.highlight:clear()
     end,
-    function(ui, shot) shot("07_more_highlights") end,
+    function(ui, shot) shot("08_more_highlights") end,
     -- Menu
     function(ui, shot)
         ui.menu:onShowMenu()
@@ -65,23 +72,23 @@ return {
             end
         end
     end,
-    function(ui, shot) shot("08_menu") end,
+    function(ui, shot) shot("09_menu") end,
     function(ui, shot) ui.menu:onCloseReaderMenu() end,
     -- Mode 2: batch
     function(ui, shot) ui.pbanki:onPbAnkiReviewHighlights(); return waitAI() end,
-    function(ui, shot) shot("09_batch_first") end,
+    function(ui, shot) shot("10_batch_first") end,
     function(ui, shot) local e = editor(); e.on_skip(e); return waitAI() end,
-    function(ui, shot) shot("10_batch_second") end,
+    function(ui, shot) shot("11_batch_second") end,
     function(ui, shot) local e = editor(); e.cards = {}; e:refresh() end,
-    function(ui, shot) shot("11_cleared") end,
+    function(ui, shot) shot("12_cleared") end,
     function(ui, shot) local e = editor(); e:editCard(nil) end,
     function(ui, shot) closeTop(); local e = editor(); e:setCards({ { front = "What did Mrs. Long tell Mrs. Bennet?", back = "Netherfield Park is let" } }) end,
     function(ui, shot) local e = editor(); e.on_save(e, e.cards); return waitAI() end,
-    function(ui, shot) shot("12_batch_third") end,
+    function(ui, shot) shot("13_batch_third") end,
     function(ui, shot) local e = editor(); e.on_save(e, e.cards) end,
-    function(ui, shot) shot("13_batch_done"); return 3.5 end,
+    function(ui, shot) shot("14_batch_done"); return 3.5 end,
     function(ui, shot) ui.pbanki:onPbAnkiReviewHighlights() end,
-    function(ui, shot) shot("14_batch_again"); return 3.5 end,
+    function(ui, shot) shot("15_batch_again"); return 3.5 end,
     -- AI off
     function(ui, shot)
         ui.pbanki.settings.use_ai = false
@@ -91,5 +98,5 @@ return {
         select(ui, 40, 150, 700, 200)
         ui.pbanki:createFromSelection(ui.highlight, nil)
     end,
-    function(ui, shot) shot("15_ai_off") end,
+    function(ui, shot) shot("16_ai_off") end,
 }

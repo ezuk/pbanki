@@ -103,6 +103,8 @@ local CardEditor = InputContainer:extend{
     max_cards = 4,
     -- Whether the Suggest button is offered
     can_suggest = false,
+    -- How many cards to ask the AI for, or nil to skip the AI
+    request = nil,
     on_suggest = nil,
     on_save = nil,
     -- Batch mode: skip this highlight

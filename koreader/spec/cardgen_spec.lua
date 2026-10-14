@@ -46,7 +46,7 @@ assert(err, "error for undecodable reply")
 -- buildMessages
 local h = { text = "Paris is the capital of France.", before = "It is known that", after = "It is large.",
     book = "Geo", author = "A. Writer", chapter = "One", percent = 12.4, note = "check" }
-local msgs = cardgen.buildMessages(h, 2, nil, nil)
+local msgs = cardgen.buildMessages(h, { count = 2 }, nil, nil)
 eq(#msgs, 2, "system and user without companion")
 eq(msgs[1].role, "system", "system first")
 local user = msgs[2].content
@@ -55,11 +55,19 @@ assert(user:find("Position in book: 12%", 1, true), "position rounded")
 assert(user:find("«Paris is the capital of France.»", 1, true), "highlight marked in passage")
 assert(user:find("reader's note", 1, true), "note included")
 assert(user:find("Write 2 cards", 1, true), "count asked")
-msgs = cardgen.buildMessages({ text = "x" }, 1, "COMPANION", "You are mid-chapter.")
+msgs = cardgen.buildMessages({ text = "x" }, { count = 1 }, "COMPANION", "You are mid-chapter.")
 eq(#msgs, 3, "companion adds a system block")
 eq(msgs[2].cache, true, "companion block cached")
 assert(msgs[3].content:find("Write 1 card.", 1, true), "singular count")
 assert(msgs[3].content:find("mid-chapter", 1, true), "position note in user message")
 assert(not msgs[3].content:find("Passage around", 1, true), "no passage without context")
+
+-- The AI chooses the count in batch mode
+local ranged = cardgen.buildMessages({ text = "x" }, { max = 3 }, nil, nil)[2].content
+assert(ranged:find("from 1 to 3", 1, true), "range offered")
+assert(ranged:find("gets 1 card", 1, true), "concise highlights get one card")
+eq(cardgen.countInstruction({ max = 1 }), "Write 1 card.", "range of one")
+eq(cardgen.cardLimit({ max = 3 }), 3, "limit from range")
+eq(cardgen.cardLimit({ count = 2 }), 2, "limit from count")
 
 print("cardgen_spec: OK")

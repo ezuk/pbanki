@@ -45,7 +45,8 @@ local PbAnki = WidgetContainer:extend{
 function PbAnki:init()
     self.settings = G_reader_settings:readSetting("pbanki", {
         use_ai = true,
-        cards_per_highlight = 2,
+        -- Batch mode: the AI writes 1 to this many cards per highlight
+        max_cards_batch = 3,
     })
     self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
@@ -96,19 +97,19 @@ function PbAnki:addToMainMenu(menu_items)
             },
             {
                 text_func = function()
-                    return T(_("Cards per highlight: %1"), self.settings.cards_per_highlight)
+                    return T(_("Most cards per highlight in batch: %1"), self.settings.max_cards_batch)
                 end,
                 keep_menu_open = true,
                 callback = function(touchmenu_instance)
                     UIManager:show(SpinWidget:new{
-                        title_text = _("Cards per highlight"),
-                        info_text = _("How many cards the AI suggests for each highlight."),
-                        value = self.settings.cards_per_highlight,
+                        title_text = _("Most cards per highlight"),
+                        info_text = _("In Flashcards from highlights, the AI writes one card for a focused highlight and more, up to this many, for a rich one."),
+                        value = self.settings.max_cards_batch,
                         value_min = 1,
                         value_max = MAX_CARDS,
-                        default_value = 2,
+                        default_value = 3,
                         callback = function(spin)
-                            self.settings.cards_per_highlight = spin.value
+                            self.settings.max_cards_batch = spin.value
                             self:saveSettings()
                             touchmenu_instance:updateItems()
                         end,
@@ -236,16 +237,35 @@ end
 
 -- AI suggestions
 
---- Asks the AI for cards and shows them in `editor`.
+--- Asks how many cards to suggest, then calls `fn(count)`.
+-- `on_write_own` adds a button to skip the AI.
+function PbAnki:askCardCount(value, fn, on_write_own)
+    UIManager:show(SpinWidget:new{
+        title_text = _("Cards to suggest"),
+        value = value,
+        value_min = 1,
+        value_max = MAX_CARDS,
+        precision = "%d",
+        ok_text = _("Suggest"),
+        ok_always_enabled = true,
+        cancel_text = _("Cancel"),
+        extra_text = on_write_own and _("Write my own") or nil,
+        extra_callback = on_write_own,
+        callback = function(spin) fn(spin.value) end,
+    })
+end
+
+--- Asks the AI for cards and shows them in `editor`, per `editor.request`
+-- (see cardgen.buildMessages).
 function PbAnki:suggest(editor)
     local assistant = self:assistant()
     if not assistant then return end
     local highlight = editor.highlight
-    local count = self.settings.cards_per_highlight
+    local request = editor.request
     local function run()
         Trapper:wrap(function()
             local companion, position_note = assistant:companionContext(highlight.file, highlight.percent or 0)
-            local messages = cardgen.buildMessages(highlight, count, companion, position_note)
+            local messages = cardgen.buildMessages(highlight, request, companion, position_note)
             local answer, err = assistant:queryFlashcards(messages, _("Suggesting cards…"))
             -- The editor may have moved on or closed while waiting
             if editor.highlight ~= highlight or not UIManager:isWidgetShown(editor) then return end
@@ -255,7 +275,7 @@ function PbAnki:suggest(editor)
                 end
                 return
             end
-            local cards, parse_err = cardgen.parseCards(answer, count, json.decode)
+            local cards, parse_err = cardgen.parseCards(answer, cardgen.cardLimit(request), json.decode)
             if not cards then
                 logger.warn("pbanki: unreadable AI reply", answer)
                 UIManager:show(InfoMessage:new{ text = parse_err })
@@ -272,10 +292,10 @@ function PbAnki:suggest(editor)
 end
 
 --- Suggests cards for a highlight just shown in `editor`, or opens a blank
--- card when AI is off.
+-- card when AI is off or not wanted.
 function PbAnki:fill(editor)
     UIManager:nextTick(function()
-        if self:aiEnabled() then
+        if editor.request and self:aiEnabled() then
             self:suggest(editor)
         else
             editor:editCard(nil)
@@ -290,7 +310,17 @@ function PbAnki:newEditor(highlight, opts)
         highlight = highlight,
         max_cards = MAX_CARDS,
         can_suggest = self:assistant() ~= nil,
-        on_suggest = function(e) self:suggest(e) end,
+        request = opts.request,
+        on_suggest = function(e)
+            if not opts.ask_count then
+                self:suggest(e)
+                return
+            end
+            self:askCardCount(e.request and e.request.count or 1, function(count)
+                e.request = { count = count }
+                self:suggest(e)
+            end)
+        end,
         on_save = opts.on_save,
         on_skip = opts.on_skip,
         on_close = opts.on_close,
@@ -312,16 +342,26 @@ function PbAnki:createFromSelection(highlight, index)
     local item = index and self.ui.annotation.annotations[index]
     if not item then return end
 
-    self:newEditor(self:describe(item, before or "", after or ""), {
-        title = _("Create flashcard"),
-        subtitle = self.ui.doc_props and self.ui.doc_props.display_title,
-        on_save = function(editor, cards)
-            if self:saveCards(editor.highlight, cards) then
-                self:markReviewed(item)
-                UIManager:close(editor)
-            end
-        end,
-    })
+    local h = self:describe(item, before or "", after or "")
+    local function open(request)
+        self:newEditor(h, {
+            title = _("Create flashcard"),
+            subtitle = self.ui.doc_props and self.ui.doc_props.display_title,
+            request = request,
+            ask_count = true,
+            on_save = function(editor, cards)
+                if self:saveCards(editor.highlight, cards) then
+                    self:markReviewed(item)
+                    UIManager:close(editor)
+                end
+            end,
+        })
+    end
+    if self:aiEnabled() then
+        self:askCardCount(1, function(count) open({ count = count }) end, function() open(nil) end)
+    else
+        open(nil)
+    end
 end
 
 -- Batch: through the book's pending highlights
@@ -356,6 +396,7 @@ function PbAnki:onPbAnkiReviewHighlights()
     self:newEditor(self:describe(pending[position]), {
         title = _("Flashcards from highlights"),
         subtitle = subtitle(),
+        request = { max = self.settings.max_cards_batch },
         on_save = function(editor, cards)
             if self:saveCards(editor.highlight, cards, true) then
                 saved = saved + #cards

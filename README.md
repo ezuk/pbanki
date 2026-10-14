@@ -54,13 +54,13 @@ The original stripped every card down to plain text, so the question and answer 
 
 Highlight a passage in [KOReader](https://koreader.rocks) and tap **Create flashcard**. The passage is saved as a normal highlight and a card editor opens. Or keep reading and highlighting, then pick **Flashcards from highlights** in the Tools menu to turn the new highlights into cards one after another, skipping the ones you don't want. Each highlight is offered once; the plugin remembers which ones you've reviewed in the book's own KOReader settings.
 
-With the [AI Assistant](https://github.com/omer-faruq/assistant.koplugin) plugin installed, the editor opens with suggested cards: short questions with short answers, each asking something different about the highlight. The AI sees the book, chapter, the text around the highlight and your note on it. Edit them, drop them, or ask again. AI suggestions can be turned off, for example in flight mode.
+With the [AI Assistant](https://github.com/omer-faruq/assistant.koplugin) plugin installed, the editor opens with suggested cards: short questions with short answers, each asking something different about the highlight. While reading, you choose how many cards to ask for (1 by default). In batch mode the AI decides: one card for a focused highlight, more for a rich one, up to a limit you set. The AI sees the book, chapter, the text around the highlight and your note on it. Edit them, drop them, or ask again. AI suggestions can be turned off, for example in flight mode.
 
 <table>
   <tr>
     <td><img src="docs/screenshots/koreader/01_highlight_menu.png" width="240" alt="KOReader's highlight menu with a Create flashcard button"></td>
-    <td><img src="docs/screenshots/koreader/03_suggested.png" width="240" alt="The card editor with two AI-suggested cards"></td>
-    <td><img src="docs/screenshots/koreader/09_batch_first.png" width="240" alt="Flashcards from highlights: highlight 1 of 3 with suggestions"></td>
+    <td><img src="docs/screenshots/koreader/04_suggested.png" width="240" alt="The card editor with two AI-suggested cards"></td>
+    <td><img src="docs/screenshots/koreader/10_batch_first.png" width="240" alt="Flashcards from highlights: highlight 1 of 3 with suggestions"></td>
   </tr>
 </table>
 
@@ -144,7 +144,7 @@ Not ready yet. Firmware 6.x lists apps from `system/config/desktop/view.json`, a
 
 ### KOReader plugin
 
-Copy `koreader/pbanki.koplugin` to `applications/koreader/plugins/` and restart KOReader. Highlight text, then tap **Create flashcard**, or open **Tools → pbAnki flashcards → Flashcards from highlights**. The same menu turns AI suggestions on and off, sets how many cards to suggest per highlight (1 to 4), picks the AI model, and can make all of a book's highlights new again. Batch mode can also be put on a gesture.
+Copy `koreader/pbanki.koplugin` to `applications/koreader/plugins/` and restart KOReader. Highlight text, then tap **Create flashcard**, or open **Tools → pbAnki flashcards → Flashcards from highlights**. The same menu turns AI suggestions on and off, sets the most cards the AI may write per highlight in batch mode (1 to 4, default 3), picks the AI model, and can make all of a book's highlights new again. Batch mode can also be put on a gesture.
 
 Cards are queued in `applications/pbanki/inbox.jsonl` and imported when pbAnki starts or when you return to the deck list. If a line can't be imported, it is kept in `inbox.failed.jsonl` rather than dropped.
 

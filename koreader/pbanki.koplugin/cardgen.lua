@@ -30,10 +30,10 @@ end
 
 --- Messages for Assistant's querier.
 -- @tparam table h highlight: text, before, after, note, book, author, chapter, percent
--- @int count cards to ask for
+-- @tparam table request `{count = n}` for exactly n cards, or `{max = n}` to let the AI choose 1 to n
 -- @string companion optional Book Companion text
 -- @string position_note optional Book Companion note about the reading position
-function M.buildMessages(h, count, companion, position_note)
+function M.buildMessages(h, request, companion, position_note)
     local messages = {
         { role = "system", content = M.SYSTEM_PROMPT },
     }
@@ -67,11 +67,28 @@ function M.buildMessages(h, count, companion, position_note)
     if position_note and position_note ~= "" then
         table.insert(parts, position_note)
     end
-    table.insert(parts, count == 1 and "Write 1 card."
-        or string.format("Write %d cards, each asking something different.", count))
+    table.insert(parts, M.countInstruction(request))
 
     table.insert(messages, { role = "user", content = table.concat(parts, "\n\n") })
     return messages
+end
+
+--- How many cards to write, as an instruction for the AI.
+function M.countInstruction(request)
+    if request.max then
+        if request.max <= 1 then return "Write 1 card." end
+        return string.format("Decide how many cards this highlight deserves, from 1 to %d. "
+            .. "A short, focused highlight with one idea gets 1 card. "
+            .. "Write more only when it holds several distinct facts or ideas worth remembering, one card each.",
+            request.max)
+    end
+    if request.count == 1 then return "Write 1 card." end
+    return string.format("Write %d cards, each asking something different.", request.count)
+end
+
+--- Most cards to accept from the reply.
+function M.cardLimit(request)
+    return request.max or request.count
 end
 
 local function trim(s)
