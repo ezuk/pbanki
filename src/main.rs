@@ -3,7 +3,8 @@ use common::*;
 use std::cell::RefCell;
 use std::ffi::{CStr, CString, c_char};
 use std::rc::Rc;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use inkview::Event;
@@ -85,6 +86,8 @@ fn main() {
     let iv = Box::leak(Box::new(inkview::load())) as &_;
 
     let (evt_tx, evt_rx) = std::sync::mpsc::channel();
+    let reopened = Arc::new(AtomicBool::new(false));
+    let reopened_for_ui = reopened.clone();
 
     std::thread::spawn({
         move || {
@@ -109,6 +112,7 @@ fn main() {
             let hooks = PlatformHooks {
                 text_prompt: Some(keyboard_prompt(iv)),
                 connect_network: Some(Rc::new(move || connect_network(iv))),
+                reopened: Some(reopened_for_ui),
                 ..PlatformHooks::default()
             };
             setup_ui(&ui, &config, hooks);
@@ -119,6 +123,9 @@ fn main() {
 
     inkview::iv_main(iv, {
         move |evt| {
+            if matches!(evt, Event::Foreground { .. }) {
+                reopened.store(true, Ordering::Relaxed);
+            }
             if evt_tx.send(evt).is_err() {
                 unsafe {
                     iv.CloseApp();

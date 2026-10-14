@@ -98,6 +98,8 @@ pub struct PlatformHooks {
     pub connect_network: Option<Rc<dyn Fn() -> Result<(), String>>>,
     pub login: LoginFn,
     pub sync: crate::SyncFn,
+    /// Set when the app comes back to the foreground
+    pub reopened: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl Default for PlatformHooks {
@@ -107,6 +109,7 @@ impl Default for PlatformHooks {
             connect_network: None,
             login: Arc::new(crate::sync::login_blocking),
             sync: Arc::new(crate::sync::sync_blocking),
+            reopened: None,
         }
     }
 }

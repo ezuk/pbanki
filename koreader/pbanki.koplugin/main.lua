@@ -255,33 +255,40 @@ function PbAnki:askCardCount(value, fn, on_write_own)
     })
 end
 
+--- Messages asking the AI for cards for highlight `h`.
+function PbAnki:messagesFor(h, request)
+    local companion, position_note = self:assistant():companionContext(h.file, h.percent or 0)
+    return cardgen.buildMessages(h, request, companion, position_note)
+end
+
 --- Asks the AI for cards and shows them in `editor`, per `editor.request`
--- (see cardgen.buildMessages).
-function PbAnki:suggest(editor)
+-- (see cardgen.buildMessages). Calls `after` once the editor has its cards,
+-- or the AI could not suggest any.
+function PbAnki:suggest(editor, after)
     local assistant = self:assistant()
     if not assistant then return end
     local highlight = editor.highlight
     local request = editor.request
     local function run()
         Trapper:wrap(function()
-            local companion, position_note = assistant:companionContext(highlight.file, highlight.percent or 0)
-            local messages = cardgen.buildMessages(highlight, request, companion, position_note)
-            local answer, err = assistant:queryFlashcards(messages, _("Suggesting cards…"))
+            local answer, err = assistant:queryFlashcards(self:messagesFor(highlight, request),
+                _("Suggesting cards…"))
             -- The editor may have moved on or closed while waiting
             if editor.highlight ~= highlight or not UIManager:isWidgetShown(editor) then return end
             if err then
                 if not (assistant.querier and assistant.querier.user_interrupted) then
                     UIManager:show(InfoMessage:new{ text = T(_("No suggestions: %1"), tostring(err)) })
                 end
-                return
+            else
+                local cards, parse_err = cardgen.parseCards(answer, cardgen.cardLimit(request), json.decode)
+                if cards then
+                    editor:setCards(cards)
+                else
+                    logger.warn("pbanki: unreadable AI reply", answer)
+                    UIManager:show(InfoMessage:new{ text = parse_err })
+                end
             end
-            local cards, parse_err = cardgen.parseCards(answer, cardgen.cardLimit(request), json.decode)
-            if not cards then
-                logger.warn("pbanki: unreadable AI reply", answer)
-                UIManager:show(InfoMessage:new{ text = parse_err })
-                return
-            end
-            editor:setCards(cards)
+            if after then after() end
         end)
     end
     if NetworkMgr:isOnline() then
@@ -291,12 +298,27 @@ function PbAnki:suggest(editor)
     end
 end
 
+--- Asks the AI for cards for highlight `h` with nothing on screen. Calls
+-- `done(cards)`, with nil cards when that failed. Returns a cancel function.
+function PbAnki:suggestInBackground(h, request, done)
+    return self:assistant():queryFlashcardsInBackground(self:messagesFor(h, request), function(answer, err)
+        if not answer then
+            logger.info("pbanki: background suggestion failed", err)
+            done(nil)
+            return
+        end
+        local cards = cardgen.parseCards(answer, cardgen.cardLimit(request), json.decode)
+        if not cards then logger.warn("pbanki: unreadable AI reply", answer) end
+        done(cards)
+    end)
+end
+
 --- Suggests cards for a highlight just shown in `editor`, or opens a blank
--- card when AI is off or not wanted.
-function PbAnki:fill(editor)
+-- card when AI is off or not wanted. Calls `after` once suggestions are in.
+function PbAnki:fill(editor, after)
     UIManager:nextTick(function()
         if editor.request and self:aiEnabled() then
-            self:suggest(editor)
+            self:suggest(editor, after)
         else
             editor:editCard(nil)
         end
@@ -326,7 +348,7 @@ function PbAnki:newEditor(highlight, opts)
         on_close = opts.on_close,
     }
     UIManager:show(editor)
-    self:fill(editor)
+    self:fill(editor, opts.after_fill)
     return editor
 end
 
@@ -375,13 +397,43 @@ function PbAnki:onPbAnkiReviewHighlights()
 
     local position = 1
     local saved = 0
+    local request = { max = self.settings.max_cards_batch }
     local function subtitle()
         return T(_("Highlight %1 of %2"), position, #pending)
     end
+
+    -- Suggestions for the next highlight, fetched in the background while
+    -- the reader works on the current one
+    local prefetch
+    -- Background suggestions the shown highlight is still waiting for
+    local awaited
+    local function cancelPrefetch()
+        if prefetch and not prefetch.done then prefetch.cancel() end
+        if awaited and not awaited.done then awaited.cancel() end
+        prefetch, awaited = nil, nil
+    end
+    local function startPrefetch()
+        local next_position = position + 1
+        local assistant = self:assistant()
+        if next_position > #pending or not self:aiEnabled() or not assistant.queryFlashcardsInBackground
+                or not NetworkMgr:isOnline() then
+            return
+        end
+        local entry = { position = next_position, highlight = self:describe(pending[next_position]) }
+        prefetch = entry
+        entry.cancel = self:suggestInBackground(entry.highlight, request, function(cards)
+            entry.done, entry.cards = true, cards
+            if entry.on_done then entry.on_done() end
+        end)
+    end
+
     local function advance(editor)
+        if awaited and not awaited.done then awaited.cancel() end
+        awaited = nil
         self:markReviewed(pending[position])
         position = position + 1
         if position > #pending then
+            cancelPrefetch()
             UIManager:close(editor)
             UIManager:show(InfoMessage:new{
                 text = T(_("All highlights reviewed. %1 cards saved."), saved),
@@ -389,14 +441,45 @@ function PbAnki:onPbAnkiReviewHighlights()
             })
             return
         end
-        editor:setHighlight(self:describe(pending[position]), subtitle())
-        self:fill(editor)
+        local entry = prefetch
+        if not (entry and entry.position == position) then
+            cancelPrefetch()
+            editor:setHighlight(self:describe(pending[position]), subtitle())
+            self:fill(editor, startPrefetch)
+            return
+        end
+        prefetch = nil
+        editor:setHighlight(entry.highlight, subtitle())
+        local function apply()
+            if editor.highlight ~= entry.highlight or not UIManager:isWidgetShown(editor) then return end
+            if not entry.cards then
+                -- The background request failed: ask again in the foreground
+                editor:setWaiting(false)
+                self:fill(editor, startPrefetch)
+                return
+            end
+            -- Keep any card written while waiting
+            if #editor.cards == 0 then
+                editor:setCards(entry.cards)
+            else
+                editor:setWaiting(false)
+            end
+            startPrefetch()
+        end
+        if entry.done then
+            apply()
+        else
+            editor:setWaiting(true)
+            awaited = entry
+            entry.on_done = apply
+        end
     end
 
     self:newEditor(self:describe(pending[position]), {
         title = _("Flashcards from highlights"),
         subtitle = subtitle(),
-        request = { max = self.settings.max_cards_batch },
+        request = request,
+        after_fill = startPrefetch,
         on_save = function(editor, cards)
             if self:saveCards(editor.highlight, cards, true) then
                 saved = saved + #cards
@@ -404,6 +487,7 @@ function PbAnki:onPbAnkiReviewHighlights()
             end
         end,
         on_skip = advance,
+        on_close = cancelPrefetch,
     })
     return true
 end

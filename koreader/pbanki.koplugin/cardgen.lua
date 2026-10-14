@@ -15,7 +15,8 @@ Rules:
 - Each card asks something different: another fact, or the same fact from the other direction ("What is the capital of France?" / "Paris is the capital of which country?"). Never repeat a question in other words.
 - Front: one short, specific question, ideally under 12 words.
 - Back: the shortest complete answer, ideally 1 to 5 words, never more than one sentence.
-- The question must make sense months later without the book open: name the person, place or idea it is about.
+- Ask about the idea itself, as plain fact. Never attribute it to the author, the book or a character ("According to …", "In this book, …", "What does the author say …"). Quote: "Self-knowledge is the foundation of self-control." Wrong: "According to Kelly McGonigal, what is the foundation of self-control?" Right: "What is the foundation of self-control?"
+- The question must still make sense months later without the book open: name the specific thing it is about when the highlight does.
 - Do not copy the whole highlight onto a card.
 - Write in the language of the highlighted text.
 - Plain text only, no Markdown.

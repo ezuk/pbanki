@@ -13,6 +13,8 @@
 //!   key:<name>      press left|right|up|down|pageup|pagedown|menu|return
 //!   type:<text>     text the next keyboard prompt returns
 //!   wait:<ms>       let timers and background work run
+//!   reopen:<file>   queue <file> as the KOReader inbox, then bring the app
+//!                   back to the foreground
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -80,6 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         done(typed_for_prompt.borrow_mut().pop_front());
     });
 
+    let reopened = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let ui = MainWindow::new()?;
     // Stands in for AnkiWeb: the password "wrong" fails, anything else passes
     let hooks = PlatformHooks {
@@ -93,6 +96,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }),
         sync: std::sync::Arc::new(fake_sync),
+        reopened: Some(reopened.clone()),
     };
     setup_ui(&ui, &config, hooks);
     ui.show()?;
@@ -134,6 +138,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 });
             }
             "type" => typed.borrow_mut().push_back(arg.to_owned()),
+            "reopen" => {
+                fs::copy(arg, work_dir.join("inbox.jsonl"))?;
+                reopened.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
             "wait" => {
                 let ms: u64 = arg.parse().map_err(|_| format!("bad wait: {arg}"))?;
                 let until = std::time::Instant::now() + Duration::from_millis(ms);

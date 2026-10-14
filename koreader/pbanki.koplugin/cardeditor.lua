@@ -105,6 +105,8 @@ local CardEditor = InputContainer:extend{
     can_suggest = false,
     -- How many cards to ask the AI for, or nil to skip the AI
     request = nil,
+    -- Suggestions are on their way
+    waiting = false,
     on_suggest = nil,
     on_save = nil,
     -- Batch mode: skip this highlight
@@ -170,7 +172,8 @@ function CardEditor:build()
         table.insert(rows, CenterContainer:new{
             dimen = Geom:new{ w = inner_width, h = Screen:scaleBySize(40) },
             TextBoxWidget:new{
-                text = _("No cards yet. Tap + Card to write one."),
+                text = self.waiting and _("Suggesting cards…")
+                    or _("No cards yet. Tap + Card to write one."),
                 face = Font:getFace("cfont", 18),
                 width = inner_width,
                 alignment = "center",
@@ -273,6 +276,13 @@ end
 --- Replaces the cards shown, e.g. with AI suggestions.
 function CardEditor:setCards(cards)
     self.cards = cards
+    self.waiting = false
+    self:refresh()
+end
+
+--- Shows that suggestions are on their way while there are no cards yet.
+function CardEditor:setWaiting(waiting)
+    self.waiting = waiting
     self:refresh()
 end
 
@@ -281,6 +291,7 @@ function CardEditor:setHighlight(highlight, subtitle, cards)
     self.highlight = highlight
     self.subtitle = subtitle
     self.cards = cards or {}
+    self.waiting = false
     self:refresh()
 end
 

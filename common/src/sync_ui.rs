@@ -13,6 +13,7 @@ use crate::{Config, MainWindow, SyncLogin, SyncMode, SyncOutcome, SyncReport, Sy
 /// Lets e-ink draw the status before the UI thread blocks on Wi-Fi.
 const PAINT_DELAY: Duration = Duration::from_millis(300);
 const STEP_POLL: Duration = Duration::from_millis(250);
+const REOPEN_POLL: Duration = Duration::from_secs(1);
 
 pub fn step_message(step: SyncStep) -> &'static str {
     match step {
@@ -80,13 +81,41 @@ pub fn setup_sync(
         }
     });
 
-    if config.borrow().ankiweb.auto_sync && config.borrow().ankiweb.sync_login().is_some() {
+    let sync_on_open = {
+        let config = config.clone();
+        move || config.borrow().ankiweb.auto_sync && config.borrow().ankiweb.sync_login().is_some()
+    };
+    if sync_on_open() {
         let ui_weak = ui.as_weak();
         slint::Timer::single_shot(PAINT_DELAY, move || {
             if let Some(ui) = ui_weak.upgrade() {
                 ui.invoke_sync();
             }
         });
+    }
+
+    // PocketBook keeps the app running in the background; coming back counts
+    // as opening it again
+    if let Some(reopened) = hooks.reopened.clone() {
+        let ui_weak = ui.as_weak();
+        let session = session.clone();
+        let timer = slint::Timer::default();
+        timer.start(slint::TimerMode::Repeated, REOPEN_POLL, move || {
+            let Some(ui) = ui_weak.upgrade() else {
+                return;
+            };
+            if ui.get_learning() || ui.get_showing_settings() || ui.get_syncing() {
+                return;
+            }
+            if reopened.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                ui.set_deck_tree(update_deck_tree(&session));
+                if sync_on_open() {
+                    ui.invoke_sync();
+                }
+            }
+        });
+        // Runs for the life of the app
+        std::mem::forget(timer);
     }
 }
 
@@ -185,8 +214,9 @@ fn run_sync(
                 *step.lock().unwrap() = Some(s);
             })
         },
-        move |report| {
+        move |report: SyncReport| {
             ticker.stop();
+            eprintln!("Sync ({mode:?}): {:?}", report.outcome);
             save_login_changes(&config, &report);
             let Some(ui) = ui_weak.upgrade() else {
                 return;
