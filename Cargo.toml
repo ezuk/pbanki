@@ -1,16 +1,32 @@
-[package]
-name = "pbanki"
+[workspace]
+members = [".", "common", "dev"]
+default-members = ["common", "dev"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+
+[workspace.dependencies]
+common = { path = "./common" }
+anki = { git = "https://github.com/ankitects/anki", rev = "dac26ce67147b261d79a56092320cc2f5af0d990" }
+anki_proto = { git = "https://github.com/ankitects/anki", rev = "dac26ce67147b261d79a56092320cc2f5af0d990" }
+slint = { git = "https://github.com/slint-ui/slint", rev = "44208ff", default-features = false, features = ["compat-1-2", "std", "software-renderer-systemfonts", "renderer-software"] }
+slint-build = { git = "https://github.com/slint-ui/slint", rev = "44208ff" }
+tokio = { version = "1", features = ["io-util"] }
+
+[package]
+name = "pbanki"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
 euclid = "0.22.11"
 rgb = "0.8.52"
-common = { path = "./common" }
-slint = { git = "https://github.com/slint-ui/slint", rev = "44208ff", default-features = false, features = ["compat-1-2", "std", "software-renderer-systemfonts", "renderer-software"]}
+common.workspace = true
+slint.workspace = true
 inkview = { git = "https://github.com/ananyatimalsina/inkview-rs", branch = "1.15.0" }
 inkview-slint = { git = "https://github.com/ananyatimalsina/inkview-rs", branch = "1.15.0" }
-tokio = { version = "1", features = ["io-util"] }
+tokio.workspace = true
 
 [features]
 default = []

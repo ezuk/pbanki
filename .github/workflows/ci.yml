@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libfontconfig1-dev libxkbcommon-dev
+      - name: Install Rust toolchain
+        run: rustup show && rustup component add clippy rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
+  pocketbook:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Install Rust toolchain
+        run: rustup show && rustup target add armv7-unknown-linux-gnueabi
+      - uses: mlugg/setup-zig@v2
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install --locked cargo-zigbuild
+      - run: make

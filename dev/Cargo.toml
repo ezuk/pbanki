@@ -1,9 +1,10 @@
 [package]
 name = "dev"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
-common = { path = "../common" }
-slint = { git = "https://github.com/slint-ui/slint", rev = "44208ff", default-features = false, features = ["compat-1-2", "std", "backend-winit", "software-renderer-systemfonts", "renderer-software"] }
-tokio = { version = "1", features = ["io-util"] }
+common.workspace = true
+slint = { workspace = true, features = ["backend-winit"] }
+tokio.workspace = true
+png = "0.17"
