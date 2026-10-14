@@ -11,6 +11,14 @@ Port of Anki to PocketBook devices using:
 
 ## Building
 
+Requires Rust (the version is pinned in `rust-toolchain.toml`) and `protoc`
+(`brew install protobuf` on macOS).
+
+The repo is a Cargo workspace:
+- `common/`: shared app logic, Anki backend, and Slint UI
+- `dev/`: desktop build for development
+- root crate: the PocketBook app
+
 ### Desktop (for development)
 
 ```bash
@@ -18,7 +26,15 @@ cd dev
 cargo run
 ```
 
-Place your Anki collection at `./pbanki/collection/`
+Place your Anki collection at `./dev/pbanki/collection/`
+
+### Checks
+
+```bash
+cargo fmt --all --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
 
 ### PocketBook
 
@@ -27,14 +43,29 @@ make          # debug build
 make release  # release build
 ```
 
-Requires: `cargo-zigbuild` and `zig`
+Requires `cargo-zigbuild` (`cargo install --locked cargo-zigbuild`), `zig`,
+and the `armv7-unknown-linux-gnueabi` Rust target.
 
 ## Installation
 
-1. Copy binary to device: `/mnt/ext1/applications/pbanki.app`
-2. Copy your Anki collection to: `/mnt/ext1/applications/pbanki/collection/`
-3. (Optional) Create configuration file at: `/mnt/ext1/applications/pbanki/config.toml`
-4. Launch from Applications menu
+With the device connected over USB (it mounts as `PB629` or similar):
+
+1. Copy `target/armv7-unknown-linux-gnueabi/release/pbanki` to `applications/pbanki/pbanki`
+2. Copy the launcher `pocketbook/pbanki.app` to `applications/pbanki.app`
+3. Copy your Anki collection to `applications/pbanki/collection/collection.anki2`
+4. (Optional) Create configuration file at: `applications/pbanki/config.toml`
+5. Launch from Applications menu
+
+The launcher writes the app's output to `applications/pbanki/log.txt`.
+
+For a test collection, run `cargo run -p common --example sample_collection -- <dir>`.
+
+## Making cards in KOReader
+
+Copy `koreader/pbanki.koplugin` to `applications/koreader/plugins/` and restart KOReader.
+Highlight text, then tap **Make Anki card**. Saved cards are queued in
+`applications/pbanki/inbox.jsonl`, and pbAnki imports them into the **KOReader**
+deck when it starts or when you return to the deck list.
 
 ## Configuration
 
@@ -44,11 +75,12 @@ pbAnki uses a TOML configuration file. On first launch, a default config will be
 
 ```toml
 [general]
-# Language code for Anki i18n (e.g., "en", "de", "fr", "ja", "es", "pt", "ru", "zh", "ko")
-language = "en"
-
 # Collection path (relative to app directory or absolute)
 collection_path = "/mnt/ext1/applications/pbanki/collection"
+
+[display]
+# Card text size in screen pixels
+font_size = 20
 
 [ankiweb]
 # AnkiWeb synchronization settings
@@ -72,35 +104,34 @@ auto_sync = false
 sync_on_exit = false
 ```
 
-### Supported Languages
-
-pbAnki uses Anki's built-in translations, supporting 70+ languages including:
-- English (`en`, `en-GB`)
-- European: `es`, `fr`, `de`, `it`, `pt-BR`, `pt-PT`, `nl`, `sv-SE`, `da`, `fi`, `cs`, `hu`, `el`, `pl`, `tr`, `ru`, `uk`
-- Asian: `ja`, `ko`, `zh-CN`, `zh-TW`, `th`, `vi`, `id`, `hi-IN`
-- Middle Eastern: `ar`, `fa`, `he`
-- And many more...
-
 ## Project Structure
 
 ```
-src/      # PocketBook build (uses inkview-rs)
-dev/      # Desktop build (for development)
-ui/       # Slint UI components (shared)
+src/        # PocketBook build (uses inkview-rs)
+common/     # Shared app logic: Anki backend, card layout, KOReader inbox
+dev/        # Desktop build and the PocketBook screen emulator
+ui/         # Slint UI and the bundled JetBrains Mono font
+koreader/   # KOReader plugin for making cards from highlights
+pocketbook/ # Device launcher script
 ```
+
+### Emulator
+
+`cargo run -p dev --bin emulator -- <app dir> <output dir> <steps...>` renders the app
+as it appears on a PocketBook Verse (758×1024, 3× scale, 16 grays) and saves PNG
+screenshots. Steps are `shot:<name>`, `tap:<x>,<y>`, `swipe:<x>,<y1>,<y2>` and
+`key:<left|right|up|down|pageup|pagedown|menu|return>`.
 
 ## Current Features
 
-- View deck hierarchies
-- Collapse/expand decks
-- Show card counts (new/learning/due)
-- Study cards with scheduling
-- Answer cards with Again/Hard/Good/Easy ratings
-- Display interval durations on rating buttons
-- Real-time deck count updates after answering
-- Support for type-in cards (`[[type:Back]]`)
-- Multi-language support via Anki's i18n system (70+ languages)
-- Configurable collection path and language settings
+- Deck list with new/learn/due counts; collapse state is saved like desktop Anki
+- Cards laid out in JetBrains Mono, paged to fit the screen exactly
+- Bold, italic, line breaks, lists, cloze highlights and the front/back divider
+- Type-in cards show the expected answer
+- Page turns by tapping the left/right third, swiping, or the page buttons
+- Again/Hard/Good/Easy with intervals
+- Cards made in KOReader, with a Context screen showing the quote and its source
+- Configurable collection path
 
 ## TODOs
 
