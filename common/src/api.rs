@@ -30,6 +30,8 @@ pub struct LearnSession {
     pub states: RefCell<Option<SchedulingStates>>,
     pub start_time: RefCell<Option<Instant>>,
     pub sync_manager: Rc<SyncManager>,
+    /// Suspensions made from the learn screen that undo may reverse
+    pub user_suspensions: RefCell<u32>,
     /// Folder holding the collection directory and the KOReader inbox.
     pub app_dir: PathBuf,
 }
@@ -74,6 +76,7 @@ pub fn init_session(config: &Config) -> Result<Rc<LearnSession>, String> {
         states: RefCell::new(None),
         start_time: RefCell::new(None),
         sync_manager: Rc::new(SyncManager::new()),
+        user_suspensions: RefCell::new(0),
         app_dir: collection_dir
             .parent()
             .map(Path::to_path_buf)
@@ -170,6 +173,15 @@ pub fn setup_ui(ui: &MainWindow, config: &Config, hooks: PlatformHooks) {
             ui.set_current_card(card);
         }
         true
+    });
+
+    let session_for_suspend = session.clone();
+    let ui_weak = ui.as_weak();
+    ui.on_suspend(move |deck, columns, rows| {
+        let next = suspend_card(&session_for_suspend, deck, Grid::new(columns, rows));
+        if let Some(ui) = ui_weak.upgrade() {
+            ui.set_current_card(next);
+        }
     });
 
     let session_for_deck = session.clone();
@@ -576,8 +588,8 @@ fn load_next_card(
     Ok(Some(card_node))
 }
 
-/// Undoes the last rating and returns that card again, or `None` if there is
-/// no rating to undo.
+/// Undoes the last rating or suspension and returns that card again, or `None`
+/// if there is nothing to undo.
 pub fn undo_rating(session: &LearnSession, deck: DeckNode, grid: Grid) -> Option<CardNode> {
     let undone = {
         let mut col = session.collection.borrow_mut();
@@ -587,18 +599,42 @@ pub fn undo_rating(session: &LearnSession, deck: DeckNode, grid: Grid) -> Option
                 break;
             }
         }
-        if col.undo_status().undo == Some(Op::AnswerCard) {
-            col.undo()
-                .map_err(|e| eprintln!("Failed to undo rating: {e}"))
-                .is_ok()
-        } else {
-            false
+        let mut user_suspensions = session.user_suspensions.borrow_mut();
+        let undoable = match col.undo_status().undo {
+            Some(Op::AnswerCard) => true,
+            // Suspensions made at startup stay in place
+            Some(Op::Suspend) => *user_suspensions > 0,
+            _ => false,
+        };
+        if undoable && col.undo_status().undo == Some(Op::Suspend) {
+            *user_suspensions -= 1;
         }
+        undoable
+            && col
+                .undo()
+                .map_err(|e| eprintln!("Failed to undo: {e}"))
+                .is_ok()
     };
 
     // Reload either way, which also re-buries any type-in card at the front
     let card = next_card(session, deck, grid);
     (undone && card.id != -1).then_some(card)
+}
+
+/// Suspends the current card and returns the next one.
+pub fn suspend_card(session: &LearnSession, deck: DeckNode, grid: Grid) -> CardNode {
+    if let Some(card_id) = session.current_card.borrow_mut().take() {
+        let result = session.collection.borrow_mut().bury_or_suspend_cards(
+            &[anki::card::CardId(card_id)],
+            anki_proto::scheduler::bury_or_suspend_cards_request::Mode::Suspend,
+        );
+        match result {
+            Ok(_) => *session.user_suspensions.borrow_mut() += 1,
+            Err(e) => eprintln!("Failed to suspend card {card_id}: {e}"),
+        }
+    }
+    *session.states.borrow_mut() = None;
+    next_card(session, deck, grid)
 }
 
 pub fn rate_card(session: &LearnSession, rating: i32, deck: DeckNode, grid: Grid) -> CardNode {
@@ -871,6 +907,42 @@ mod tests {
         let undone = undo_rating(&session, default_deck(), GRID).unwrap();
         assert_eq!(undone.id, first.id);
         assert_eq!(rate_card(&session, 3, default_deck(), GRID).id, third.id);
+    }
+
+    #[test]
+    fn suspend_skips_the_card_until_undone() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = session_in(dir.path());
+        add_basic_note(&session, "First", "1");
+        add_basic_note(&session, "Second", "2");
+
+        let first = next_card(&session, default_deck(), GRID);
+        let second = suspend_card(&session, default_deck(), GRID);
+        assert_ne!(second.id, first.id);
+        assert_eq!(second.deck.new, 1);
+
+        let undone = undo_rating(&session, default_deck(), GRID).unwrap();
+        assert_eq!(undone.id, first.id);
+        assert_eq!(undone.deck.new, 2);
+        assert!(undo_rating(&session, default_deck(), GRID).is_none());
+    }
+
+    #[test]
+    fn undo_leaves_startup_suspensions_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = session_in(dir.path());
+        add_basic_note(&session, "Only", "1");
+        let card = next_card(&session, default_deck(), GRID);
+        session
+            .collection
+            .borrow_mut()
+            .bury_or_suspend_cards(
+                &[anki::card::CardId(card.id)],
+                anki_proto::scheduler::bury_or_suspend_cards_request::Mode::Suspend,
+            )
+            .unwrap();
+
+        assert!(undo_rating(&session, default_deck(), GRID).is_none());
     }
 
     #[test]

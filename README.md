@@ -92,9 +92,10 @@ Text size has a live preview. The AnkiWeb login is typed with the PocketBook's o
 ### Studying
 
 - Tap anywhere on the question to reveal the answer, and tap the answer to rate it **Good**. On an answer longer than one page, a tap turns the page first.
-- Rated too fast? Swipe from right to left, or press the **prev** button, to undo the last rating and see that card's answer again.
+- Rated too fast? Swipe from right to left, or press the **prev** button, to undo the last rating or suspension and see that card's answer again.
 - The **next** button does the same as a tap: next page, reveal, then Good. **Prev** goes back a page, or undoes on a card's first page.
 - Swipe up and down to turn pages. Again, Hard and Easy are on the on-screen buttons.
+- **Suspend** removes an unwanted card from review, as in desktop Anki. Undo brings it back.
 - Buttons are outlined and invert while pressed, which reads clearly on e-ink.
 - When a deck is done, a "Congratulations!" screen appears with a way back to the deck list.
 - Type-in cards are skipped (buried until tomorrow), since typing on e-ink is no fun.

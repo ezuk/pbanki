@@ -44,6 +44,7 @@ export component MainWindow inherits Window {
     callback deck_clicked(deck: DeckNode, columns: int, rows: int);
     callback rate(rating: int, deck: DeckNode, columns: int, rows: int);
     callback undo(deck: DeckNode, columns: int, rows: int) -> bool;
+    callback suspend(deck: DeckNode, columns: int, rows: int);
     callback open_settings();
     callback request_text(field: string);
     callback credentials_edited();
@@ -123,6 +124,9 @@ export component MainWindow inherits Window {
             }
             undo => {
                 return undo(current_card.deck, columns, rows);
+            }
+            suspend => {
+                suspend(current_card.deck, columns, rows);
             }
             init => {
                 self.focus();
