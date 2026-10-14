@@ -10,7 +10,7 @@ pub mod utils;
 
 pub use api::{
     LearnSession, PlatformHooks, TextPrompt, TextRequest, init_session, next_card, rate_card,
-    setup_ui, update_deck_tree,
+    setup_ui, undo_rating, update_deck_tree,
 };
 pub use config::Config;
 pub use sync::{SyncManager, SyncResult, SyncStatus};

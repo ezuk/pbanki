@@ -61,6 +61,8 @@ export component LearnScreen {
 
     callback home_clicked();
     callback rate(rating: int);
+    // Undoes the last rating; false if there was nothing to undo
+    callback undo() -> bool;
     callback open_book();
 
     function previous_page() {
@@ -85,6 +87,14 @@ export component LearnScreen {
         current-page = show_context ? 0 : Math.min(card.answer_start, card.answer.length - 1);
     }
 
+    // Shows the card that was just rated again, answer side up
+    function undo_rating() {
+        if undo() {
+            show_context = false;
+            reveal();
+        }
+    }
+
     function answer(rating: int) {
         show_answer = false;
         show_context = false;
@@ -95,38 +105,33 @@ export component LearnScreen {
     forward-focus: focus-scope;
 
     focus-scope := FocusScope {
+        // Next (Right) moves forward: page, reveal, then Good.
+        // Prev (Left) goes back a page, or undoes the last rating on a card's first page.
         key-pressed(event) => {
-            if !has_card {
-                return reject;
-            }
+            let prev = (event.text == Key.LeftArrow) || (event.text == Key.DownArrow) || (event.text == Key.PageDown);
+            let next = (event.text == Key.RightArrow) || (event.text == Key.UpArrow) || (event.text == Key.PageUp) || (event.text == Key.Return) || (event.text == Key.Menu);
             if show_context {
-                if event.text == Key.LeftArrow || event.text == Key.DownArrow || event.text == Key.PageDown {
+                if prev {
                     if current-page > 0 { previous_page(); } else { toggle_context(); }
                     return accept;
                 }
-                if event.text == Key.RightArrow || event.text == Key.UpArrow || event.text == Key.PageUp {
+                if next {
                     next_page();
                     return accept;
                 }
                 return reject;
             }
-            if event.text == Key.LeftArrow || event.text == Key.DownArrow || event.text == Key.PageDown {
-                if current-page > 0 {
-                    previous_page();
-                } else if show_answer {
-                    answer(0);
-                }
+            if prev {
+                if current-page > 0 { previous_page(); } else { undo_rating(); }
                 return accept;
             }
-            if event.text == Key.RightArrow || event.text == Key.UpArrow || event.text == Key.PageUp || event.text == Key.Return || event.text == Key.Menu {
+            if next && has_card {
                 if !on_last_page {
                     next_page();
                 } else if !show_answer {
                     reveal();
-                } else if event.text == Key.Menu || event.text == Key.UpArrow || event.text == Key.PageUp {
-                    answer(2);
                 } else {
-                    answer(1);
+                    answer(2);
                 }
                 return accept;
             }
@@ -172,19 +177,33 @@ export component LearnScreen {
                 SwipeGestureHandler {
                     handle-swipe-up: current-page < total-pages - 1;
                     handle-swipe-down: current-page > 0;
+                    // Right to left undoes the last rating
+                    handle-swipe-left: !show_context;
                     swiped => {
-                        if self.current-position.y < self.pressed-position.y {
+                        let dx = self.current-position.x - self.pressed-position.x;
+                        let dy = self.current-position.y - self.pressed-position.y;
+                        if abs(dx) > abs(dy) {
+                            if dx < 0 {
+                                undo_rating();
+                            }
+                        } else if dy < 0 {
                             next_page();
                         } else {
                             previous_page();
                         }
                     }
 
-                    // On the front, any tap reveals the answer; otherwise the outer thirds turn pages
+                    // Front: any tap reveals the answer. Back: a tap turns the page, then rates Good.
+                    // Context: the outer thirds turn pages.
                     TouchArea {
                         clicked => {
-                            if has_card && !show_answer {
+                            if !has_card {
+                                return;
+                            }
+                            if !show_answer {
                                 reveal();
+                            } else if !show_context {
+                                if on_last_page { answer(2); } else { next_page(); }
                             } else if self.mouse-x < self.width / 3 {
                                 previous_page();
                             } else if self.mouse-x > self.width * 2 / 3 {

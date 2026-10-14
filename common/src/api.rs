@@ -8,6 +8,7 @@ use std::time::Instant;
 use anki::collection::{Collection, CollectionBuilder};
 use anki::error::{OrNotFound, Result as AnkiResult};
 use anki::notetype::{Notetype, NotetypeKind};
+use anki::ops::Op;
 use anki::prelude::I18n;
 use anki::scheduler::answering::{CardAnswer, Rating};
 use anki::scheduler::states::SchedulingStates;
@@ -157,6 +158,18 @@ pub fn setup_ui(ui: &MainWindow, config: &Config, hooks: PlatformHooks) {
         if let Some(ui) = ui_weak.upgrade() {
             ui.set_current_card(next);
         }
+    });
+
+    let session_for_undo = session.clone();
+    let ui_weak = ui.as_weak();
+    ui.on_undo(move |deck, columns, rows| {
+        let Some(card) = undo_rating(&session_for_undo, deck, Grid::new(columns, rows)) else {
+            return false;
+        };
+        if let Some(ui) = ui_weak.upgrade() {
+            ui.set_current_card(card);
+        }
+        true
     });
 
     let session_for_deck = session.clone();
@@ -563,6 +576,31 @@ fn load_next_card(
     Ok(Some(card_node))
 }
 
+/// Undoes the last rating and returns that card again, or `None` if there is
+/// no rating to undo.
+pub fn undo_rating(session: &LearnSession, deck: DeckNode, grid: Grid) -> Option<CardNode> {
+    let undone = {
+        let mut col = session.collection.borrow_mut();
+        // Type-in cards buried after the rating come off the undo stack first
+        while col.undo_status().undo == Some(Op::Bury) {
+            if col.undo().is_err() {
+                break;
+            }
+        }
+        if col.undo_status().undo == Some(Op::AnswerCard) {
+            col.undo()
+                .map_err(|e| eprintln!("Failed to undo rating: {e}"))
+                .is_ok()
+        } else {
+            false
+        }
+    };
+
+    // Reload either way, which also re-buries any type-in card at the front
+    let card = next_card(session, deck, grid);
+    (undone && card.id != -1).then_some(card)
+}
+
 pub fn rate_card(session: &LearnSession, rating: i32, deck: DeckNode, grid: Grid) -> CardNode {
     let card_id = *session.current_card.borrow();
     let states = session.states.borrow().clone();
@@ -796,6 +834,55 @@ mod tests {
         let card = next_card(&session, default_deck(), GRID);
 
         assert_eq!(rate_card(&session, 7, default_deck(), GRID).id, card.id);
+    }
+
+    #[test]
+    fn undo_brings_back_the_rated_card() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = session_in(dir.path());
+        add_basic_note(&session, "First", "1");
+        add_basic_note(&session, "Second", "2");
+
+        let first = next_card(&session, default_deck(), GRID);
+        let second = rate_card(&session, 2, default_deck(), GRID);
+        assert_ne!(second.id, first.id);
+
+        let undone = undo_rating(&session, default_deck(), GRID).unwrap();
+        assert_eq!(undone.id, first.id);
+        assert_eq!(undone.deck.new, 2);
+
+        // The restored card can be rated again
+        let next = rate_card(&session, 3, default_deck(), GRID);
+        assert_eq!(next.id, second.id);
+    }
+
+    #[test]
+    fn undo_steps_over_buried_type_in_cards() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = session_in(dir.path());
+        add_note(&session, "Basic", &["First", "1"]);
+        add_note(&session, "Basic (type in the answer)", &["2 + 2 = ?", "4"]);
+        add_note(&session, "Basic", &["Third", "3"]);
+
+        let first = next_card(&session, default_deck(), GRID);
+        let third = rate_card(&session, 3, default_deck(), GRID);
+        assert_eq!(texts(&third.question), vec!["Third"]);
+
+        let undone = undo_rating(&session, default_deck(), GRID).unwrap();
+        assert_eq!(undone.id, first.id);
+        assert_eq!(rate_card(&session, 3, default_deck(), GRID).id, third.id);
+    }
+
+    #[test]
+    fn undo_without_a_rating_does_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = session_in(dir.path());
+        add_basic_note(&session, "Only", "1");
+        let card = next_card(&session, default_deck(), GRID);
+
+        assert!(undo_rating(&session, default_deck(), GRID).is_none());
+        assert_eq!(rate_card(&session, 3, default_deck(), GRID).id, -1);
+        assert!(card.id != -1);
     }
 
     #[test]
