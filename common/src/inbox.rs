@@ -228,6 +228,11 @@ impl CardContext {
         (context.quote.trim() != "" || context.book.trim() != "").then_some(context)
     }
 
+    /// Where the highlight is, when the book is still on the device.
+    pub fn book_location(&self) -> Option<crate::open_book::BookLocation> {
+        crate::open_book::BookLocation::from_fields(&self.file, &self.position)
+    }
+
     /// Quote, rule, then book details, as HTML for the page renderer.
     pub fn to_html(&self) -> String {
         let mut html = String::new();

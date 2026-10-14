@@ -25,6 +25,8 @@ pub struct LearnSession {
     pub current_card: RefCell<Option<i64>>,
     pub states: RefCell<Option<SchedulingStates>>,
     pub start_time: RefCell<Option<Instant>>,
+    /// Where the current card's highlight is, for Open in book
+    pub book_location: RefCell<Option<crate::open_book::BookLocation>>,
     /// Suspensions made from the learn screen that undo may reverse
     pub user_suspensions: RefCell<u32>,
     /// Folder holding the collection directory and the KOReader inbox.
@@ -68,6 +70,7 @@ pub fn init_session(config: &Config) -> Result<Rc<LearnSession>, String> {
         current_card: RefCell::new(None),
         states: RefCell::new(None),
         start_time: RefCell::new(None),
+        book_location: RefCell::new(None),
         user_suspensions: RefCell::new(0),
         app_dir: collection_dir
             .parent()
@@ -86,6 +89,9 @@ pub struct TextRequest {
 /// Opens the platform keyboard; `done` receives the text, or `None` if cancelled.
 pub type TextPrompt = Rc<dyn Fn(TextRequest, Box<dyn FnOnce(Option<String>)>)>;
 
+/// Opens a book file in another app.
+pub type OpenBookFn = Rc<dyn Fn(&str) -> Result<(), String>>;
+
 /// Logs in to AnkiWeb with a username and password, returning the session key.
 pub type LoginFn = Arc<dyn Fn(&str, &str) -> Result<String, String> + Send + Sync>;
 
@@ -100,6 +106,8 @@ pub struct PlatformHooks {
     pub sync: crate::SyncFn,
     /// Set when the app comes back to the foreground
     pub reopened: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// Opens a book file in KOReader
+    pub open_in_koreader: Option<OpenBookFn>,
 }
 
 impl Default for PlatformHooks {
@@ -110,6 +118,7 @@ impl Default for PlatformHooks {
             login: Arc::new(crate::sync::login_blocking),
             sync: Arc::new(crate::sync::sync_blocking),
             reopened: None,
+            open_in_koreader: None,
         }
     }
 }
@@ -135,6 +144,22 @@ pub fn setup_ui(ui: &MainWindow, config: &Config, hooks: PlatformHooks) {
     };
 
     crate::sync_ui::setup_sync(ui, &session, &shared_config, &hooks);
+
+    let session_for_book = session.clone();
+    let open_in_koreader = hooks.open_in_koreader.clone();
+    ui.on_open_book(move || {
+        let Some(location) = session_for_book.book_location.borrow().clone() else {
+            return;
+        };
+        let opened = crate::open_book::write_request(&session_for_book.app_dir, &location)
+            .and_then(|()| match &open_in_koreader {
+                Some(open) => open(&location.file),
+                None => Err("Opening books needs KOReader on the PocketBook.".into()),
+            });
+        if let Err(e) = opened {
+            eprintln!("Open in book: {e}");
+        }
+    });
 
     let session_for_deck_tree = session.clone();
     let ui_weak = ui.as_weak();
@@ -551,6 +576,9 @@ fn load_next_card(
     let context = crate::inbox::CardContext::from_note(&notetype, &note);
     drop(col);
 
+    let book_location = context.as_ref().and_then(|c| c.book_location());
+    *session.book_location.borrow_mut() = book_location.clone();
+
     let context_pages = context
         .as_ref()
         .map(|c| crate::render::layout(&c.to_html(), grid.columns, grid.rows))
@@ -581,8 +609,7 @@ fn load_next_card(
                 .collect::<Vec<_>>(),
         )),
         context: crate::utils::pages_model(context_pages),
-        // Opening the book needs a device test first
-        can_open_book: false,
+        can_open_book: book_location.is_some(),
         message: SharedString::new(),
     };
 

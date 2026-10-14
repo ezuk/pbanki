@@ -97,6 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }),
         sync: std::sync::Arc::new(fake_sync),
         reopened: Some(reopened.clone()),
+        open_in_koreader: None,
     };
     setup_ui(&ui, &config, hooks);
     ui.show()?;

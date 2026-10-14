@@ -5,6 +5,7 @@ pub mod background;
 pub mod collection;
 pub mod config;
 pub mod inbox;
+pub mod open_book;
 pub mod render;
 pub mod sync;
 pub mod sync_ui;
