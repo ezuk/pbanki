@@ -18,6 +18,11 @@ local function select(ui, x0, y0, x1, y1)
     ui.highlight.hold_pos = { x = x0, y = y0, page = ui.document:getCurrentPage() }
     return sel
 end
+local function typeAndNext(text)
+    local dialog = top()
+    dialog:setInputText(text)
+    dialog.button_table:getButtonById("done").callback()
+end
 local function waitAI() return tonumber(os.getenv("UX_AI_WAIT")) or 20 end
 
 return {
@@ -99,4 +104,8 @@ return {
         ui.pbanki:createFromSelection(ui.highlight, nil)
     end,
     function(ui, shot) shot("16_ai_off") end,
+    function(ui, shot) typeAndNext("Who is the speaker addressing?") end,
+    function(ui, shot) shot("17_ai_off_back") end,
+    function(ui, shot) typeAndNext("Mrs. Bennet") end,
+    function(ui, shot) shot("18_ai_off_saved"); return 2.5 end,
 }

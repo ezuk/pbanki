@@ -362,7 +362,7 @@ function PbAnki:fill(editor, after)
         if editor.request and self:aiEnabled() then
             self:suggest(editor, after)
         else
-            editor:editCard(nil)
+            editor:editCard(nil, true)
         end
     end)
 end

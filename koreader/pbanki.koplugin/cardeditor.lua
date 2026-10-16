@@ -18,8 +18,8 @@ local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local InputContainer = require("ui/widget/container/inputcontainer")
+local InputDialog = require("ui/widget/inputdialog")
 local LineWidget = require("ui/widget/linewidget")
-local MultiInputDialog = require("ui/widget/multiinputdialog")
 local ScrollTextWidget = require("ui/widget/scrolltextwidget")
 local Size = require("ui/size")
 local TextBoxWidget = require("ui/widget/textboxwidget")
@@ -301,54 +301,96 @@ function CardEditor:refresh()
     UIManager:setDirty(self, "ui")
 end
 
---- Edits card `index`, or adds a new card when `index` is nil.
-function CardEditor:editCard(index)
+--- Edits card `index`, or adds a new card when `index` is nil, front then
+-- back on two full screens. With `save`, finishing saves the cards right away.
+function CardEditor:editCard(index, save)
     local card = index and self.cards[index] or { front = "", back = "" }
+    local front, back = card.front, card.back
+    local function done()
+        if index then
+            self.cards[index] = { front = front, back = back }
+        else
+            table.insert(self.cards, { front = front, back = back })
+        end
+        self:refresh()
+        if save then
+            self.on_save(self, self.cards)
+        end
+    end
+    local askFront, askBack
+    askFront = function()
+        self:sideDialog{
+            title = _("Card front"),
+            input = front,
+            hint = _("Question"),
+            left = { text = _("Cancel"), id = "close" },
+            right = { text = _("Next") .. " ›" },
+            on_left = function() end,
+            on_right = function(text)
+                front = text
+                if front == "" then return false end
+                askBack()
+            end,
+        }
+    end
+    askBack = function()
+        self:sideDialog{
+            title = _("Card back"),
+            description = front,
+            input = back,
+            hint = _("Answer"),
+            left = { text = "‹ " .. _("Front") },
+            right = { text = save and _("Save card") or _("Done") },
+            on_left = function(text)
+                back = text
+                askFront()
+            end,
+            on_right = function(text)
+                back = text
+                done()
+            end,
+        }
+    end
+    askFront()
+end
+
+--- Shows one side of a card in a full-screen input with large text.
+-- `on_right` may return false to keep the dialog open.
+function CardEditor:sideDialog(opts)
     local dialog
-    dialog = MultiInputDialog:new{
-        title = index and _("Edit card") or _("New card"),
-        fields = {
-            {
-                description = _("Front"),
-                text = card.front,
-                hint = _("Question"),
-                allow_newline = true,
-            },
-            {
-                description = _("Back"),
-                text = card.back,
-                hint = _("Answer"),
-                allow_newline = true,
-            },
-        },
+    local function finish(handler)
+        local text = util.trim(dialog:getInputText())
+        if handler(text) == false then return end
+        UIManager:close(dialog)
+    end
+    dialog = InputDialog:new{
+        title = opts.title,
+        description = opts.description,
+        input = opts.input,
+        input_hint = opts.hint,
+        input_face = Font:getFace("cfont", 28),
+        fullscreen = true,
+        condensed = true,
+        allow_newline = true,
         buttons = {
             {
                 {
-                    text = _("Cancel"),
-                    id = "close",
-                    callback = function() UIManager:close(dialog) end,
+                    text = opts.left.text,
+                    id = opts.left.id,
+                    callback = function() finish(opts.on_left) end,
                 },
                 {
-                    text = _("OK"),
+                    text = opts.right.text,
+                    id = "done",
                     is_enter_default = true,
-                    callback = function()
-                        local fields = dialog:getFields()
-                        local front, back = util.trim(fields[1]), util.trim(fields[2])
-                        UIManager:close(dialog)
-                        if front == "" then return end
-                        if index then
-                            self.cards[index] = { front = front, back = back }
-                        else
-                            table.insert(self.cards, { front = front, back = back })
-                        end
-                        self:refresh()
-                    end,
+                    callback = function() finish(opts.on_right) end,
                 },
             },
         },
     }
     UIManager:show(dialog)
     dialog:onShowKeyboard()
+    return dialog
 end
 
 function CardEditor:onClose()
