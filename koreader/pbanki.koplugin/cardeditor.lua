@@ -2,7 +2,7 @@
 Full-screen editor for the cards made from one highlight.
 
 Shows the highlight, then the cards (tap one to edit it, ✕ to remove it),
-then Suggest / Clear / + Card and the Save row.
+in pages when they do not fit, then Suggest / Clear / + Card and the Save row.
 
 @module koplugin.pbanki.cardeditor
 --]]--
@@ -23,6 +23,7 @@ local LineWidget = require("ui/widget/linewidget")
 local ScrollTextWidget = require("ui/widget/scrolltextwidget")
 local Size = require("ui/size")
 local TextBoxWidget = require("ui/widget/textboxwidget")
+local TextWidget = require("ui/widget/textwidget")
 local TitleBar = require("ui/widget/titlebar")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
@@ -100,7 +101,10 @@ local CardEditor = InputContainer:extend{
     cards = nil,
     title = nil,
     subtitle = nil,
-    max_cards = 4,
+    -- Page of cards shown
+    page = 1,
+    -- Card to bring into view on the next build
+    focus_card = nil,
     -- Whether the Suggest button is offered
     can_suggest = false,
     -- How many cards to ask the AI for, or nil to skip the AI
@@ -122,6 +126,9 @@ function CardEditor:init()
     if Device:hasKeys() then
         self.key_events.Close = { { Device.input.group.Back } }
     end
+    self.ges_events.Swipe = {
+        GestureRange:new{ ges = "swipe", range = function() return self.dimen end },
+    }
     self:build()
 end
 
@@ -166,6 +173,10 @@ function CardEditor:build()
     end
     local quote_height = quote:getSize().h
 
+    local used = title_bar:getSize().h + quote_height + bottom:getSize().h
+        + 2 * Size.span.vertical_large + Size.line.thick
+    local room = self.height - used - Size.span.vertical_large
+
     local rows = VerticalGroup:new{ align = "left" }
     if #self.cards == 0 then
         table.insert(rows, VerticalSpan:new{ width = Size.span.vertical_large * 2 })
@@ -180,9 +191,9 @@ function CardEditor:build()
             },
         })
     end
+    local card_rows = {}
     for i, card in ipairs(self.cards) do
-        table.insert(rows, VerticalSpan:new{ width = Size.span.vertical_large })
-        table.insert(rows, CardRow:new{
+        card_rows[i] = CardRow:new{
             card = card,
             width = inner_width,
             show_parent = self,
@@ -191,12 +202,33 @@ function CardEditor:build()
                 table.remove(self.cards, i)
                 self:refresh()
             end,
-        })
+        }
+    end
+    local pager_height = Screen:scaleBySize(48)
+    local pages = self:paginate(card_rows, room, pager_height)
+    self.page_count = #pages
+    if self.focus_card then
+        for p, page in ipairs(pages) do
+            if self.focus_card >= page.first and self.focus_card <= page.last then self.page = p end
+        end
+        self.focus_card = nil
+    end
+    self.page = math.max(1, math.min(self.page, #pages))
+    local shown = pages[self.page]
+    for i, row in ipairs(card_rows) do
+        if shown and i >= shown.first and i <= shown.last then
+            table.insert(rows, VerticalSpan:new{ width = Size.span.vertical_large })
+            table.insert(rows, row)
+        else
+            row:free()
+        end
     end
 
-    local used = title_bar:getSize().h + quote_height + bottom:getSize().h
-        + 2 * Size.span.vertical_large + Size.line.thick
-    local filler = math.max(0, self.height - used - Size.span.vertical_large - rows:getSize().h)
+    local pager = VerticalSpan:new{ width = 0 }
+    if #pages > 1 then
+        pager = self:pager(inner_width, pager_height, shown)
+    end
+    local filler = math.max(0, room - rows:getSize().h - pager:getSize().h)
 
     self[1] = FrameContainer:new{
         width = self.width,
@@ -216,9 +248,82 @@ function CardEditor:build()
             },
             rows,
             VerticalSpan:new{ width = filler },
+            pager,
             bottom,
         },
     }
+end
+
+--- Splits card rows into pages that fit in `room`, leaving `pager_height`
+-- for the page buttons when there is more than one page.
+-- @return list of {first, last}, empty without cards
+function CardEditor:paginate(card_rows, room, pager_height)
+    local heights, total = {}, 0
+    for i, row in ipairs(card_rows) do
+        heights[i] = Size.span.vertical_large + row:getSize().h
+        total = total + heights[i]
+    end
+    if #card_rows == 0 then return {} end
+    if total <= room then return { { first = 1, last = #card_rows } } end
+    room = room - pager_height
+    local pages, page, used = {}, nil, 0
+    for i, h in ipairs(heights) do
+        if not page or used + h > room then
+            page = { first = i, last = i }
+            table.insert(pages, page)
+            used = h
+        else
+            page.last = i
+            used = used + h
+        end
+    end
+    return pages
+end
+
+--- ‹ Cards 1–4 of 9 › for page `shown`.
+function CardEditor:pager(width, height, shown)
+    local button_width = Screen:scaleBySize(80)
+    local function arrow(text, page, enabled)
+        return Button:new{
+            text = text,
+            enabled = enabled,
+            bordersize = 0,
+            width = button_width,
+            callback = function() self:goToPage(page) end,
+            show_parent = self,
+        }
+    end
+    return CenterContainer:new{
+        dimen = Geom:new{ w = width, h = height },
+        HorizontalGroup:new{
+            align = "center",
+            arrow("‹", self.page - 1, self.page > 1),
+            CenterContainer:new{
+                dimen = Geom:new{ w = width - 2 * button_width, h = height },
+                TextWidget:new{
+                    text = T(_("Cards %1–%2 of %3"), shown.first, shown.last, #self.cards),
+                    face = Font:getFace("cfont", 18),
+                },
+            },
+            arrow("›", self.page + 1, self.page < self.page_count),
+        },
+    }
+end
+
+function CardEditor:goToPage(page)
+    if page < 1 or page > (self.page_count or 1) or page == self.page then return end
+    self.page = page
+    self:refresh()
+end
+
+function CardEditor:onSwipe(_arg, ges)
+    if ges.direction == "west" then
+        self:goToPage(self.page + 1)
+        return true
+    elseif ges.direction == "east" then
+        self:goToPage(self.page - 1)
+        return true
+    end
 end
 
 function CardEditor:buttonRows()
@@ -226,7 +331,7 @@ function CardEditor:buttonRows()
     local save_text = count > 1 and T(_("Save %1 cards"), count) or _("Save card")
     local tools = {
         {
-            text = _("Suggest"),
+            text = count > 0 and _("Suggest more") or _("Suggest"),
             enabled = self.can_suggest,
             callback = function() self.on_suggest(self) end,
         },
@@ -240,7 +345,6 @@ function CardEditor:buttonRows()
         },
         {
             text = _("+ Card"),
-            enabled = count < self.max_cards,
             callback = function() self:editCard(nil) end,
         },
     }
@@ -273,9 +377,20 @@ function CardEditor:buttonRows()
     return { tools, actions }
 end
 
---- Replaces the cards shown, e.g. with AI suggestions.
+--- Replaces the cards shown.
 function CardEditor:setCards(cards)
     self.cards = cards
+    self.page = 1
+    self.waiting = false
+    self:refresh()
+end
+
+--- Adds cards after the ones shown, e.g. AI suggestions, and shows the first.
+function CardEditor:addCards(cards)
+    if #cards > 0 then self.focus_card = #self.cards + 1 end
+    for _idx, card in ipairs(cards) do
+        table.insert(self.cards, card)
+    end
     self.waiting = false
     self:refresh()
 end
@@ -291,6 +406,7 @@ function CardEditor:setHighlight(highlight, subtitle, cards)
     self.highlight = highlight
     self.subtitle = subtitle
     self.cards = cards or {}
+    self.page = 1
     self.waiting = false
     self:refresh()
 end
@@ -311,6 +427,7 @@ function CardEditor:editCard(index, save)
             self.cards[index] = { front = front, back = back }
         else
             table.insert(self.cards, { front = front, back = back })
+            self.focus_card = #self.cards
         end
         self:refresh()
         if save then

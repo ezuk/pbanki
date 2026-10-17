@@ -54,7 +54,7 @@ The original stripped every card down to plain text, so the question and answer 
 
 Highlight a passage in [KOReader](https://koreader.rocks) and tap **Create flashcard**. The passage is saved as a normal highlight and a card editor opens. Or keep reading and highlighting, then pick **Flashcards from highlights** in the Tools menu to turn the new highlights into cards one after another, skipping the ones you don't want. Each highlight is offered once; the plugin remembers which ones you've reviewed in the book's own KOReader settings.
 
-With the [AI Assistant](https://github.com/omer-faruq/assistant.koplugin) plugin installed, the editor opens with suggested cards: short questions with short answers, each asking something different about the highlight. While reading, you choose how many cards to ask for (1 by default). In batch mode the AI decides: one card for a focused highlight, more for a rich one, up to a limit you set. The AI sees the book, chapter, the text around the highlight and your note on it. Edit them, drop them, or ask again. AI suggestions can be turned off, for example in flight mode: you then write the card yourself, the front on one full screen and the back on the next.
+With the [AI Assistant](https://github.com/omer-faruq/assistant.koplugin) plugin installed, the editor opens with suggested cards: short questions with short answers, each asking something different about the highlight. While reading, you choose how many cards to ask for (1 by default). In batch mode the AI decides: one card for a focused highlight, more for a rich one, up to a limit you set. The AI sees the book, chapter, the text around the highlight and your note on it. Edit them, drop them, or tap **Suggest more** to add more below them (up to 10 at a time) and keep the ones you like; long lists split into pages. AI suggestions can be turned off, for example in flight mode: you then write the card yourself, the front on one full screen and the back on the next.
 
 <table>
   <tr>
@@ -159,7 +159,7 @@ Not ready yet. Firmware 6.x lists apps from `system/config/desktop/view.json`, a
 
 ### KOReader plugin
 
-Copy `koreader/pbanki.koplugin` to `applications/koreader/plugins/` and restart KOReader. Highlight text, then tap **Create flashcard**, or open **Tools → pbAnki flashcards → Flashcards from highlights**. The same menu turns AI suggestions on and off, sets the most cards the AI may write per highlight in batch mode (1 to 4, default 3), picks the AI model, and can make all of a book's highlights new again. Batch mode can also be put on a gesture.
+Copy `koreader/pbanki.koplugin` to `applications/koreader/plugins/` and restart KOReader. Highlight text, then tap **Create flashcard**, or open **Tools → pbAnki flashcards → Flashcards from highlights**. The same menu turns AI suggestions on and off, sets the most cards the AI may write per highlight in batch mode (1 to 10, default 3), picks the AI model, and can make all of a book's highlights new again. Batch mode can also be put on a gesture.
 
 Cards are queued in `applications/pbanki/inbox.jsonl` and imported when pbAnki starts or when you return to the deck list. If a line can't be imported, it is kept in `inbox.failed.jsonl` rather than dropped.
 

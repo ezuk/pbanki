@@ -31,7 +31,8 @@ end
 
 --- Messages for Assistant's querier.
 -- @tparam table h highlight: text, before, after, note, book, author, chapter, percent
--- @tparam table request `{count = n}` for exactly n cards, or `{max = n}` to let the AI choose 1 to n
+-- @tparam table request `{count = n}` for exactly n cards, or `{max = n}` to let the AI choose 1 to n;
+-- optional `existing`, a list of {front, back} the new cards must not repeat
 -- @string companion optional Book Companion text
 -- @string position_note optional Book Companion note about the reading position
 function M.buildMessages(h, request, companion, position_note)
@@ -67,6 +68,14 @@ function M.buildMessages(h, request, companion, position_note)
     end
     if position_note and position_note ~= "" then
         table.insert(parts, position_note)
+    end
+    if request.existing and #request.existing > 0 then
+        local lines = {}
+        for _idx, card in ipairs(request.existing) do
+            table.insert(lines, "- " .. card.front .. " → " .. card.back)
+        end
+        table.insert(parts, "The reader already has these cards. Write new ones that ask something else:\n\n"
+            .. table.concat(lines, "\n"))
     end
     table.insert(parts, M.countInstruction(request))
 

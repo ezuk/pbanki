@@ -70,4 +70,11 @@ eq(cardgen.countInstruction({ max = 1 }), "Write 1 card.", "range of one")
 eq(cardgen.cardLimit({ max = 3 }), 3, "limit from range")
 eq(cardgen.cardLimit({ count = 2 }), 2, "limit from count")
 
+-- Suggesting more avoids the cards already there
+local more = cardgen.buildMessages({ text = "x" }, { count = 2, existing = { { front = "Q1", back = "A1" } } })[2].content
+assert(more:find("already has these cards", 1, true), "existing cards mentioned")
+assert(more:find("- Q1 → A1", 1, true), "existing card listed")
+assert(more:find("Write 2 cards", 1, true), "count still asked")
+assert(not ranged:find("already has", 1, true), "no existing cards, no mention")
+
 print("cardgen_spec: OK")

@@ -40,7 +40,7 @@ local JUMP_MAX_AGE = 120
 
 -- Words of book text on each side of the highlight sent to the AI
 local CONTEXT_WORDS = 150
-local MAX_CARDS = 4
+local MAX_CARDS = 10
 
 local PbAnki = WidgetContainer:extend{
     name = "pbanki",
@@ -303,14 +303,14 @@ function PbAnki:messagesFor(h, request)
     return cardgen.buildMessages(h, request, companion, position_note)
 end
 
---- Asks the AI for cards and shows them in `editor`, per `editor.request`
+--- Asks the AI for cards and adds them to `editor`, per `editor.request`
 -- (see cardgen.buildMessages). Calls `after` once the editor has its cards,
 -- or the AI could not suggest any.
 function PbAnki:suggest(editor, after)
     local assistant = self:assistant()
     if not assistant then return end
     local highlight = editor.highlight
-    local request = editor.request
+    local request = { count = editor.request.count, max = editor.request.max, existing = editor.cards }
     local function run()
         Trapper:wrap(function()
             local answer, err = assistant:queryFlashcards(self:messagesFor(highlight, request),
@@ -324,7 +324,7 @@ function PbAnki:suggest(editor, after)
             else
                 local cards, parse_err = cardgen.parseCards(answer, cardgen.cardLimit(request), json.decode)
                 if cards then
-                    editor:setCards(cards)
+                    editor:addCards(cards)
                 else
                     logger.warn("pbanki: unreadable AI reply", answer)
                     UIManager:show(InfoMessage:new{ text = parse_err })
@@ -372,7 +372,6 @@ function PbAnki:newEditor(highlight, opts)
         title = opts.title,
         subtitle = opts.subtitle,
         highlight = highlight,
-        max_cards = MAX_CARDS,
         can_suggest = self:assistant() ~= nil,
         request = opts.request,
         on_suggest = function(e)
@@ -500,12 +499,8 @@ function PbAnki:onPbAnkiReviewHighlights()
                 self:fill(editor, startPrefetch)
                 return
             end
-            -- Keep any card written while waiting
-            if #editor.cards == 0 then
-                editor:setCards(entry.cards)
-            else
-                editor:setWaiting(false)
-            end
+            -- After any card written while waiting
+            editor:addCards(entry.cards)
             startPrefetch()
         end
         if entry.done then
