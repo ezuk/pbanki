@@ -65,7 +65,7 @@ fn escape_html(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
-fn text_to_html(text: &str) -> String {
+pub(crate) fn text_to_html(text: &str) -> String {
     escape_html(text.trim()).replace('\n', "<br>")
 }
 
@@ -301,8 +301,14 @@ mod tests {
 
     #[test]
     fn names_a_sub_deck_per_book() {
-        assert_eq!(deck_name("Pride and Prejudice"), "KOReader::Pride and Prejudice");
-        assert_eq!(deck_name("  Dune:: Part  One\n"), "KOReader::Dune: Part One");
+        assert_eq!(
+            deck_name("Pride and Prejudice"),
+            "KOReader::Pride and Prejudice"
+        );
+        assert_eq!(
+            deck_name("  Dune:: Part  One\n"),
+            "KOReader::Dune: Part One"
+        );
         assert_eq!(deck_name("  "), "KOReader");
     }
 

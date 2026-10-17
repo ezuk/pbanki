@@ -10,7 +10,7 @@ use std::time::Duration;
 use inkview::Event;
 use inkview::bindings::{Inkview, KBD_NORMAL, KBD_PASSWORD};
 
-const KEYBOARD_MAX_LEN: usize = 256;
+const KEYBOARD_MAX_LEN: usize = 8192;
 
 /// Result of the last keyboard: `Some(None)` when it was cancelled.
 static KEYBOARD_RESULT: Mutex<Option<Option<String>>> = Mutex::new(None);
@@ -58,7 +58,10 @@ fn keyboard_prompt(iv: &'static Inkview) -> TextPrompt {
         // The keyboard keeps these pointers while open, so they are leaked
         let mut buffer = vec![0u8; KEYBOARD_MAX_LEN];
         let current = request.current.as_bytes();
-        let len = current.len().min(KEYBOARD_MAX_LEN - 1);
+        let mut len = current.len().min(KEYBOARD_MAX_LEN - 1);
+        while !request.current.is_char_boundary(len) {
+            len -= 1;
+        }
         buffer[..len].copy_from_slice(&current[..len]);
         let buffer: &'static mut [u8] = Box::leak(buffer.into_boxed_slice());
         let title: &'static CString =

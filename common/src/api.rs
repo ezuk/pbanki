@@ -79,7 +79,7 @@ pub fn init_session(config: &Config) -> Result<Rc<LearnSession>, String> {
     }))
 }
 
-/// Text the settings screen asks the platform keyboard for.
+/// Text the settings and edit screens ask the platform keyboard for.
 pub struct TextRequest {
     pub title: String,
     pub current: String,
@@ -144,6 +144,7 @@ pub fn setup_ui(ui: &MainWindow, config: &Config, hooks: PlatformHooks) {
     };
 
     crate::sync_ui::setup_sync(ui, &session, &shared_config, &hooks);
+    crate::edit::setup_edit(ui, &session, &hooks);
 
     let session_for_book = session.clone();
     let open_in_koreader = hooks.open_in_koreader.clone();

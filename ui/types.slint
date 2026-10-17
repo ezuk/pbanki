@@ -66,3 +66,13 @@ export enum LoginState {
 	passed,
 	failed,
 }
+
+// One side of a card on the edit screen
+export struct EditSide {
+	// The note field's name, e.g. Front or Back
+	title: string,
+	// Plain text; line breaks are kept
+	text: string,
+	// The field had formatting that saving plain text removes
+	formatted: bool,
+}

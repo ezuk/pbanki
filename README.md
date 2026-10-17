@@ -123,10 +123,19 @@ When AnkiWeb can't merge the two collections (after a reset on another device, f
 - The **next** button does the same as a tap: next page, reveal, then Good. **Prev** goes back a page, or undoes on a card's first page.
 - Swipe up and down to turn pages. Again, Hard and Easy are on the on-screen buttons.
 - **Suspend** removes an unwanted card from review, as in desktop Anki. Undo brings it back.
+- **Edit** fixes a card while you study it: the front on one full screen, then the back on the next. Tap the text to change it with the PocketBook keyboard, then **Save**. The card keeps its place and its schedule. Text is edited as plain text with line breaks; a side with formatting (bold, images) says so, and loses it only if you change that side.
 - Buttons are outlined and invert while pressed, which reads clearly on e-ink.
 - When a deck is done, a "Congratulations!" screen appears with a way back to the deck list.
 - Type-in cards are skipped (buried until tomorrow), since typing on e-ink is no fun.
 - If the collection can't be opened, pbAnki says why instead of quitting.
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/edit_front.png" width="240" alt="Edit card: the front on its own screen"></td>
+    <td><img src="docs/screenshots/edit_back.png" width="240" alt="Edit card: the back on its own screen, with Save"></td>
+    <td><img src="docs/screenshots/edited.png" width="240" alt="The study screen showing the edited question"></td>
+  </tr>
+</table>
 
 ### Under the hood
 

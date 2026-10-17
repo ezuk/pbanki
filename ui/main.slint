@@ -6,10 +6,11 @@ import "fonts/JetBrainsMono-BoldItalic.ttf";
 import { Constants } from "constants.slint";
 
 export { Constants }
-import { DeckNode, DeckTree, CardNode, LoginState } from "types.slint";
+import { DeckNode, DeckTree, CardNode, LoginState, EditSide } from "types.slint";
 import { LearnScreen } from "screens/learn.slint";
 import { DeckSelectScreen } from "screens/deck_select.slint";
 import { SettingsScreen } from "screens/settings.slint";
+import { EditScreen } from "screens/edit.slint";
 
 export component MainWindow inherits Window {
     // PocketBook Verse screen in logical pixels (758x1024 at 3x)
@@ -23,6 +24,12 @@ export component MainWindow inherits Window {
     in-out property <bool> learning;
     in-out property <CardNode> current_card;
     in-out property <DeckTree> deck_tree;
+
+    // Edit screen over the study screen; sides are filled in by edit_card
+    in-out property <bool> editing;
+    in-out property <int> edit_side;
+    in property <[EditSide]> edit_sides;
+    in property <string> edit_error;
 
     // Settings screen; values are filled in by open_settings
     in property <bool> native_keyboard;
@@ -58,6 +65,10 @@ export component MainWindow inherits Window {
     callback undo(deck: DeckNode, columns: int, rows: int) -> bool;
     callback suspend(deck: DeckNode, columns: int, rows: int);
     callback open_book();
+    callback edit_card();
+    callback edit_text(side: int);
+    callback edit_typed(side: int, text: string);
+    callback save_edit(deck: DeckNode, columns: int, rows: int);
     callback open_settings();
     callback request_text(field: string);
     callback credentials_edited();
@@ -148,6 +159,7 @@ export component MainWindow inherits Window {
 
         if error_message == "" && !showing_settings && learning: LearnScreen {
             card: current_card;
+            paused: editing;
             home_clicked => {
                 update_deck_tree();
                 learning = false;
@@ -164,8 +176,41 @@ export component MainWindow inherits Window {
             open_book => {
                 open_book();
             }
+            edit => {
+                edit_card();
+            }
             init => {
                 self.focus();
+            }
+        }
+    }
+
+    if editing: Rectangle {
+        background: Constants.paper;
+
+        // Keeps taps away from the study screen underneath
+        TouchArea { }
+
+        EditScreen {
+            x: Constants.padding;
+            y: Constants.padding;
+            width: parent.width - 2 * Constants.padding;
+            height: parent.height - 2 * Constants.padding;
+            native_keyboard: native_keyboard;
+            sides: edit_sides;
+            error: edit_error;
+            side <=> edit_side;
+            edit_text(side) => {
+                edit_text(side);
+            }
+            typed(side, text) => {
+                edit_typed(side, text);
+            }
+            save => {
+                save_edit(current_card.deck, columns, rows);
+            }
+            cancel => {
+                editing = false;
             }
         }
     }

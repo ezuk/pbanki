@@ -53,6 +53,8 @@ export component LearnScreen {
     in property <CardNode> card;
     in-out property <bool> show_answer;
     in-out property <bool> show_context;
+    // Ignores the page keys while another screen covers this one
+    in property <bool> paused;
     property <bool> has_card: card.message == "";
     property <[Page]> pages: show_context ? card.context : show_answer ? card.answer : card.question;
     property <int> current-page: 0;
@@ -65,6 +67,7 @@ export component LearnScreen {
     callback undo() -> bool;
     callback suspend();
     callback open_book();
+    callback edit();
 
     function previous_page() {
         if current-page > 0 {
@@ -116,6 +119,9 @@ export component LearnScreen {
         // Next (Right) moves forward: page, reveal, then Good.
         // Prev (Left) goes back a page, or undoes the last rating on a card's first page.
         key-pressed(event) => {
+            if paused {
+                return reject;
+            }
             let prev = (event.text == Key.LeftArrow) || (event.text == Key.DownArrow) || (event.text == Key.PageDown);
             let next = (event.text == Key.RightArrow) || (event.text == Key.UpArrow) || (event.text == Key.PageUp) || (event.text == Key.Return) || (event.text == Key.Menu);
             if show_context {
@@ -226,7 +232,7 @@ export component LearnScreen {
                 height: Constants.nav_height;
                 spacing: Constants.spacing;
 
-                // Columns mirror the rating buttons: Suspend, indicator, Context
+                // Columns mirror the rating buttons: Suspend, Edit, indicator, Context
                 Rectangle {
                     horizontal-stretch: 1;
                     if has_card && !show_context: InkButton {
@@ -240,8 +246,21 @@ export component LearnScreen {
                     }
                 }
 
+                Rectangle {
+                    horizontal-stretch: 1;
+                    if has_card && !show_context: InkButton {
+                        width: 100%;
+                        height: 100%;
+                        text: "Edit";
+                        font-size: Constants.font_size_small;
+                        clicked => {
+                            edit();
+                        }
+                    }
+                }
+
                 Text {
-                    horizontal-stretch: 2;
+                    horizontal-stretch: 1;
                     text: total-pages > 1 ? (current-page > 0 ? "‹ " : "  ") + (current-page + 1) + "/" + total-pages + (on_last_page ? "  " : " ›") : "";
                     font-family: Constants.font_family;
                     font-size: Constants.font_size_small;

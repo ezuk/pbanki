@@ -1,0 +1,137 @@
+import { TextEdit } from "std-widgets.slint";
+import { Constants } from "../constants.slint";
+import { EditSide } from "../types.slint";
+import { InkButton } from "../components/ink_button.slint";
+
+// One side of a card per screen: front, then back. Tapping the text opens the keyboard.
+export component EditScreen {
+    in property <bool> native_keyboard;
+    in property <[EditSide]> sides;
+    in property <string> error;
+    in-out property <int> side;
+    property <EditSide> current: side < sides.length ? sides[side] : { title: "", text: "", formatted: false };
+    property <bool> is_last: side >= sides.length - 1;
+    // Anki needs a front
+    property <bool> front_filled: sides.length > 0 && sides[0].text != "";
+
+    callback edit_text(side: int);
+    callback typed(side: int, text: string);
+    callback save();
+    callback cancel();
+
+    VerticalLayout {
+        spacing: Constants.spacing;
+
+        HorizontalLayout {
+            height: Constants.top_bar_height;
+
+            Text {
+                horizontal-stretch: 1;
+                text: "Edit card";
+                font-family: Constants.font_family;
+                font-size: Constants.font_size_content;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+
+            if sides.length > 1: Text {
+                text: (side + 1) + " of " + sides.length;
+                font-family: Constants.font_family;
+                font-size: Constants.font_size_small;
+                color: Constants.faded;
+                vertical-alignment: center;
+            }
+        }
+
+        Rectangle {
+            height: Constants.border * 2;
+            background: Constants.ink;
+        }
+
+        Text {
+            text: current.title;
+            font-family: Constants.font_family;
+            font-size: Constants.font_size_small;
+            font-weight: 700;
+            color: Constants.faded;
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            border-width: Constants.border;
+            border-color: Constants.ink;
+            border-radius: Constants.radius;
+            clip: true;
+
+            if native_keyboard: TouchArea {
+                clicked => {
+                    edit_text(side);
+                }
+            }
+
+            if native_keyboard: VerticalLayout {
+                padding: Constants.spacing;
+                alignment: start;
+
+                Text {
+                    text: current.text == "" ? "Empty. Tap to write." : current.text;
+                    font-family: Constants.font_family;
+                    font-size: Constants.font_size_content;
+                    color: current.text == "" ? Constants.faded : Constants.ink;
+                    wrap: word-wrap;
+                    overflow: elide;
+                }
+            }
+
+            if !native_keyboard: TextEdit {
+                width: 100%;
+                height: 100%;
+                text: current.text;
+                font-size: Constants.font_size_content;
+                wrap: word-wrap;
+                edited(text) => {
+                    typed(side, text);
+                }
+            }
+        }
+
+        Text {
+            text: error != "" ? error
+                : current.formatted ? "Changing this side removes its formatting, such as bold or images."
+                : native_keyboard ? "Tap the text to change it." : "";
+            font-family: Constants.font_family;
+            font-size: Constants.font_size_small;
+            font-weight: error != "" ? 700 : 400;
+            color: error != "" ? Constants.ink : Constants.faded;
+            wrap: word-wrap;
+        }
+
+        HorizontalLayout {
+            height: Constants.button_bar_height;
+            spacing: Constants.spacing;
+
+            InkButton {
+                text: side > 0 ? "‹ " + sides[side - 1].title : "Cancel";
+                clicked => {
+                    if side > 0 {
+                        side -= 1;
+                    } else {
+                        cancel();
+                    }
+                }
+            }
+
+            InkButton {
+                text: is_last ? "Save" : sides[side + 1].title + " ›";
+                enabled: front_filled;
+                clicked => {
+                    if is_last {
+                        save();
+                    } else {
+                        side += 1;
+                    }
+                }
+            }
+        }
+    }
+}

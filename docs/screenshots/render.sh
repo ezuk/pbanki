@@ -26,6 +26,9 @@ show=379,946
 good=489,946
 easy=678,946
 context=678,850
+edit=295,850
+edit_text=379,400
+edit_next=564,946
 settings=640,50
 username=490,183
 password=490,252
@@ -35,6 +38,10 @@ emulate shot:decks tap:$expand shot:decks_expanded
 emulate tap:42,182 shot:decks_koreader
 emulate tap:$koreader shot:koreader_question tap:$show shot:koreader_answer \
     tap:$context shot:context tap:150,946 tap:$easy shot:finished
+emulate tap:42,182 tap:$koreader tap:$edit shot:edit_front \
+    "type:What does every rich single man want, according to Pride and Prejudice?" \
+    tap:$edit_text tap:$edit_next shot:edit_back tap:$edit_next shot:edited
+emulate tap:$expand tap:$basics tap:$show tap:$good tap:$edit shot:edit_formatted
 emulate tap:$expand tap:$basics shot:question tap:$show shot:answer \
     tap:$good shot:formatting_question tap:$show shot:formatting_answer \
     tap:$good tap:$show shot:long_card
