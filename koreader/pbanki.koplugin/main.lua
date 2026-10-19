@@ -41,6 +41,9 @@ local JUMP_MAX_AGE = 120
 -- Words of book text on each side of the highlight sent to the AI
 local CONTEXT_WORDS = 150
 local MAX_CARDS = 10
+-- Saved cards remembered per book, and how many of them the AI sees
+local HISTORY_KEPT = 40
+local HISTORY_SHOWN = 8
 
 local PbAnki = WidgetContainer:extend{
     name = "pbanki",
@@ -221,6 +224,21 @@ function PbAnki:markReviewed(item)
     self.ui.doc_settings:saveSetting("pbanki_reviewed", reviewed)
 end
 
+-- Card history: the book's latest saved cards, which steer new suggestions
+
+function PbAnki:cardHistory()
+    return self.ui.doc_settings:readSetting("pbanki_card_history") or {}
+end
+
+function PbAnki:addToCardHistory(h, cards)
+    local entries = {}
+    for _idx, card in ipairs(cards) do
+        table.insert(entries, cardgen.historyEntry(h, card))
+    end
+    self.ui.doc_settings:saveSetting("pbanki_card_history",
+        cardgen.appendHistory(self:cardHistory(), entries, HISTORY_KEPT))
+end
+
 --- Highlights in book order that have not been reviewed.
 function PbAnki:pendingHighlights()
     local reviewed = self:reviewed()
@@ -300,7 +318,10 @@ end
 --- Messages asking the AI for cards for highlight `h`.
 function PbAnki:messagesFor(h, request)
     local companion, position_note = self:assistant():companionContext(h.file, h.percent or 0)
-    return cardgen.buildMessages(h, request, companion, position_note)
+    local with_recent = {}
+    for key, value in pairs(request) do with_recent[key] = value end
+    with_recent.recent = cardgen.pickRecent(self:cardHistory(), HISTORY_SHOWN)
+    return cardgen.buildMessages(h, with_recent, companion, position_note)
 end
 
 --- Asks the AI for cards and adds them to `editor`, per `editor.request`
@@ -555,6 +576,7 @@ function PbAnki:saveCards(h, cards, quiet)
             return false
         end
     end
+    self:addToCardHistory(h, cards)
     local text = #cards == 1 and _("Card saved for pbAnki.") or T(_("%1 cards saved for pbAnki."), #cards)
     if quiet then
         UIManager:show(Notification:new{ text = text })

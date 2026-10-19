@@ -10,13 +10,22 @@ local M = {}
 
 M.SYSTEM_PROMPT = [[You write Anki flashcards from a passage a reader highlighted in a book.
 
-Rules:
-- Base every card tightly on the highlighted text. Use the surrounding passage and book notes only to understand it.
-- Each card asks something different: another fact, or the same fact from the other direction ("What is the capital of France?" / "Paris is the capital of which country?"). Never repeat a question in other words.
+Choosing what to ask:
+- Base every card on the highlighted text. Use the surrounding passage and book notes to understand it and to name things.
+- If the reader left a note on the highlight, it says what they care about or how they will use it. Let it decide which ideas you pick and how you frame the cards, even over the highlight's main point.
+- Pick what is worth remembering: the main claim, a surprising finding, or a practice the reader can use. Skip side examples and restatements.
+- When the passage gives advice, ask when to use it: "How to breathe when encountering temptation?" → "Slowly, 4 to 6 breaths per minute."
+- Use the book's own name for an idea, even when the name appears only in the surrounding passage or book notes: "What does self-control require instead of fight-or-flight?" → "The pause-and-plan response."
+- Keep the strength of the claim. If the text says "best", "most", "only" or "foundation", say it in the question: "What is the best way to improve self-control?"
+- When the text lists parallel items, write one card that asks for the list (up to 4 items) instead of one card per item. Wrong: four cards like "How does sleep deprivation affect attention?" Right: "What does chronic mild sleep deprivation make harder?" → "Controlling emotions, focusing attention, finding energy for big challenges."
+- Each card asks something different: another idea, or the same idea from the other direction. Never repeat a question in other words.
+
+Writing the card:
 - Front: one short, specific question, ideally under 12 words.
-- Back: the shortest complete answer, ideally 1 to 5 words, never more than one sentence.
-- Ask about the idea itself, as plain fact. Never attribute it to the author, the book or a character ("According to …", "In this book, …", "What does the author say …"). Quote: "Self-knowledge is the foundation of self-control." Wrong: "According to Kelly McGonigal, what is the foundation of self-control?" Right: "What is the foundation of self-control?"
-- The question must still make sense months later without the book open: name the specific thing it is about when the highlight does.
+- Back: the shortest complete answer, ideally 1 to 6 words. It may add a few words of takeaway after a full stop: "The enemy within, not the cake. Turn attention inward."
+- The answer must not be guessable from the question, and must not repeat its words. Wrong: "How does sleep deprivation affect emotional control?" → "It makes emotions harder to control."
+- Ask about the idea itself, as plain fact. Never attribute it to the author, the book or a character ("According to the author …", "In this book, …"). Quote: "Self-knowledge is the foundation of self-control." Wrong: "According to Kelly McGonigal, what is the foundation of self-control?" Right: "What is the foundation of self-control?" Naming a researcher or study the book cites is fine when it helps recall.
+- The question must still make sense months later without the book open: name the specific thing it is about.
 - Do not copy the whole highlight onto a card.
 - Write in the language of the highlighted text.
 - Plain text only, no Markdown.
@@ -44,7 +53,8 @@ end
 -- @tparam table request `{count = n}` for exactly n cards, or `{max = n}` to let the AI choose 1 to n;
 -- optional `existing`, a list of {front, back, suggested} the new cards must not repeat,
 -- where `suggested` is the AI's original {front, back} of a card;
--- optional `rejected`, a list of {front, back} suggestions the reader removed
+-- optional `rejected`, a list of {front, back} suggestions the reader removed;
+-- optional `recent`, entries from the book's card history (see M.historyEntry)
 -- @string companion optional Book Companion text
 -- @string position_note optional Book Companion note about the reading position
 function M.buildMessages(h, request, companion, position_note)
@@ -76,10 +86,14 @@ function M.buildMessages(h, request, companion, position_note)
     end
     table.insert(parts, "Highlighted text:\n\n" .. h.text)
     if h.note and h.note ~= "" then
-        table.insert(parts, "The reader's note on this highlight:\n\n" .. h.note)
+        table.insert(parts, "The reader's note on this highlight. It says what they care about here, "
+            .. "so let it steer which ideas you pick and how you ask:\n\n" .. h.note)
     end
     if position_note and position_note ~= "" then
         table.insert(parts, position_note)
+    end
+    if request.recent and #request.recent > 0 then
+        table.insert(parts, M.recentSection(request.recent))
     end
     if request.existing and #request.existing > 0 then
         local lines, edits = {}, {}
@@ -112,6 +126,87 @@ function M.buildMessages(h, request, companion, position_note)
 
     table.insert(messages, { role = "user", content = table.concat(parts, "\n\n") })
     return messages
+end
+
+-- Longest quote shown with a past card
+local HISTORY_QUOTE_CHARS = 300
+
+local function shorten(text, limit)
+    if #text <= limit then return text end
+    local cut = text:sub(1, limit):gsub("%s+%S*$", "")
+    return cut .. " …"
+end
+
+--- A saved card for the book's card history: the card, its AI original
+-- when the AI wrote it, and the highlight it came from.
+function M.historyEntry(h, card)
+    return {
+        front = card.front,
+        back = card.back,
+        suggested = card.suggested and { front = card.suggested.front, back = card.suggested.back } or nil,
+        quote = h.text,
+        note = h.note ~= "" and h.note or nil,
+    }
+end
+
+--- Card history with `entries` added at the end, keeping the last `limit`.
+function M.appendHistory(history, entries, limit)
+    local all = {}
+    for _idx, e in ipairs(history or {}) do table.insert(all, e) end
+    for _idx, e in ipairs(entries) do table.insert(all, e) end
+    local first = math.max(1, #all - limit + 1)
+    local kept = {}
+    for i = first, #all do table.insert(kept, all[i]) end
+    return kept
+end
+
+--- Up to `limit` history entries to show the AI: the latest edited AI cards
+-- first, then the latest others, in history order.
+function M.pickRecent(history, limit)
+    local chosen = {}
+    local count = 0
+    local function take(want_edited)
+        for i = #history, 1, -1 do
+            if count >= limit then return end
+            if not chosen[i] and M.wasEdited(history[i]) == want_edited then
+                chosen[i] = true
+                count = count + 1
+            end
+        end
+    end
+    take(true)
+    take(false)
+    local picked = {}
+    for i = 1, #history do
+        if chosen[i] then table.insert(picked, history[i]) end
+    end
+    return picked
+end
+
+--- Past cards from this book, grouped by highlight, as a style guide for the AI.
+function M.recentSection(recent)
+    local blocks = {}
+    local block, last_quote
+    for _idx, e in ipairs(recent) do
+        if e.quote ~= last_quote then
+            last_quote = e.quote
+            local lines = { "Highlight: «" .. shorten(e.quote or "", HISTORY_QUOTE_CHARS) .. "»" }
+            if e.note then table.insert(lines, "Reader's note: " .. e.note) end
+            block = lines
+            table.insert(blocks, block)
+        end
+        if M.wasEdited(e) then
+            table.insert(block, "- You suggested: " .. cardLine(e.suggested)
+                .. "\n  The reader changed it to: " .. cardLine(e))
+        else
+            table.insert(block, "- " .. cardLine(e))
+        end
+    end
+    local texts = {}
+    for _idx, b in ipairs(blocks) do table.insert(texts, table.concat(b, "\n")) end
+    return "Cards this reader saved recently from this book. They show what the reader chooses to ask "
+        .. "about and how they word questions and answers, including how they rewrote your suggestions. "
+        .. "Write the new cards the same way, but do not repeat these:\n\n" .. table.concat(texts, "\n\n")
 end
 
 --- How many cards to write, as an instruction for the AI.

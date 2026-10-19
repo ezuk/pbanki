@@ -98,4 +98,50 @@ assert(learn:find("removed these suggested cards", 1, true), "rejections mention
 assert(learn:find("- Q3 → A3", 1, true), "rejected card listed")
 assert(learn:find("Write 1 card.", 1, true), "count still last")
 
+-- The prompt steers toward the reader's own cards
+assert(cardgen.SYSTEM_PROMPT:find("note on the highlight", 1, true), "note steers the cards")
+assert(cardgen.SYSTEM_PROMPT:find("book's own name", 1, true), "book's terms preferred")
+assert(cardgen.SYSTEM_PROMPT:find("not be guessable", 1, true), "guessable answers ruled out")
+assert(user:find("let it steer", 1, true), "note marked as steering")
+
+-- Card history keeps the latest cards with their AI originals
+local hl = { text = "Slow breathing boosts willpower.", note = "for flights" }
+local entry = cardgen.historyEntry(hl, edited)
+eq(entry.quote, hl.text, "history keeps the quote")
+eq(entry.note, "for flights", "history keeps the note")
+eq(entry.suggested.front, "Q2 long", "history keeps the AI original")
+eq(cardgen.historyEntry({ text = "x", note = "" }, kept).note, nil, "empty note dropped")
+eq(cardgen.historyEntry({ text = "x" }, { front = "Q", back = "A" }).suggested, nil, "own card has no original")
+local history = cardgen.appendHistory({ { front = "old" } }, { { front = "a" }, { front = "b" } }, 2)
+eq(#history, 2, "history capped")
+eq(history[1].front, "a", "oldest dropped")
+eq(#cardgen.appendHistory(nil, { { front = "a" } }, 5), 1, "empty history")
+
+-- Edited cards are shown first, then the latest
+local log = {
+    { front = "E1", back = "x", suggested = { front = "e1", back = "x" }, quote = "q1" },
+    { front = "K1", back = "x", suggested = { front = "K1", back = "x" }, quote = "q1" },
+    { front = "K2", back = "x", quote = "q2" },
+    { front = "K3", back = "x", quote = "q2" },
+}
+local picked = cardgen.pickRecent(log, 2)
+eq(#picked, 2, "picked up to limit")
+eq(picked[1].front, "E1", "edited card picked though oldest")
+eq(picked[2].front, "K3", "then the latest")
+eq(#cardgen.pickRecent(log, 10), 4, "all when under limit")
+eq(#cardgen.pickRecent({}, 3), 0, "empty history picks none")
+
+local withRecent = cardgen.buildMessages({ text = "x" }, {
+    count = 1,
+    recent = { log[1], log[2], { front = "N", back = "y", quote = "q3", note = "my note" } },
+})[2].content
+assert(withRecent:find("saved recently from this book", 1, true), "recent cards introduced")
+assert(withRecent:find("Highlight: «q1»\n- You suggested: e1 → x\n  The reader changed it to: E1 → x\n- K1 → x", 1, true),
+    "recent cards grouped under their highlight")
+assert(withRecent:find("Highlight: «q3»\nReader's note: my note\n- N → y", 1, true), "note shown with its highlight")
+assert(withRecent:find("Write 1 card.", 1, true), "count still last with recent cards")
+assert(not ranged:find("saved recently", 1, true), "no history, no mention")
+local long = cardgen.recentSection({ { front = "Q", back = "A", quote = string.rep("word ", 100) } })
+assert(long:find("word …»", 1, true), "long quote shortened at a word")
+
 print("cardgen_spec: OK")
