@@ -310,7 +310,12 @@ function PbAnki:suggest(editor, after)
     local assistant = self:assistant()
     if not assistant then return end
     local highlight = editor.highlight
-    local request = { count = editor.request.count, max = editor.request.max, existing = editor.cards }
+    local request = {
+        count = editor.request.count,
+        max = editor.request.max,
+        existing = editor.cards,
+        rejected = editor.rejected,
+    }
     local function run()
         Trapper:wrap(function()
             local answer, err = assistant:queryFlashcards(self:messagesFor(highlight, request),

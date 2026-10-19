@@ -76,5 +76,26 @@ assert(more:find("already has these cards", 1, true), "existing cards mentioned"
 assert(more:find("- Q1 → A1", 1, true), "existing card listed")
 assert(more:find("Write 2 cards", 1, true), "count still asked")
 assert(not ranged:find("already has", 1, true), "no existing cards, no mention")
+assert(more:find("same style", 1, true), "kept cards set the style")
+assert(not more:find("rewrote", 1, true), "no edits, no mention")
+assert(not more:find("removed these", 1, true), "no rejections, no mention")
+
+-- Edited and removed suggestions teach the next ones
+local kept = { front = "Q1", back = "A1", suggested = { front = "Q1", back = "A1" } }
+local edited = { front = "Q2 short", back = "A2", suggested = { front = "Q2 long", back = "A2" } }
+assert(not cardgen.wasEdited(kept), "unchanged suggestion")
+assert(cardgen.wasEdited(edited), "changed suggestion")
+assert(not cardgen.wasEdited({ front = "Q", back = "A" }), "own card")
+local learn = cardgen.buildMessages({ text = "x" }, {
+    count = 1,
+    existing = { kept, edited },
+    rejected = { { front = "Q3", back = "A3" } },
+})[2].content
+assert(learn:find("- You suggested: Q2 long → A2\n  The reader changed it to: Q2 short → A2", 1, true),
+    "edit shown as before and after")
+assert(not learn:find("You suggested: Q1", 1, true), "unchanged card not shown as edit")
+assert(learn:find("removed these suggested cards", 1, true), "rejections mentioned")
+assert(learn:find("- Q3 → A3", 1, true), "rejected card listed")
+assert(learn:find("Write 1 card.", 1, true), "count still last")
 
 print("cardgen_spec: OK")

@@ -99,6 +99,8 @@ local CardEditor = InputContainer:extend{
     -- {text, book, chapter, ...}
     highlight = nil,
     cards = nil,
+    -- AI suggestions the reader removed, as the AI wrote them
+    rejected = nil,
     title = nil,
     subtitle = nil,
     -- Page of cards shown
@@ -120,6 +122,7 @@ local CardEditor = InputContainer:extend{
 
 function CardEditor:init()
     self.cards = self.cards or {}
+    self.rejected = self.rejected or {}
     self.width = Screen:getWidth()
     self.height = Screen:getHeight()
     self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self.height }
@@ -199,7 +202,7 @@ function CardEditor:build()
             show_parent = self,
             on_edit = function() self:editCard(i) end,
             on_remove = function()
-                table.remove(self.cards, i)
+                self:reject(table.remove(self.cards, i))
                 self:refresh()
             end,
         }
@@ -339,6 +342,7 @@ function CardEditor:buttonRows()
             text = _("Clear"),
             enabled = count > 0,
             callback = function()
+                for _idx, card in ipairs(self.cards) do self:reject(card) end
                 self.cards = {}
                 self:refresh()
             end,
@@ -385,10 +389,11 @@ function CardEditor:setCards(cards)
     self:refresh()
 end
 
---- Adds cards after the ones shown, e.g. AI suggestions, and shows the first.
+--- Adds AI suggestions after the cards shown, and shows the first.
 function CardEditor:addCards(cards)
     if #cards > 0 then self.focus_card = #self.cards + 1 end
     for _idx, card in ipairs(cards) do
+        card.suggested = { front = card.front, back = card.back }
         table.insert(self.cards, card)
     end
     self.waiting = false
@@ -406,9 +411,15 @@ function CardEditor:setHighlight(highlight, subtitle, cards)
     self.highlight = highlight
     self.subtitle = subtitle
     self.cards = cards or {}
+    self.rejected = {}
     self.page = 1
     self.waiting = false
     self:refresh()
+end
+
+--- Remembers a removed card for the next suggestions when the AI wrote it.
+function CardEditor:reject(card)
+    if card and card.suggested then table.insert(self.rejected, card.suggested) end
 end
 
 function CardEditor:refresh()
@@ -424,7 +435,7 @@ function CardEditor:editCard(index, save)
     local front, back = card.front, card.back
     local function done()
         if index then
-            self.cards[index] = { front = front, back = back }
+            self.cards[index] = { front = front, back = back, suggested = card.suggested }
         else
             table.insert(self.cards, { front = front, back = back })
             self.focus_card = #self.cards

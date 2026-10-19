@@ -29,10 +29,22 @@ local function line(label, value)
     return label .. ": " .. tostring(value)
 end
 
+local function cardLine(card)
+    return card.front .. " → " .. card.back
+end
+
+--- Whether the reader changed an AI card, which keeps its original text in `suggested`.
+function M.wasEdited(card)
+    local s = card.suggested
+    return s ~= nil and (s.front ~= card.front or s.back ~= card.back)
+end
+
 --- Messages for Assistant's querier.
 -- @tparam table h highlight: text, before, after, note, book, author, chapter, percent
 -- @tparam table request `{count = n}` for exactly n cards, or `{max = n}` to let the AI choose 1 to n;
--- optional `existing`, a list of {front, back} the new cards must not repeat
+-- optional `existing`, a list of {front, back, suggested} the new cards must not repeat,
+-- where `suggested` is the AI's original {front, back} of a card;
+-- optional `rejected`, a list of {front, back} suggestions the reader removed
 -- @string companion optional Book Companion text
 -- @string position_note optional Book Companion note about the reading position
 function M.buildMessages(h, request, companion, position_note)
@@ -70,11 +82,30 @@ function M.buildMessages(h, request, companion, position_note)
         table.insert(parts, position_note)
     end
     if request.existing and #request.existing > 0 then
-        local lines = {}
+        local lines, edits = {}, {}
         for _idx, card in ipairs(request.existing) do
-            table.insert(lines, "- " .. card.front .. " → " .. card.back)
+            table.insert(lines, "- " .. cardLine(card))
+            if M.wasEdited(card) then
+                table.insert(edits, "- You suggested: " .. cardLine(card.suggested)
+                    .. "\n  The reader changed it to: " .. cardLine(card))
+            end
         end
-        table.insert(parts, "The reader already has these cards. Write new ones that ask something else:\n\n"
+        table.insert(parts, "The reader already has these cards. Write new ones that ask something else, "
+            .. "in the same style and level of detail:\n\n" .. table.concat(lines, "\n"))
+        if #edits > 0 then
+            table.insert(parts, "The reader rewrote some of your earlier suggestions. "
+                .. "Notice what they changed and write new cards the way they would:\n\n"
+                .. table.concat(edits, "\n"))
+        end
+    end
+    if request.rejected and #request.rejected > 0 then
+        local lines = {}
+        for _idx, card in ipairs(request.rejected) do
+            table.insert(lines, "- " .. cardLine(card))
+        end
+        table.insert(parts, "The reader removed these suggested cards. Do not write them again or close "
+            .. "variants of them. Notice what they have in common (for example too easy, too long, "
+            .. "or about a side detail) and avoid that, while still basing new cards on the highlight:\n\n"
             .. table.concat(lines, "\n"))
     end
     table.insert(parts, M.countInstruction(request))
