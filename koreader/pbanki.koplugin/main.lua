@@ -56,6 +56,8 @@ function PbAnki:init()
         -- Batch mode: the AI writes 1 to this many cards per highlight
         max_cards_batch = 3,
     })
+    -- The AI writes cloze cards instead of questions
+    self.settings.cloze = self.settings.cloze or false
     self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
     if self.ui.highlight then
@@ -139,6 +141,16 @@ function PbAnki:addToMainMenu(menu_items)
                     self:saveSettings()
                 end,
                 help_text = _("Fill the card editor with AI suggestions from the AI Assistant plugin. Turn off when you have no network, e.g. in flight mode."),
+            },
+            {
+                text = _("Suggest cloze cards"),
+                checked_func = function() return self.settings.cloze end,
+                enabled_func = function() return self:assistant() ~= nil end,
+                callback = function()
+                    self.settings.cloze = not self.settings.cloze
+                    self:saveSettings()
+                end,
+                help_text = _("The AI writes sentences with the answer hidden, like \"Self-control needs the [pause-and-plan] response\", instead of questions. Also set by the Cloze button when asking for suggestions."),
             },
             {
                 text_func = function()
@@ -297,8 +309,8 @@ end
 
 -- AI suggestions
 
---- Asks how many cards to suggest, then calls `fn(count)`.
--- `on_write_own` adds a button to skip the AI.
+--- Asks how many cards to suggest and whether they are cloze cards, then
+-- calls `fn(count)`. `on_write_own` adds a button to skip the AI.
 function PbAnki:askCardCount(value, fn, on_write_own)
     UIManager:show(SpinWidget:new{
         title_text = _("Cards to suggest"),
@@ -311,6 +323,13 @@ function PbAnki:askCardCount(value, fn, on_write_own)
         cancel_text = _("Cancel"),
         extra_text = on_write_own and _("Write my own") or nil,
         extra_callback = on_write_own,
+        -- A checkbox: the dialog closes on tap, so it opens again with the new state
+        option_text = (self.settings.cloze and "✓ " or "▢ ") .. _("Cloze"),
+        option_callback = function(spin)
+            self.settings.cloze = not self.settings.cloze
+            self:saveSettings()
+            self:askCardCount(spin.value, fn, on_write_own)
+        end,
         callback = function(spin) fn(spin.value) end,
     })
 end
@@ -321,6 +340,7 @@ function PbAnki:messagesFor(h, request)
     local with_recent = {}
     for key, value in pairs(request) do with_recent[key] = value end
     with_recent.recent = cardgen.pickRecent(self:cardHistory(), HISTORY_SHOWN)
+    with_recent.cloze = self.settings.cloze
     return cardgen.buildMessages(h, with_recent, companion, position_note)
 end
 

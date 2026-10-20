@@ -8,7 +8,7 @@ No KOReader dependencies, so it runs under plain Lua in spec/.
 
 local M = {}
 
-M.SYSTEM_PROMPT = [[You write Anki flashcards from a passage a reader highlighted in a book.
+local CHOOSING = [[You write Anki flashcards from a passage a reader highlighted in a book.
 
 Choosing what to ask:
 - Base every card on the highlighted text. Use the surrounding passage and book notes to understand it and to name things.
@@ -18,9 +18,9 @@ Choosing what to ask:
 - Use the book's own name for an idea, even when the name appears only in the surrounding passage or book notes: "What does self-control require instead of fight-or-flight?" → "The pause-and-plan response."
 - Keep the strength of the claim. If the text says "best", "most", "only" or "foundation", say it in the question: "What is the best way to improve self-control?"
 - When the text lists parallel items, write one card that asks for the list (up to 4 items) instead of one card per item. Wrong: four cards like "How does sleep deprivation affect attention?" Right: "What does chronic mild sleep deprivation make harder?" → "Controlling emotions, focusing attention, finding energy for big challenges."
-- Each card asks something different: another idea, or the same idea from the other direction. Never repeat a question in other words.
+- Each card asks something different: another idea, or the same idea from the other direction. Never repeat a question in other words.]]
 
-Writing the card:
+local WRITING_BASIC = [[Writing the card:
 - Front: one short, specific question, ideally under 12 words.
 - Back: the shortest complete answer, ideally 1 to 6 words. It may add a few words of takeaway after a full stop: "The enemy within, not the cake. Turn attention inward."
 - The answer must not be guessable from the question, and must not repeat its words. Wrong: "How does sleep deprivation affect emotional control?" → "It makes emotions harder to control."
@@ -33,13 +33,62 @@ Writing the card:
 Reply with JSON only, no other text, in this shape:
 {"cards": [{"front": "question", "back": "answer"}]}]]
 
+local WRITING_CLOZE = [[Writing the card:
+- Write cloze cards: the front is a statement with the part to recall hidden as {{c1::hidden words}}. The examples above are questions and answers; state the same fact as a sentence and hide the answer: "Self-control requires the {{c1::pause-and-plan response}}, not fight-or-flight."
+- Front: one short, self-contained sentence, ideally under 20 words.
+- Hide what the question would ask for: the key term, finding or practice, ideally 1 to 6 words. Never hide filler words, and never hide most of the sentence.
+- Use only c1, so each card is one flashcard. For a list, hide every item with c1: "Sleep deprivation makes it harder to {{c1::control emotions}}, {{c1::focus attention}} and {{c1::find energy}}."
+- The hidden words must not be guessable from the rest of the sentence, and the rest must still give enough of a cue to recall them.
+- Back: empty, or a few words of extra takeaway shown with the answer.
+- State the idea itself, as plain fact. Never attribute it to the author, the book or a character ("According to the author …", "In this book, …"). Naming a researcher or study the book cites is fine when it helps recall.
+- The sentence must still make sense months later without the book open: name the specific thing it is about.
+- Do not copy the whole highlight onto a card.
+- Write in the language of the highlighted text.
+- Plain text only, no Markdown.
+
+Reply with JSON only, no other text, in this shape:
+{"cards": [{"front": "Sentence with {{c1::hidden words}}.", "back": ""}]}]]
+
+M.SYSTEM_PROMPT = CHOOSING .. "\n\n" .. WRITING_BASIC
+M.CLOZE_PROMPT = CHOOSING .. "\n\n" .. WRITING_CLOZE
+
 local function line(label, value)
     if value == nil or value == "" then return nil end
     return label .. ": " .. tostring(value)
 end
 
 local function cardLine(card)
+    if M.isCloze(card.front) and card.back == "" then return card.front end
     return card.front .. " → " .. card.back
+end
+
+local CLOZE_PATTERN = "{{c(%d+)::"
+
+--- Whether `text` has a cloze deletion such as {{c1::answer}}.
+function M.isCloze(text)
+    return text ~= nil and text:find(CLOZE_PATTERN) ~= nil
+end
+
+--- `text` with each cloze deletion shown as [answer].
+function M.showCloze(text)
+    return (text:gsub("{{c%d+::(.-)}}", function(inner)
+        return "[" .. (inner:match("^(.-)::") or inner) .. "]"
+    end))
+end
+
+--- What the cloze button inserts at the cursor, given the text before it:
+-- "}}" to close an open deletion, else the next opening such as "{{c2::".
+-- @string before text before the cursor
+-- @string all the whole text
+function M.clozeMark(before, all)
+    local last_open = 0
+    for pos in before:gmatch("(){{c%d+::") do last_open = pos end
+    if last_open > 0 and not before:find("}}", last_open, true) then
+        return "}}"
+    end
+    local highest = 0
+    for n in all:gmatch(CLOZE_PATTERN) do highest = math.max(highest, tonumber(n)) end
+    return "{{c" .. (highest + 1) .. "::"
 end
 
 --- Whether the reader changed an AI card, which keeps its original text in `suggested`.
@@ -54,12 +103,13 @@ end
 -- optional `existing`, a list of {front, back, suggested} the new cards must not repeat,
 -- where `suggested` is the AI's original {front, back} of a card;
 -- optional `rejected`, a list of {front, back} suggestions the reader removed;
--- optional `recent`, entries from the book's card history (see M.historyEntry)
+-- optional `recent`, entries from the book's card history (see M.historyEntry);
+-- optional `cloze`, true for cloze cards
 -- @string companion optional Book Companion text
 -- @string position_note optional Book Companion note about the reading position
 function M.buildMessages(h, request, companion, position_note)
     local messages = {
-        { role = "system", content = M.SYSTEM_PROMPT },
+        { role = "system", content = request.cloze and M.CLOZE_PROMPT or M.SYSTEM_PROMPT },
     }
     if companion and companion ~= "" then
         table.insert(messages, {

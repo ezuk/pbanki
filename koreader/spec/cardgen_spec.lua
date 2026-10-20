@@ -144,4 +144,21 @@ assert(not ranged:find("saved recently", 1, true), "no history, no mention")
 local long = cardgen.recentSection({ { front = "Q", back = "A", quote = string.rep("word ", 100) } })
 assert(long:find("word …»", 1, true), "long quote shortened at a word")
 
+-- Cloze
+local clozeMessages = cardgen.buildMessages({ text = "x" }, {
+    count = 1,
+    cloze = true,
+    existing = { { front = "A {{c1::b}}.", back = "" } },
+})
+eq(clozeMessages[1].content, cardgen.CLOZE_PROMPT, "cloze request uses the cloze prompt")
+assert(cardgen.CLOZE_PROMPT:find("Choosing what to ask", 1, true), "cloze prompt keeps the choosing rules")
+assert(clozeMessages[2].content:find("- A {{c1::b}}.\n", 1, true), "cloze card without extra listed alone")
+eq(cardgen.buildMessages({ text = "x" }, { count = 1 })[1].content, cardgen.SYSTEM_PROMPT, "plain request")
+assert(cardgen.isCloze("The {{c1::Seine}}"), "cloze detected")
+assert(not cardgen.isCloze("{{Front}}"), "field reference is not a cloze")
+eq(cardgen.showCloze("A {{c1::b::hint}} and {{c2::c}}."), "A [b] and [c].", "cloze shown with brackets")
+eq(cardgen.clozeMark("The ", "The x"), "{{c1::", "first mark opens c1")
+eq(cardgen.clozeMark("The {{c1::Sei", "The {{c1::Sei"), "}}", "open deletion is closed")
+eq(cardgen.clozeMark("The {{c1::Seine}} and ", "The {{c1::Seine}} and "), "{{c2::", "next deletion numbered")
+
 print("cardgen_spec: OK")

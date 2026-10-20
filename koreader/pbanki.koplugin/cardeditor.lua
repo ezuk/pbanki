@@ -28,6 +28,7 @@ local TitleBar = require("ui/widget/titlebar")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
+local cardgen = require("cardgen")
 local util = require("util")
 local _ = require("gettext")
 local T = require("ffi/util").template
@@ -52,10 +53,13 @@ function CardRow:init()
     }
     local padding = Size.padding.default
     local text_width = self.width - remove:getSize().w - 2 * padding - 2 * Size.border.thin
+    local cloze = cardgen.isCloze(self.card.front)
+    local back = self.card.back
+    if back == "" then back = cloze and _("(cloze)") or _("(no answer)") end
     local texts = VerticalGroup:new{
         align = "left",
         TextBoxWidget:new{
-            text = self.card.front,
+            text = cloze and cardgen.showCloze(self.card.front) or self.card.front,
             face = Font:getFace("cfont", 20),
             bold = true,
             width = text_width,
@@ -64,7 +68,7 @@ function CardRow:init()
             height_overflow_show_ellipsis = true,
         },
         TextBoxWidget:new{
-            text = self.card.back ~= "" and self.card.back or _("(no answer)"),
+            text = back,
             face = Font:getFace("cfont", 18),
             fgcolor = self.card.back ~= "" and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_DARK_GRAY,
             width = text_width,
@@ -450,7 +454,8 @@ function CardEditor:editCard(index, save)
         self:sideDialog{
             title = _("Card front"),
             input = front,
-            hint = _("Question"),
+            hint = _("Question, or a sentence with a cloze"),
+            cloze_button = true,
             left = { text = _("Cancel"), id = "close" },
             right = { text = _("Next") .. " ›" },
             on_left = function() end,
@@ -464,9 +469,9 @@ function CardEditor:editCard(index, save)
     askBack = function()
         self:sideDialog{
             title = _("Card back"),
-            description = front,
+            description = cardgen.isCloze(front) and cardgen.showCloze(front) or front,
             input = back,
-            hint = _("Answer"),
+            hint = cardgen.isCloze(front) and _("Extra shown with the answer (optional)") or _("Answer"),
             left = { text = "‹ " .. _("Front") },
             right = { text = save and _("Save card") or _("Done") },
             on_left = function(text)
@@ -491,6 +496,30 @@ function CardEditor:sideDialog(opts)
         if handler(text) == false then return end
         UIManager:close(dialog)
     end
+    local row = {
+        {
+            text = opts.left.text,
+            id = opts.left.id,
+            callback = function() finish(opts.on_left) end,
+        },
+    }
+    if opts.cloze_button then
+        -- Opens a cloze deletion at the cursor, or closes the open one
+        table.insert(row, {
+            text = "{{…}} " .. _("Cloze"),
+            callback = function()
+                local input = dialog._input_widget
+                local before = table.concat(input.charlist, "", 1, input.charpos - 1)
+                input:addChars(cardgen.clozeMark(before, input:getText()))
+            end,
+        })
+    end
+    table.insert(row, {
+        text = opts.right.text,
+        id = "done",
+        is_enter_default = true,
+        callback = function() finish(opts.on_right) end,
+    })
     dialog = InputDialog:new{
         title = opts.title,
         description = opts.description,
@@ -500,21 +529,7 @@ function CardEditor:sideDialog(opts)
         fullscreen = true,
         condensed = true,
         allow_newline = true,
-        buttons = {
-            {
-                {
-                    text = opts.left.text,
-                    id = opts.left.id,
-                    callback = function() finish(opts.on_left) end,
-                },
-                {
-                    text = opts.right.text,
-                    id = "done",
-                    is_enter_default = true,
-                    callback = function() finish(opts.on_right) end,
-                },
-            },
-        },
+        buttons = { row },
     }
     UIManager:show(dialog)
     dialog:onShowKeyboard()

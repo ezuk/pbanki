@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use anki::collection::Collection;
 use anki::notes::Note;
-use anki::notetype::{NoteField, Notetype, NotetypeId};
+use anki::notetype::{NoteField, Notetype, NotetypeId, NotetypeKind};
 use serde::Deserialize;
 
 pub const INBOX_FILE: &str = "inbox.jsonl";
@@ -20,8 +20,9 @@ const FAILED_FILE: &str = "inbox.failed.jsonl";
 pub const DECK_NAME: &str = "KOReader";
 pub const TAG: &str = "koreader";
 pub const NOTETYPE_NAME: &str = "pbAnki KOReader";
+pub const CLOZE_NOTETYPE_NAME: &str = "pbAnki KOReader Cloze";
 
-/// Fields of the KOReader note type, after Basic's Front and Back.
+/// Fields of the KOReader note types, after the two fields of Basic or Cloze.
 pub const CONTEXT_FIELDS: [&str; 7] = [
     "Quote", "Book", "Author", "Chapter", "Page", "File", "Position",
 ];
@@ -44,6 +45,11 @@ pub struct InboxCard {
 }
 
 impl InboxCard {
+    /// Whether the front has a cloze deletion such as `{{c1::answer}}`.
+    pub fn is_cloze(&self) -> bool {
+        has_cloze(&self.front)
+    }
+
     fn field_values(&self) -> [String; 9] {
         [
             text_to_html(&self.front),
@@ -63,6 +69,15 @@ fn escape_html(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+/// Whether `text` has a cloze deletion such as `{{c1::answer}}`.
+pub fn has_cloze(text: &str) -> bool {
+    text.match_indices("{{c").any(|(i, _)| {
+        let rest = &text[i + 3..];
+        let digits = rest.chars().take_while(char::is_ascii_digit).count();
+        digits > 0 && rest[digits..].starts_with("::")
+    })
 }
 
 pub(crate) fn text_to_html(text: &str) -> String {
@@ -105,7 +120,8 @@ pub fn import_inbox(col: &mut Collection, dir: &Path) -> Result<ImportSummary, S
 
     let contents = fs::read_to_string(&importing).map_err(|e| format!("Cannot read inbox: {e}"))?;
 
-    let notetype = koreader_notetype(col)?;
+    let mut basic = None;
+    let mut cloze = None;
     let mut deck_ids = std::collections::HashMap::new();
 
     let mut summary = ImportSummary::default();
@@ -118,6 +134,11 @@ pub fn import_inbox(col: &mut Collection, dir: &Path) -> Result<ImportSummary, S
                 if card.front.trim().is_empty() {
                     return Err("empty front".into());
                 }
+                let notetype = if card.is_cloze() {
+                    cached_notetype(&mut cloze, || koreader_cloze_notetype(col))?
+                } else {
+                    cached_notetype(&mut basic, || koreader_notetype(col))?
+                };
                 let mut note = notetype.new_note();
                 for (index, value) in card.field_values().into_iter().enumerate() {
                     note.set_field(index, value).map_err(|e| e.to_string())?;
@@ -157,6 +178,16 @@ pub fn import_inbox(col: &mut Collection, dir: &Path) -> Result<ImportSummary, S
     Ok(summary)
 }
 
+fn cached_notetype(
+    cache: &mut Option<Arc<Notetype>>,
+    load: impl FnOnce() -> Result<Arc<Notetype>, String>,
+) -> Result<Arc<Notetype>, String> {
+    if cache.is_none() {
+        *cache = Some(load()?);
+    }
+    Ok(cache.clone().unwrap())
+}
+
 /// The KOReader note type, created from Basic on first use.
 pub fn koreader_notetype(col: &mut Collection) -> Result<Arc<Notetype>, String> {
     if let Some(notetype) = col
@@ -165,15 +196,51 @@ pub fn koreader_notetype(col: &mut Collection) -> Result<Arc<Notetype>, String> 
     {
         return Ok(notetype);
     }
-
     let basic = col
         .get_notetype_by_name("Basic")
         .map_err(|e| e.to_string())?
         .ok_or("No Basic note type to base the KOReader note type on")?;
+    add_koreader_notetype(col, &basic, NOTETYPE_NAME)
+}
 
-    let mut notetype = (*basic).clone();
+/// The KOReader cloze note type, created from Cloze on first use.
+pub fn koreader_cloze_notetype(col: &mut Collection) -> Result<Arc<Notetype>, String> {
+    if let Some(notetype) = col
+        .get_notetype_by_name(CLOZE_NOTETYPE_NAME)
+        .map_err(|e| e.to_string())?
+    {
+        return Ok(notetype);
+    }
+    let cloze = match col
+        .get_notetype_by_name("Cloze")
+        .map_err(|e| e.to_string())?
+    {
+        Some(cloze) if cloze.config.kind() == NotetypeKind::Cloze => cloze,
+        // Renamed: any cloze note type with the stock template
+        _ => col
+            .get_all_notetypes()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|n| {
+                n.config.kind() == NotetypeKind::Cloze
+                    && n.name != CLOZE_NOTETYPE_NAME
+                    && n.fields.len() >= 2
+            })
+            .ok_or("No Cloze note type to base the KOReader cloze note type on")?,
+    };
+    add_koreader_notetype(col, &cloze, CLOZE_NOTETYPE_NAME)
+}
+
+/// Adds a copy of `base` named `name` with the context fields after its first two.
+fn add_koreader_notetype(
+    col: &mut Collection,
+    base: &Notetype,
+    name: &str,
+) -> Result<Arc<Notetype>, String> {
+    let mut notetype = base.clone();
     notetype.id = NotetypeId(0);
-    notetype.name = NOTETYPE_NAME.into();
+    notetype.name = name.into();
+    notetype.fields.truncate(2);
     notetype
         .fields
         .extend(CONTEXT_FIELDS.iter().map(|name| NoteField::new(*name)));
@@ -184,11 +251,11 @@ pub fn koreader_notetype(col: &mut Collection) -> Result<Arc<Notetype>, String> 
         template.ord = None;
     }
     col.add_notetype(&mut notetype, false)
-        .map_err(|e| format!("Cannot create note type {NOTETYPE_NAME}: {e}"))?;
+        .map_err(|e| format!("Cannot create note type {name}: {e}"))?;
 
-    col.get_notetype_by_name(NOTETYPE_NAME)
+    col.get_notetype_by_name(name)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("Note type {NOTETYPE_NAME} missing after creation"))
+        .ok_or_else(|| format!("Note type {name} missing after creation"))
 }
 
 /// Context of a KOReader card, if the note has one.
@@ -205,7 +272,7 @@ pub struct CardContext {
 
 impl CardContext {
     pub fn from_note(notetype: &Notetype, note: &Note) -> Option<Self> {
-        if notetype.name != NOTETYPE_NAME {
+        if notetype.name != NOTETYPE_NAME && notetype.name != CLOZE_NOTETYPE_NAME {
             return None;
         }
         let field = |name: &str| {
@@ -405,6 +472,60 @@ mod tests {
         let names: Vec<_> = first.fields.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(&names[..2], ["Front", "Back"]);
         assert_eq!(&names[2..], CONTEXT_FIELDS);
+    }
+
+    #[test]
+    fn imports_cloze_cards_as_cloze_notes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut col = collection(dir.path());
+        fs::write(
+            dir.path().join(INBOX_FILE),
+            concat!(
+                r#"{"front":"Self-control needs the {{c1::pause-and-plan}} response.","back":"Not fight-or-flight","quote":"pause and plan","book":"Willpower"}"#,
+                "\n",
+                r#"{"front":"Plain {{question}}?","back":"Answer","book":"Willpower"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        assert_eq!(import_inbox(&mut col, dir.path()).unwrap().added, 2);
+
+        let cloze = koreader_cloze_notetype(&mut col).unwrap();
+        assert_eq!(cloze.config.kind(), NotetypeKind::Cloze);
+        let names: Vec<_> = cloze.fields.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(&names[..2], ["Text", "Back Extra"]);
+        assert_eq!(&names[2..], CONTEXT_FIELDS);
+
+        let ids = col
+            .search_notes_unordered(&format!("\"note:{CLOZE_NOTETYPE_NAME}\""))
+            .unwrap();
+        assert_eq!(ids.len(), 1);
+        let note = col.storage.get_note(ids[0]).unwrap().unwrap();
+        assert_eq!(
+            note.fields()[0],
+            "Self-control needs the {{c1::pause-and-plan}} response."
+        );
+        assert_eq!(note.fields()[2], "pause and plan");
+        let context = CardContext::from_note(&cloze, &note).unwrap();
+        assert_eq!(context.book, "Willpower");
+        assert_eq!(
+            col.search_cards(
+                &format!("\"note:{CLOZE_NOTETYPE_NAME}\""),
+                anki::search::SortMode::NoOrder
+            )
+            .unwrap()
+            .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn detects_cloze_deletions() {
+        assert!(has_cloze("The {{c1::Seine}} river"));
+        assert!(has_cloze("{{c12::a::hint}}"));
+        assert!(!has_cloze("{{c::a}}"));
+        assert!(!has_cloze("{{Front}}"));
+        assert!(!has_cloze("plain"));
     }
 
     #[test]

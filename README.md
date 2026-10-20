@@ -66,6 +66,16 @@ With the [AI Assistant](https://github.com/omer-faruq/assistant.koplugin) plugin
 
 Cards wait in an inbox file until pbAnki next opens, then land in a sub-deck per book under **KOReader**, such as `KOReader::Pride and Prejudice`. Study the KOReader deck to review every book at once, or open one book's deck. Each card keeps its **context**: the full highlighted passage, book, author, chapter and page. A **Context** button on the answer side shows it.
 
+Cards can also be **cloze** cards, a sentence with the answer hidden: "A single man of large fortune must be in want of a [...]". Tick **Cloze** when asking the AI for suggestions (or turn on *Suggest cloze cards* in the menu for Flashcards from highlights), or write one yourself: the **{{…}} Cloze** button on the card front opens a hidden part at the cursor, and a second tap closes it. pbAnki files them under a cloze note type that keeps the same context.
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/koreader/20_cloze_on.png" width="240" alt="The Cards to suggest dialog with Cloze ticked"></td>
+    <td><img src="docs/screenshots/koreader/23_cloze_button_closed.png" width="240" alt="Writing a card front with the Cloze button"></td>
+    <td><img src="docs/screenshots/koreader/25_cloze_cards.png" width="240" alt="Cloze cards in the card editor, hidden parts in brackets"></td>
+  </tr>
+</table>
+
 <table>
   <tr>
     <td><img src="docs/screenshots/koreader_question.png" width="240" alt="A question written in KOReader"></td>
