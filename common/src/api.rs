@@ -5,12 +5,16 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
+use anki::card::Card;
+use anki::collection::Collection;
 use anki::error::{OrNotFound, Result as AnkiResult};
+use anki::notes::Note;
 use anki::notetype::{Notetype, NotetypeKind};
 use anki::ops::Op;
 use anki::scheduler::answering::{CardAnswer, Rating};
 use anki::scheduler::states::SchedulingStates;
 use anki::timestamp::{TimestampMillis, TimestampSecs};
+use anki_proto::decks::DeckTreeNode;
 
 use crate::collection::{SharedCollection, open_collection};
 use crate::{CardNode, Config, Constants, DeckNode, DeckTree, LoginState, MainWindow};
@@ -456,16 +460,35 @@ pub fn update_deck_tree(session: &LearnSession) -> DeckTree {
         .lock()
         .deck_tree(Some(TimestampSecs::now()))
     {
-        Ok(deck_tree) => DeckTree {
-            new_total: deck_tree.new_count as i32,
-            learn_total: deck_tree.learn_count as i32,
-            due_total: deck_tree.review_count as i32,
-            deck_nodes: crate::utils::flatten_tree(&deck_tree).into(),
-        },
+        Ok(deck_tree) => {
+            let deck_nodes = crate::utils::flatten_tree(&deck_tree);
+            deck_nodes.insert(0, everything_deck(&deck_tree));
+            DeckTree {
+                new_total: deck_tree.new_count as i32,
+                learn_total: deck_tree.learn_count as i32,
+                due_total: deck_tree.review_count as i32,
+                deck_nodes: deck_nodes.into(),
+            }
+        }
         Err(e) => {
             eprintln!("Failed to load deck tree: {e}");
             DeckTree::default()
         }
+    }
+}
+
+/// Id of the "Everything" row, which studies every top-level deck in turn.
+pub const EVERYTHING_ID: i64 = 0;
+
+fn everything_deck(deck_tree: &DeckTreeNode) -> DeckNode {
+    DeckNode {
+        id: EVERYTHING_ID,
+        name: "Everything".into(),
+        level: 1,
+        new: deck_tree.new_count as i32,
+        learn: deck_tree.learn_count as i32,
+        due: deck_tree.review_count as i32,
+        ..Default::default()
     }
 }
 
@@ -537,15 +560,22 @@ fn is_type_in(notetype: &Notetype, template_idx: u16) -> bool {
     template.is_some_and(|t| t.config.q_format.contains("{{type:"))
 }
 
-fn load_next_card(
-    session: &LearnSession,
-    deck: DeckNode,
-    grid: Grid,
-) -> AnkiResult<Option<CardNode>> {
-    let mut col = session.collection.lock();
-    col.set_current_deck(anki::decks::DeckId(deck.id))?;
+/// The card at the front of the study queue.
+struct NextCard {
+    card: Card,
+    states: SchedulingStates,
+    note: Note,
+    notetype: Arc<Notetype>,
+    new: usize,
+    learn: usize,
+    due: usize,
+}
+
+/// The next card of a deck and its children.
+fn queued_card(col: &mut Collection, deck_id: i64) -> AnkiResult<Option<NextCard>> {
+    col.set_current_deck(anki::decks::DeckId(deck_id))?;
     // Bury type-in cards until one pbAnki can show is at the front
-    let (queued_cards, card, note, notetype) = loop {
+    loop {
         let queued_cards = col.get_queued_cards(1, false)?;
         let Some(card) = queued_cards.cards.first().cloned() else {
             return Ok(None);
@@ -558,22 +588,75 @@ fn load_next_card(
             .get_notetype(note.notetype_id)?
             .or_not_found(note.notetype_id)?;
         if !is_type_in(&notetype, card.card.template_idx()) {
-            break (queued_cards, card, note, notetype);
+            return Ok(Some(NextCard {
+                card: card.card,
+                states: card.states,
+                note,
+                notetype,
+                new: queued_cards.new_count,
+                learn: queued_cards.learning_count,
+                due: queued_cards.review_count,
+            }));
         }
         col.bury_or_suspend_cards(
             &[card.card.id()],
             anki_proto::scheduler::bury_or_suspend_cards_request::Mode::BuryUser,
         )?;
+    }
+}
+
+/// The next card of the first top-level deck with cards to study, in list
+/// order, with the counts of all decks.
+fn everything_card(col: &mut Collection) -> AnkiResult<Option<NextCard>> {
+    let tree = col.deck_tree(Some(TimestampSecs::now()))?;
+    for deck in &tree.children {
+        if deck.new_count + deck.learn_count + deck.review_count == 0 {
+            continue;
+        }
+        if let Some(next) = queued_card(col, deck.deck_id)? {
+            return Ok(Some(NextCard {
+                new: tree.new_count as usize,
+                learn: tree.learn_count as usize,
+                due: tree.review_count as usize,
+                ..next
+            }));
+        }
+    }
+    Ok(None)
+}
+
+fn load_next_card(
+    session: &LearnSession,
+    deck: DeckNode,
+    grid: Grid,
+) -> AnkiResult<Option<CardNode>> {
+    let mut col = session.collection.lock();
+    let next = if deck.id == EVERYTHING_ID {
+        everything_card(&mut col)?
+    } else {
+        queued_card(&mut col, deck.id)?
+    };
+    let Some(NextCard {
+        card,
+        states,
+        note,
+        notetype,
+        new,
+        learn,
+        due,
+    }) = next
+    else {
+        return Ok(None);
     };
 
     *session.start_time.borrow_mut() = Some(Instant::now());
-    *session.states.borrow_mut() = Some(card.states.clone());
+    *session.states.borrow_mut() = Some(states.clone());
 
     let durations = col
-        .describe_next_states(&card.states)
+        .describe_next_states(&states)
         .unwrap_or_else(|_| vec![String::new(); 4]);
 
-    let rendered = col.render_existing_card(card.card.id(), false, false)?;
+    let rendered = col.render_existing_card(card.id(), false, false)?;
     let context = crate::inbox::CardContext::from_note(&notetype, &note);
     drop(col);
 
@@ -589,11 +672,11 @@ fn load_next_card(
     let answer_start = crate::render::first_rule_page(&answer_pages).unwrap_or(0);
 
     let card_node = CardNode {
-        id: card.card.id().0,
+        id: card.id().0,
         deck: DeckNode {
-            new: queued_cards.new_count as i32,
-            learn: queued_cards.learning_count as i32,
-            due: queued_cards.review_count as i32,
+            new: new as i32,
+            learn: learn as i32,
+            due: due as i32,
             ..deck
         },
         question: crate::utils::pages_model(crate::render::layout(
@@ -623,8 +706,9 @@ fn load_next_card(
 pub fn undo_rating(session: &LearnSession, deck: DeckNode, grid: Grid) -> Option<CardNode> {
     let undone = {
         let mut col = session.collection.lock();
-        // Type-in cards buried after the rating come off the undo stack first
-        while col.undo_status().undo == Some(Op::Bury) {
+        // Type-in cards buried and deck switches after the rating come off
+        // the undo stack first
+        while matches!(col.undo_status().undo, Some(Op::Bury | Op::SetCurrentDeck)) {
             if col.undo().is_err() {
                 break;
             }
@@ -809,8 +893,8 @@ mod tests {
         add_basic_note(&session, "<b>Front</b> side", "Back side");
 
         let tree = update_deck_tree(&session);
-        assert_eq!(tree.deck_nodes.row_count(), 1);
-        assert_eq!(tree.deck_nodes.row_data(0).unwrap().new, 1);
+        assert_eq!(tree.deck_nodes.row_count(), 2);
+        assert_eq!(tree.deck_nodes.row_data(1).unwrap().new, 1);
 
         let card = next_card(&session, default_deck(), GRID);
         assert_ne!(card.id, -1);
@@ -826,11 +910,47 @@ mod tests {
         assert_eq!(
             update_deck_tree(&session)
                 .deck_nodes
-                .row_data(0)
+                .row_data(1)
                 .unwrap()
                 .new,
             0
         );
+    }
+
+    #[test]
+    fn everything_studies_each_top_level_deck_in_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = session_in(dir.path());
+        add_basic_note(&session, "First", "1");
+        {
+            let mut col = session.collection.lock();
+            let deck = col.get_or_create_normal_deck("Second").unwrap();
+            let notetype = col.get_notetype_by_name("Basic").unwrap().unwrap();
+            let mut note = notetype.new_note();
+            note.set_field(0, "Second").unwrap();
+            note.set_field(1, "2").unwrap();
+            col.add_note(&mut note, deck.id).unwrap();
+        }
+
+        let everything = update_deck_tree(&session).deck_nodes.row_data(0).unwrap();
+        assert_eq!(everything.id, EVERYTHING_ID);
+        assert_eq!(everything.name, "Everything");
+        assert_eq!(everything.new, 2);
+
+        let card = next_card(&session, everything.clone(), GRID);
+        assert_eq!(texts(&card.question), vec!["First"]);
+        assert_eq!(card.deck.new, 2);
+        assert_eq!(card.deck.name, "Everything");
+
+        let card = rate_card(&session, 3, everything.clone(), GRID);
+        assert_eq!(texts(&card.question), vec!["Second"]);
+        assert_eq!(card.deck.new, 1);
+
+        let card = undo_rating(&session, everything.clone(), GRID).unwrap();
+        assert_eq!(texts(&card.question), vec!["First"]);
+
+        rate_card(&session, 3, everything.clone(), GRID);
+        assert_eq!(rate_card(&session, 3, everything, GRID).id, -1);
     }
 
     #[test]

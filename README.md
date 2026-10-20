@@ -77,7 +77,7 @@ Cards wait in an inbox file until pbAnki next opens, then land in a sub-deck per
 
 ### A deck list you can read at a glance
 
-Counts are labelled, due cards are bold, zeros are grey, and every row is a full-width tap target. Collapsing a deck hides all of its sub-decks and is saved in the collection, as in desktop Anki.
+Counts are labelled, due cards are bold, zeros are grey, and every row is a full-width tap target. Collapsing a deck hides all of its sub-decks and is saved in the collection, as in desktop Anki. **Everything**, at the top, studies every deck: it works through the top-level decks in list order, each with its own daily limits.
 
 <table>
   <tr>
@@ -86,7 +86,7 @@ Counts are labelled, due cards are bold, zeros are grey, and every row is a full
   </tr>
   <tr>
     <td><img src="docs/screenshots/before/decks_expanded.png" width="300" alt="Original deck list"></td>
-    <td><img src="docs/screenshots/decks_expanded.png" width="300" alt="New deck list with labelled columns"></td>
+    <td><img src="docs/screenshots/decks_expanded.png" width="300" alt="New deck list with labelled columns and an Everything row"></td>
   </tr>
 </table>
 

@@ -17,11 +17,12 @@ emulate() {
 }
 
 # Deck list rows, the study screen's button row and the settings controls
-expand=42,242
-koreader=300,182
-basics=300,302
-card_types=300,362
-languages=300,422
+everything=300,182
+expand=42,302
+koreader=300,242
+basics=300,362
+card_types=300,422
+languages=300,482
 show=379,946
 good=489,946
 easy=678,946
@@ -35,10 +36,11 @@ password=490,252
 validate=627,320
 
 emulate shot:decks tap:$expand shot:decks_expanded
-emulate tap:42,182 shot:decks_koreader
+emulate tap:$everything shot:everything
+emulate tap:42,242 shot:decks_koreader
 emulate tap:$koreader shot:koreader_question tap:$show shot:koreader_answer \
     tap:$context shot:context tap:150,946 tap:$easy shot:finished
-emulate tap:42,182 tap:$koreader tap:$edit shot:edit_front \
+emulate tap:42,242 tap:$koreader tap:$edit shot:edit_front \
     "type:What does every rich single man want, according to Pride and Prejudice?" \
     tap:$edit_text tap:$edit_next shot:edit_back tap:$edit_next shot:edited
 emulate tap:$expand tap:$basics tap:$show tap:$good tap:$edit shot:edit_formatted
