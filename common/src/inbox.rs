@@ -295,11 +295,6 @@ impl CardContext {
         (context.quote.trim() != "" || context.book.trim() != "").then_some(context)
     }
 
-    /// Where the highlight is, when the book is still on the device.
-    pub fn book_location(&self) -> Option<crate::open_book::BookLocation> {
-        crate::open_book::BookLocation::from_fields(&self.file, &self.position)
-    }
-
     /// Quote, rule, then book details, as HTML for the page renderer.
     pub fn to_html(&self) -> String {
         let mut html = String::new();
@@ -325,10 +320,6 @@ impl CardContext {
             html.push_str(&place.join(" · "));
         }
         html
-    }
-
-    pub fn can_open(&self) -> bool {
-        !self.file.is_empty()
     }
 }
 
@@ -586,6 +577,5 @@ mod tests {
             context.to_html(),
             "<i>“To be”</i><hr><b>Hamlet</b><br>Shakespeare<br>Act III · p. 57"
         );
-        assert!(!context.can_open());
     }
 }

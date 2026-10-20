@@ -64,7 +64,6 @@ export component MainWindow inherits Window {
     callback rate(rating: int, deck: DeckNode, columns: int, rows: int);
     callback undo(deck: DeckNode, columns: int, rows: int) -> bool;
     callback suspend(deck: DeckNode, columns: int, rows: int);
-    callback open_book();
     callback edit_card();
     callback edit_text(side: int);
     callback edit_typed(side: int, text: string);
@@ -172,9 +171,6 @@ export component MainWindow inherits Window {
             }
             suspend => {
                 suspend(current_card.deck, columns, rows);
-            }
-            open_book => {
-                open_book();
             }
             edit => {
                 edit_card();

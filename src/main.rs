@@ -32,23 +32,6 @@ fn connect_network(iv: &'static Inkview) -> Result<(), String> {
     }
 }
 
-/// Opens a book in KOReader through its launcher, which also brings an
-/// already running KOReader to the front.
-fn open_in_koreader(file: &str) -> Result<(), String> {
-    use std::os::unix::process::CommandExt;
-    let mut child = std::process::Command::new("/bin/sh")
-        .arg("/mnt/ext1/applications/koreader.app")
-        .arg(file)
-        // Keep KOReader running when pbAnki closes
-        .process_group(0)
-        .spawn()
-        .map_err(|e| format!("Couldn't start KOReader: {e}"))?;
-    std::thread::spawn(move || {
-        let _ = child.wait();
-    });
-    Ok(())
-}
-
 /// Opens the PocketBook keyboard and polls for its result on the UI thread.
 fn keyboard_prompt(iv: &'static Inkview) -> TextPrompt {
     let timer = Rc::new(slint::Timer::default());
@@ -133,7 +116,6 @@ fn main() {
                 text_prompt: Some(keyboard_prompt(iv)),
                 connect_network: Some(Rc::new(move || connect_network(iv))),
                 reopened: Some(reopened_for_ui),
-                open_in_koreader: Some(Rc::new(open_in_koreader)),
                 ..PlatformHooks::default()
             };
             setup_ui(&ui, &config, hooks);

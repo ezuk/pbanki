@@ -66,7 +66,6 @@ export component LearnScreen {
     // Undoes the last rating; false if there was nothing to undo
     callback undo() -> bool;
     callback suspend();
-    callback open_book();
     callback edit();
 
     function previous_page() {
@@ -293,20 +292,10 @@ export component LearnScreen {
                     }
                 }
 
-                if has_card && show_context: HorizontalLayout {
-                    spacing: Constants.spacing;
-                    InkButton {
-                        text: "‹ Back";
-                        clicked => {
-                            toggle_context();
-                        }
-                    }
-                    InkButton {
-                        text: "Open in book";
-                        enabled: card.can_open_book;
-                        clicked => {
-                            open_book();
-                        }
+                if has_card && show_context: InkButton {
+                    text: "‹ Back";
+                    clicked => {
+                        toggle_context();
                     }
                 }
 

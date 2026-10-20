@@ -15,7 +15,6 @@ imports into its "KOReader" deck.
 
 local CardEditor = require("cardeditor")
 local Dispatcher = require("dispatcher")
-local Event = require("ui/event")
 local InfoMessage = require("ui/widget/infomessage")
 local NetworkMgr = require("ui/network/manager")
 local Notification = require("ui/widget/notification")
@@ -33,10 +32,6 @@ local T = require("ffi/util").template
 
 local PBANKI_DIR = os.getenv("PBANKI_DIR") or "/mnt/ext1/applications/pbanki"
 local INBOX_FILE = PBANKI_DIR .. "/inbox.jsonl"
--- Written by pbAnki's Open in book: {file, position, time}
-local JUMP_FILE = PBANKI_DIR .. "/open-in-book.json"
--- Older requests are ignored, in seconds
-local JUMP_MAX_AGE = 120
 
 -- Words of book text on each side of the highlight sent to the AI
 local CONTEXT_WORDS = 150
@@ -70,43 +65,6 @@ function PbAnki:init()
             }
         end)
     end
-end
-
--- Open in book from pbAnki
-
-function PbAnki:onReaderReady()
-    self:jumpIfRequested()
-end
-
-function PbAnki:onResume()
-    self:jumpIfRequested()
-end
-
---- Moves to the highlight pbAnki asked to open, if it is in this book.
-function PbAnki:jumpIfRequested()
-    local file = io.open(JUMP_FILE, "r")
-    if not file then return end
-    local ok, request = pcall(json.decode, file:read("*a"))
-    file:close()
-    if not ok or type(request) ~= "table" or type(request.position) ~= "string"
-            or os.time() - (tonumber(request.time) or 0) > JUMP_MAX_AGE then
-        os.remove(JUMP_FILE)
-        return
-    end
-    -- Another book: leave the request for when the right one opens
-    if request.file ~= self.ui.document.file then return end
-    os.remove(JUMP_FILE)
-
-    UIManager:nextTick(function()
-        -- Back returns to where the reader was
-        self.ui.link:addCurrentLocationToStack()
-        if self.ui.rolling then
-            self.ui:handleEvent(Event:new("GotoXPointer", request.position, request.position))
-        else
-            self.ui:handleEvent(Event:new("GotoPage", tonumber(request.position)))
-        end
-        UIManager:show(Notification:new{ text = _("Opened from pbAnki. Back returns to where you were.") })
-    end)
 end
 
 function PbAnki:onDispatcherRegisterActions()
