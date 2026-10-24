@@ -117,6 +117,8 @@ local CardEditor = InputContainer:extend{
     request = nil,
     -- Suggestions are on their way
     waiting = false,
+    -- The reader's instructions for the next suggestions, or nil
+    guidance = nil,
     on_suggest = nil,
     on_save = nil,
     -- Batch mode: skip this highlight
@@ -416,6 +418,7 @@ function CardEditor:setHighlight(highlight, subtitle, cards)
     self.subtitle = subtitle
     self.cards = cards or {}
     self.rejected = {}
+    self.guidance = nil
     self.page = 1
     self.waiting = false
     self:refresh()

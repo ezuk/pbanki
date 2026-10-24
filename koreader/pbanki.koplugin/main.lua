@@ -15,6 +15,7 @@ imports into its "KOReader" deck.
 
 local CardEditor = require("cardeditor")
 local Dispatcher = require("dispatcher")
+local InputDialog = require("ui/widget/inputdialog")
 local InfoMessage = require("ui/widget/infomessage")
 local NetworkMgr = require("ui/network/manager")
 local Notification = require("ui/widget/notification")
@@ -39,6 +40,8 @@ local MAX_CARDS = 10
 -- Saved cards remembered per book, and how many of them the AI sees
 local HISTORY_KEPT = 40
 local HISTORY_SHOWN = 8
+-- Longest selection offered as a term for definition cards
+local DEFINITION_MAX_WORDS = 3
 
 local PbAnki = WidgetContainer:extend{
     name = "pbanki",
@@ -61,6 +64,19 @@ function PbAnki:init()
                 text = _("Create flashcard"),
                 callback = function()
                     self:createFromSelection(highlight, index)
+                end,
+            }
+        end)
+        self.ui.highlight:addToHighlightDialog("13_pbanki_definition", function(highlight, index)
+            return {
+                text = _("Suggest definition flashcards"),
+                show_in_highlight_dialog_func = function()
+                    local selected = highlight.selected_text and highlight.selected_text.text or ""
+                    local _words, count = selected:gsub("%S+", "")
+                    return count >= 1 and count <= DEFINITION_MAX_WORDS and self:aiEnabled()
+                end,
+                callback = function()
+                    self:createDefinitionFromSelection(highlight, index)
                 end,
             }
         end)
@@ -292,14 +308,53 @@ function PbAnki:askCardCount(value, fn, on_write_own)
     })
 end
 
---- Messages asking the AI for cards for highlight `h`.
+--- Asks for optional guidance for the AI, kept on `editor`, then calls `fn`.
+function PbAnki:askGuidance(editor, fn)
+    local dialog
+    dialog = InputDialog:new{
+        title = #editor.cards > 0 and _("Suggest more") or _("Suggest cards"),
+        description = _("Optional: tell the AI what to focus on or how to write the cards."),
+        input = editor.guidance or "",
+        input_hint = _("e.g. ask about the numbers"),
+        allow_newline = false,
+        buttons = { {
+            {
+                text = _("Cancel"),
+                id = "close",
+                callback = function() UIManager:close(dialog) end,
+            },
+            {
+                text = _("Suggest"),
+                id = "done",
+                is_enter_default = true,
+                callback = function()
+                    local text = util.trim(dialog:getInputText())
+                    editor.guidance = text ~= "" and text or nil
+                    UIManager:close(dialog)
+                    fn()
+                end,
+            },
+        } },
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+--- `request` with the book's card history and the cloze setting added.
+function PbAnki:fullRequest(request)
+    local full = {}
+    for key, value in pairs(request) do full[key] = value end
+    if not request.definition then
+        full.recent = cardgen.pickRecent(self:cardHistory(), HISTORY_SHOWN)
+        full.cloze = self.settings.cloze
+    end
+    return full
+end
+
+--- Messages asking the AI for cards for highlight `h`, per a full request.
 function PbAnki:messagesFor(h, request)
     local companion, position_note = self:assistant():companionContext(h.file, h.percent or 0)
-    local with_recent = {}
-    for key, value in pairs(request) do with_recent[key] = value end
-    with_recent.recent = cardgen.pickRecent(self:cardHistory(), HISTORY_SHOWN)
-    with_recent.cloze = self.settings.cloze
-    return cardgen.buildMessages(h, with_recent, companion, position_note)
+    return cardgen.buildMessages(h, request, companion, position_note)
 end
 
 --- Asks the AI for cards and adds them to `editor`, per `editor.request`
@@ -309,9 +364,11 @@ function PbAnki:suggest(editor, after)
     local assistant = self:assistant()
     if not assistant then return end
     local highlight = editor.highlight
-    local request = {
+    local request = self:fullRequest{
         count = editor.request.count,
         max = editor.request.max,
+        definition = editor.request.definition,
+        guidance = editor.guidance,
         existing = editor.cards,
         rejected = editor.rejected,
     }
@@ -326,7 +383,7 @@ function PbAnki:suggest(editor, after)
                     UIManager:show(InfoMessage:new{ text = T(_("No suggestions: %1"), tostring(err)) })
                 end
             else
-                local cards, parse_err = cardgen.parseCards(answer, cardgen.cardLimit(request), json.decode)
+                local cards, parse_err = cardgen.parseReply(answer, request, highlight, json.decode)
                 if cards then
                     editor:addCards(cards)
                 else
@@ -347,13 +404,14 @@ end
 --- Asks the AI for cards for highlight `h` with nothing on screen. Calls
 -- `done(cards)`, with nil cards when that failed. Returns a cancel function.
 function PbAnki:suggestInBackground(h, request, done)
+    request = self:fullRequest(request)
     return self:assistant():queryFlashcardsInBackground(self:messagesFor(h, request), function(answer, err)
         if not answer then
             logger.info("pbanki: background suggestion failed", err)
             done(nil)
             return
         end
-        local cards = cardgen.parseCards(answer, cardgen.cardLimit(request), json.decode)
+        local cards = cardgen.parseReply(answer, request, h, json.decode)
         if not cards then logger.warn("pbanki: unreadable AI reply", answer) end
         done(cards)
     end)
@@ -379,13 +437,15 @@ function PbAnki:newEditor(highlight, opts)
         can_suggest = self:assistant() ~= nil,
         request = opts.request,
         on_suggest = function(e)
-            if not opts.ask_count then
-                self:suggest(e)
-                return
-            end
-            self:askCardCount(e.request and e.request.count or 1, function(count)
-                e.request = { count = count }
-                self:suggest(e)
+            self:askGuidance(e, function()
+                if not opts.ask_count then
+                    self:suggest(e)
+                    return
+                end
+                self:askCardCount(e.request and e.request.count or 1, function(count)
+                    e.request = { count = count }
+                    self:suggest(e)
+                end)
             end)
         end,
         on_save = opts.on_save,
@@ -429,6 +489,29 @@ function PbAnki:createFromSelection(highlight, index)
     else
         open(nil)
     end
+end
+
+--- Opens the editor with a term and definition pair for a short selection.
+function PbAnki:createDefinitionFromSelection(highlight, index)
+    local before, after = highlight:getSelectedWordContext(CONTEXT_WORDS)
+    if not index then
+        index = highlight:saveHighlight(true)
+    end
+    highlight:onClose()
+    local item = index and self.ui.annotation.annotations[index]
+    if not item then return end
+
+    self:newEditor(self:describe(item, before or "", after or ""), {
+        title = _("Definition flashcards"),
+        subtitle = self.ui.doc_props and self.ui.doc_props.display_title,
+        request = { definition = true },
+        on_save = function(editor, cards)
+            if self:saveCards(editor.highlight, cards, false, true) then
+                self:markReviewed(item)
+                UIManager:close(editor)
+            end
+        end,
+    })
 end
 
 -- Batch: through the book's pending highlights
@@ -535,8 +618,9 @@ end
 
 -- Inbox
 
---- Appends cards to pbAnki's inbox and confirms.
-function PbAnki:saveCards(h, cards, quiet)
+--- Appends cards to pbAnki's inbox and confirms. `no_history` keeps them
+-- out of the card history that steers suggestions.
+function PbAnki:saveCards(h, cards, quiet, no_history)
     for _idx, card in ipairs(cards) do
         local ok, err = self:appendToInbox{
             front = card.front,
@@ -554,7 +638,7 @@ function PbAnki:saveCards(h, cards, quiet)
             return false
         end
     end
-    self:addToCardHistory(h, cards)
+    if not no_history then self:addToCardHistory(h, cards) end
     local text = #cards == 1 and _("Card saved for pbAnki.") or T(_("%1 cards saved for pbAnki."), #cards)
     if quiet then
         UIManager:show(Notification:new{ text = text })

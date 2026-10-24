@@ -161,4 +161,56 @@ eq(cardgen.clozeMark("The ", "The x"), "{{c1::", "first mark opens c1")
 eq(cardgen.clozeMark("The {{c1::Sei", "The {{c1::Sei"), "}}", "open deletion is closed")
 eq(cardgen.clozeMark("The {{c1::Seine}} and ", "The {{c1::Seine}} and "), "{{c2::", "next deletion numbered")
 
+-- Cloze cards quote the book
+local book = "It is a truth universally acknowledged, that a single man in possession of a good fortune, "
+    .. "must be in want of a wife."
+assert(cardgen.quotesText("a single man in possession of a good {{c1::fortune}}", book), "verbatim part quoted")
+assert(cardgen.quotesText("It is a {{c1::truth universally acknowledged::hint}}", book), "hint ignored")
+assert(cardgen.quotesText("It\226\128\153s fine", "It's fine."), "curly apostrophe matches")
+assert(not cardgen.quotesText("A rich single man must want a {{c1::wife}}.", book), "paraphrase rejected")
+assert(not cardgen.quotesText("{{c1::wife}} must be in want", book), "reordered rejected")
+local clozeReply = '{"cards":[{"front":"P"},{"front":"Q"},{"front":"R"}]}'
+local clozeDecode = fakeDecoder{ [clozeReply] = { cards = {
+    { front = "A single man must want a {{c1::wife}}." },
+    { front = "must be in want of a {{c1::wife}}." },
+    { front = "What is universally acknowledged?", back = "A truth" },
+} } }
+local quoted = cardgen.parseReply(clozeReply, { count = 3, cloze = true }, { text = book }, clozeDecode)
+eq(#quoted, 1, "only the quoting cloze card kept")
+eq(quoted[1].front, "must be in want of a {{c1::wife}}.", "quoting card kept")
+eq(#cardgen.parseReply(clozeReply, { count = 3 }, { text = book }, clozeDecode), 3, "basic cards not filtered")
+local noQuote = '{"cards":[{"front":"X"}]}'
+local dropped, droppedErr = cardgen.parseReply(noQuote, { count = 1, cloze = true }, { text = book },
+    fakeDecoder{ [noQuote] = { cards = { { front = "Men want {{c1::wives}}." } } } })
+eq(dropped, nil, "no quoting cards")
+assert(droppedErr, "error when no cloze card quotes the book")
+assert(cardgen.CLOZE_PROMPT:find("word for word", 1, true), "cloze prompt asks for exact quotes")
+
+-- Definition cards
+local defReply = '{"term":"x"}'
+local pair = cardgen.parseReply(defReply, { definition = true }, { text = "x" },
+    fakeDecoder{ [defReply] = { term = " willpower ", definition = "The ability to do what matters most." } })
+eq(#pair, 2, "definition gives two cards")
+eq(pair[1].front, "willpower", "term on the front")
+eq(pair[1].back, "The ability to do what matters most.", "definition on the back")
+eq(pair[2].front, "The ability to do what matters most.", "reverse card shows the definition")
+eq(pair[2].back, "willpower", "reverse card asks for the term")
+local badDef = '{"term":""}'
+eq(cardgen.parseDefinition(badDef, fakeDecoder{ [badDef] = { term = "" } }), nil, "missing definition")
+local defMessages = cardgen.buildMessages({ text = "willpower" }, {
+    definition = true,
+    cloze = true,
+    existing = { { front = "willpower", back = "Self-control" } },
+})
+eq(defMessages[1].content, cardgen.DEFINITION_PROMPT, "definition prompt wins over cloze")
+assert(defMessages[2].content:find("different definition", 1, true), "asks for a different definition")
+assert(not defMessages[2].content:find("Write 1 card", 1, true), "no card count for definitions")
+
+-- Guidance
+local guided = cardgen.buildMessages({ text = "x" }, { count = 2, guidance = "Ask about the numbers" })[2].content
+assert(guided:find("Ask about the numbers", 1, true), "guidance included")
+assert(guided:find("Write 2 cards", 1, true), "count still asked with guidance")
+assert(not cardgen.buildMessages({ text = "x" }, { count = 1 })[2].content:find("reader asked", 1, true),
+    "no guidance section without guidance")
+
 print("cardgen_spec: OK")

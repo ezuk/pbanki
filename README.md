@@ -42,7 +42,7 @@ Select a passage in [KOReader](https://koreader.rocks) and tap **Create flashcar
 
 Suggestions come from the [AI Assistant](https://github.com/omer-faruq/assistant.koplugin) plugin, using whichever model you choose. The prompt is tuned for good flashcards. Questions are short and specific, answers are a few words, each card asks about something different, and a list in the text becomes one card that asks for the list.
 
-The AI reads more than the highlight. It sees the book, the chapter, about 150 words on each side of the passage, and the note you left on the highlight, which steers what it asks about. It also sees the last cards you saved from the same book, including how you rewrote its earlier suggestions, and copies your style. Tap **Suggest more** to add up to 10 more cards below the ones you have. It avoids repeating what you kept and learns from the ones you removed.
+The AI reads more than the highlight. It sees the book, the chapter, about 150 words on each side of the passage, and the note you left on the highlight, which steers what it asks about. It also sees the last cards you saved from the same book, including how you rewrote its earlier suggestions, and copies your style. Tap **Suggest more** to add up to 10 more cards below the ones you have. It avoids repeating what you kept and learns from the ones you removed. Before it asks, you can type a short hint, like "ask about the numbers", or leave it empty.
 
 ### A whole book's highlights in one sitting
 
@@ -65,7 +65,7 @@ The plugin remembers which highlights you've reviewed in the book's own KOReader
 
 ### Cloze cards
 
-A cloze card is a sentence with a gap: "A single man of large fortune must be in want of a [...]". Tick **Cloze** when you ask for suggestions and the AI writes these instead of questions. For batch mode, turn on **Suggest cloze cards** in the menu.
+A cloze card is a sentence with a gap: "A single man of large fortune must be in want of a [...]". Tick **Cloze** when you ask for suggestions and the AI writes these instead of questions. For batch mode, turn on **Suggest cloze cards** in the menu. The AI's cloze cards are always the book's own sentence, word for word, with only the gap blanked out; a card that rewords the text is dropped.
 
 You can make them by hand too. On the card's front, the **{{…}} Cloze** button opens a gap at the cursor. Type the hidden words and tap it again to close the gap. In pbAnki they become regular Anki cloze cards that still remember their book and passage.
 
@@ -79,6 +79,21 @@ You can make them by hand too. On the card's front, the **{{…}} Cloze** button
     <td>Tick Cloze before you ask.</td>
     <td>The Cloze button writes the marks for you.</td>
     <td>AI and hand-written cloze cards together.</td>
+  </tr>
+</table>
+
+### Definition cards
+
+Select a term of one to three words and the highlight menu offers **Suggest definition flashcards**. The AI defines the term the way the book uses it and makes a pair of cards: the term on the front with the definition on the back, and the definition on the front with the term on the back.
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/koreader/31_definition_menu.png" width="240" alt="The highlight menu with a Suggest definition flashcards button"></td>
+    <td><img src="docs/screenshots/koreader/32_definition_cards.png" width="240" alt="A term and definition pair of cards in the card editor"></td>
+  </tr>
+  <tr>
+    <td>Select a few words.</td>
+    <td>Both directions, ready to edit or save.</td>
   </tr>
 </table>
 

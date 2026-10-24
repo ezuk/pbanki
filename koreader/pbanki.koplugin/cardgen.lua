@@ -34,20 +34,31 @@ Reply with JSON only, no other text, in this shape:
 {"cards": [{"front": "question", "back": "answer"}]}]]
 
 local WRITING_CLOZE = [[Writing the card:
-- Write cloze cards: the front is a statement with the part to recall hidden as {{c1::hidden words}}. The examples above are questions and answers; state the same fact as a sentence and hide the answer: "Self-control requires the {{c1::pause-and-plan response}}, not fight-or-flight."
-- Front: one short, self-contained sentence, ideally under 20 words.
+- Write cloze cards. The examples above are questions and answers; for a cloze card, find the sentence in the text that states the same fact and hide the answer in it with {{c1::hidden words}}.
+- Quote the text word for word. The front is one sentence from the highlighted text, copied exactly as the book writes it, with only the cloze marks added. Never paraphrase, reorder, replace or add words, not even to name what the sentence is about.
+- You may leave out words at the start or end of the sentence to keep it short, but never in the middle.
+- When the highlight is shorter than a sentence, quote the whole sentence around it from the passage.
+- When the highlight has several sentences, each card quotes a different one.
 - Hide what the question would ask for: the key term, finding or practice, ideally 1 to 6 words. Never hide filler words, and never hide most of the sentence.
-- Use only c1, so each card is one flashcard. For a list, hide every item with c1: "Sleep deprivation makes it harder to {{c1::control emotions}}, {{c1::focus attention}} and {{c1::find energy}}."
+- Use only c1, so each card is one flashcard. For a list, hide every item with c1.
 - The hidden words must not be guessable from the rest of the sentence, and the rest must still give enough of a cue to recall them.
-- Back: empty, or a few words of extra takeaway shown with the answer.
-- State the idea itself, as plain fact. Never attribute it to the author, the book or a character ("According to the author …", "In this book, …"). Naming a researcher or study the book cites is fine when it helps recall.
-- The sentence must still make sense months later without the book open: name the specific thing it is about.
-- Do not copy the whole highlight onto a card.
-- Write in the language of the highlighted text.
+- Back: empty, or a few words saying what the sentence is about when that would be unclear months later without the book open, such as who "she" is or which study "it" means.
 - Plain text only, no Markdown.
 
 Reply with JSON only, no other text, in this shape:
-{"cards": [{"front": "Sentence with {{c1::hidden words}}.", "back": ""}]}]]
+{"cards": [{"front": "Sentence quoted from the text with {{c1::hidden words}}.", "back": ""}]}]]
+
+M.DEFINITION_PROMPT = [[You write a pair of Anki definition flashcards for a term a reader highlighted in a book. One card shows the term and asks for its definition, the other shows the definition and asks for the term.
+
+- Term: the highlighted words as a dictionary headword. Keep the book's words; only change the form when needed, such as plural to singular.
+- Definition: what the term means as this book uses it, ideally under 20 words. Use the surrounding passage and book notes to understand it. When the book defines the term, follow its definition.
+- The definition must not contain the term or any word from it, not even inside another name or phrase, since the other card shows the definition and asks for the term. Wrong for "ego depletion": "The depletion of willpower after using it". Right: "The idea that self-control runs out the more you use it".
+- Make the definition specific enough that the term is the only fitting answer.
+- If the reader left a note on the highlight, let it steer the definition.
+- Write in the language of the book. Plain text only, no Markdown.
+
+Reply with JSON only, no other text, in this shape:
+{"term": "term", "definition": "definition"}]]
 
 M.SYSTEM_PROMPT = CHOOSING .. "\n\n" .. WRITING_BASIC
 M.CLOZE_PROMPT = CHOOSING .. "\n\n" .. WRITING_CLOZE
@@ -104,12 +115,20 @@ end
 -- where `suggested` is the AI's original {front, back} of a card;
 -- optional `rejected`, a list of {front, back} suggestions the reader removed;
 -- optional `recent`, entries from the book's card history (see M.historyEntry);
--- optional `cloze`, true for cloze cards
+-- optional `cloze`, true for cloze cards;
+-- optional `definition`, true for a term and definition pair (see M.parseDefinition);
+-- optional `guidance`, the reader's own instructions for these cards
 -- @string companion optional Book Companion text
 -- @string position_note optional Book Companion note about the reading position
 function M.buildMessages(h, request, companion, position_note)
+    local system = M.SYSTEM_PROMPT
+    if request.definition then
+        system = M.DEFINITION_PROMPT
+    elseif request.cloze then
+        system = M.CLOZE_PROMPT
+    end
     local messages = {
-        { role = "system", content = request.cloze and M.CLOZE_PROMPT or M.SYSTEM_PROMPT },
+        { role = "system", content = system },
     }
     if companion and companion ~= "" then
         table.insert(messages, {
@@ -154,8 +173,13 @@ function M.buildMessages(h, request, companion, position_note)
                     .. "\n  The reader changed it to: " .. cardLine(card))
             end
         end
-        table.insert(parts, "The reader already has these cards. Write new ones that ask something else, "
-            .. "in the same style and level of detail:\n\n" .. table.concat(lines, "\n"))
+        if request.definition then
+            table.insert(parts, "The reader already has these cards for this term. "
+                .. "Write a different definition:\n\n" .. table.concat(lines, "\n"))
+        else
+            table.insert(parts, "The reader already has these cards. Write new ones that ask something else, "
+                .. "in the same style and level of detail:\n\n" .. table.concat(lines, "\n"))
+        end
         if #edits > 0 then
             table.insert(parts, "The reader rewrote some of your earlier suggestions. "
                 .. "Notice what they changed and write new cards the way they would:\n\n"
@@ -172,7 +196,13 @@ function M.buildMessages(h, request, companion, position_note)
             .. "or about a side detail) and avoid that, while still basing new cards on the highlight:\n\n"
             .. table.concat(lines, "\n"))
     end
-    table.insert(parts, M.countInstruction(request))
+    if request.guidance and request.guidance ~= "" then
+        table.insert(parts, "The reader asked for these cards:\n\n" .. request.guidance
+            .. "\n\nFollow it, within the rules above.")
+    end
+    if not request.definition then
+        table.insert(parts, M.countInstruction(request))
+    end
 
     table.insert(messages, { role = "user", content = table.concat(parts, "\n\n") })
     return messages
@@ -331,6 +361,76 @@ function M.parseCards(text, count, decode)
         return nil, "The AI reply had no cards."
     end
     return cards
+end
+
+--- Lowercase words of `text`, ignoring punctuation, joined by single spaces.
+local function words(text)
+    text = text:gsub("\226\128[\152\153]", "'")
+        :gsub("\226\128[\147\148\156\157\166]", " ")
+        :gsub("\194\160", " ")
+        :gsub("\194\173", "")
+    local list = {}
+    for found in text:gmatch("[%w\128-\255']+") do
+        local w = found:gsub("^'+", ""):gsub("'+$", "")
+        if w ~= "" then table.insert(list, w:lower()) end
+    end
+    return table.concat(list, " ")
+end
+
+--- Whether cloze `front`, without its marks, quotes `source` word for word.
+function M.quotesText(front, source)
+    local plain = front:gsub("{{c%d+::(.-)}}", function(inner)
+        return inner:match("^(.-)::") or inner
+    end)
+    local quote = words(plain)
+    return quote ~= "" and (" " .. words(source) .. " "):find(" " .. quote .. " ", 1, true) ~= nil
+end
+
+--- The term and definition in a reply as two cards: term → definition and
+-- definition → term.
+-- @return cards, or nil and an error message
+function M.parseDefinition(text, decode)
+    local json = M.extractJson(text)
+    local ok, data = pcall(decode, json or "")
+    if not json or not ok or type(data) ~= "table" then
+        return nil, "The AI reply could not be read."
+    end
+    local term = type(data.term) == "string" and trim(data.term) or ""
+    local definition = type(data.definition) == "string" and trim(data.definition) or ""
+    if term == "" or definition == "" then
+        return nil, "The AI reply had no definition."
+    end
+    return {
+        { front = term, back = definition },
+        { front = definition, back = term },
+    }
+end
+
+--- Cards from a reply to `request` (see M.buildMessages) for highlight `h`.
+-- Cloze cards that do not quote the book are dropped.
+-- @return cards, or nil and an error message
+function M.parseReply(text, request, h, decode)
+    if request.definition then
+        return M.parseDefinition(text, decode)
+    end
+    local limit = M.cardLimit(request)
+    if not request.cloze then
+        return M.parseCards(text, limit, decode)
+    end
+    local cards, err = M.parseCards(text, nil, decode)
+    if not cards then return nil, err end
+    local source = table.concat({ h.before or "", h.text or "", h.after or "" }, " ")
+    local kept = {}
+    for _idx, card in ipairs(cards) do
+        if M.isCloze(card.front) and M.quotesText(card.front, source) then
+            table.insert(kept, card)
+        end
+        if limit and #kept >= limit then break end
+    end
+    if #kept == 0 then
+        return nil, "The AI's cloze cards did not quote the book. Try Suggest again."
+    end
+    return kept
 end
 
 return M
