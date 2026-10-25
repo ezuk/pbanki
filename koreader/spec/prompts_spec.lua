@@ -7,50 +7,51 @@ local function eq(got, want, msg)
     assert(got == want, msg .. ": expected [" .. tostring(want) .. "] got [" .. tostring(got) .. "]")
 end
 
--- Standard is always there and uses the built-in instructions
-local saved = {}
-eq(#prompts.all(saved), 1, "only Standard at first")
-eq(prompts.resolve(saved, nil, nil), prompts.STANDARD, "Standard by default")
-eq(prompts.text(prompts.STANDARD, "cloze"), cardgen.PROMPTS.cloze, "Standard cloze text")
-eq(prompts.isEdited(prompts.STANDARD, "questions"), false, "Standard not edited")
+local function write(path, text)
+    local f = assert(io.open(path, "w"))
+    f:write(text)
+    f:close()
+end
 
--- Duplicating keeps only changed instructions
-eq(prompts.copyName(saved, "Standard"), "Standard copy", "first copy name")
-local mine = prompts.duplicate(saved, prompts.STANDARD, "Mine")
-eq(mine.id, "p1", "first id")
-eq(mine.questions, nil, "copy of Standard stores no text")
-eq(prompts.find(saved, "p1"), mine, "found by id")
+-- Markdown is tidied: line ends, trailing spaces, blank lines, headings
+eq(prompts.normalize("\239\187\191One  \r\nline\r\n\r\n\r\n\r\nTwo\n"), "One\nline\n\nTwo", "BOM, CRLF, blank lines")
+eq(prompts.normalize("Intro\n## Rules\n- a\n- b"), "Intro\n\n## Rules\n\n- a\n- b", "headings set apart")
+eq(prompts.normalize("# Title\n\nText"), "# Title\n\nText", "tidy text unchanged")
+eq(prompts.normalize("Use #tags\n"), "Use #tags", "hash inside a line is not a heading")
 
-prompts.setText(mine, "questions", "Ask short questions.")
-eq(prompts.text(mine, "questions"), "Ask short questions.", "edited text")
-eq(prompts.isEdited(mine, "questions"), true, "marked edited")
-eq(prompts.text(mine, "definition"), cardgen.PROMPTS.definition, "other kinds follow Standard")
-prompts.setText(mine, "cloze", cardgen.PROMPTS.cloze)
-eq(mine.cloze, nil, "Standard text is not stored")
-prompts.setText(mine, "cloze", "   ")
-eq(mine.cloze, nil, "blank text is not stored")
+-- A folder with one file uses Standard for the other kinds
+local dir = os.tmpname()
+os.remove(dir)
+assert(os.execute("mkdir -p '" .. dir .. "'"))
+write(dir .. "/definitions.md", "Define it simply.\r\n")
+local prompt = prompts.read(dir)
+eq(prompt.definition, "Define it simply.", "definitions read")
+eq(prompt.questions, nil, "no questions file")
+eq(table.concat(prompts.ownKinds(prompt), ","), "definitions", "own kinds")
+eq(cardgen.buildMessages({ text = "x" }, { definition = true, prompt = prompt })[1].content,
+    "Define it simply.\n\n" .. cardgen.REPLY_FORMATS.definition, "definition from the file")
+eq(cardgen.buildMessages({ text = "x" }, { count = 1, prompt = prompt })[1].content,
+    cardgen.SYSTEM_PROMPT, "questions fall back to Standard")
+write(dir .. "/question.md", "Ask briefly.")
+write(dir .. "/cloze.md", "  \n")
+prompt = prompts.read(dir)
+eq(prompt.questions, "Ask briefly.", "singular file name accepted")
+eq(prompt.cloze, nil, "empty file falls back")
+os.execute("rm -rf '" .. dir .. "'")
 
-local copy = prompts.duplicate(saved, mine, prompts.copyName(saved, "Mine"))
-eq(copy.name, "Mine copy", "copy of a saved prompt")
-eq(copy.id, "p2", "next id")
-eq(copy.questions, "Ask short questions.", "copy keeps edits")
-eq(prompts.copyName(saved, "Mine"), "Mine copy 2", "numbered copy name")
+-- Choosing a folder
+local folders = { "zeta", "Standard", "Concise" }
+eq(table.concat(prompts.names(folders), ","), "Standard,Concise,zeta", "Standard first, then sorted")
+eq(table.concat(prompts.names({}), ","), "Standard", "Standard even without folders")
+eq(prompts.choose(folders, "zeta", "Concise"), "zeta", "book's choice")
+eq(prompts.choose(folders, nil, "Concise"), "Concise", "default")
+eq(prompts.choose(folders, "gone", "Concise"), "Concise", "missing book choice falls back")
+eq(prompts.choose(folders, "gone", "also gone"), "Standard", "then Standard")
 
--- A book's choice wins over the default; missing ids fall back
-eq(prompts.resolve(saved, "p2", "p1"), copy, "book's own prompt")
-eq(prompts.resolve(saved, nil, "p1"), mine, "default prompt")
-prompts.remove(saved, "p2")
-eq(#prompts.all(saved), 2, "removed")
-eq(prompts.resolve(saved, "p2", "p1"), mine, "deleted book prompt falls back to default")
-eq(prompts.resolve(saved, "p2", "p9"), prompts.STANDARD, "then to Standard")
-eq(prompts.duplicate(saved, mine, "Again").id, "p2", "ids reused after the highest is removed")
-
--- The prompt reaches the AI, with the reply format kept
-local msgs = cardgen.buildMessages({ text = "x" }, { count = 1, prompt = mine })
-eq(msgs[1].content, "Ask short questions.\n\n" .. cardgen.REPLY_FORMATS.questions, "custom questions prompt")
-msgs = cardgen.buildMessages({ text = "x" }, { count = 1, cloze = true, prompt = mine })
-eq(msgs[1].content, cardgen.CLOZE_PROMPT, "unedited kind uses Standard")
-msgs = cardgen.buildMessages({ text = "x" }, { count = 1, prompt = prompts.STANDARD })
-eq(msgs[1].content, cardgen.SYSTEM_PROMPT, "Standard prompt unchanged")
+-- Standard files hold the built-in instructions
+local files = prompts.standardFiles()
+eq(files[3].name, "definitions.md", "definitions file name")
+eq(files[1].text, cardgen.PROMPTS.questions .. "\n", "questions file text")
+eq(prompts.normalize(files[2].text), cardgen.PROMPTS.cloze, "built-in prompts are tidy Markdown")
 
 print("prompts_spec: OK")

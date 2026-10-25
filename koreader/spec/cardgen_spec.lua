@@ -177,7 +177,7 @@ local clozeDecode = fakeDecoder{ [clozeReply] = { cards = {
 } } }
 local quoted = cardgen.parseReply(clozeReply, { count = 3, cloze = true }, { text = book }, clozeDecode)
 eq(#quoted, 1, "only the quoting cloze card kept")
-eq(quoted[1].front, "must be in want of a {{c1::wife}}.", "quoting card kept")
+eq(quoted[1].front, book:gsub("wife%.", "{{c1::wife}}."), "quoting card widened to the whole highlight")
 eq(#cardgen.parseReply(clozeReply, { count = 3 }, { text = book }, clozeDecode), 3, "basic cards not filtered")
 local noQuote = '{"cards":[{"front":"X"}]}'
 local dropped, droppedErr = cardgen.parseReply(noQuote, { count = 1, cloze = true }, { text = book },
@@ -185,6 +185,18 @@ local dropped, droppedErr = cardgen.parseReply(noQuote, { count = 1, cloze = tru
 eq(dropped, nil, "no quoting cards")
 assert(droppedErr, "error when no cloze card quotes the book")
 assert(cardgen.CLOZE_PROMPT:find("word for word", 1, true), "cloze prompt asks for exact quotes")
+assert(cardgen.CLOZE_PROMPT:find("even when it is a long paragraph", 1, true), "cloze keeps long highlights whole")
+
+-- Cloze cards cover the whole highlight
+local para = "First sentence here. The key idea is focus. Last sentence there."
+eq(cardgen.expandCloze("The key idea is {{c1::focus}}.", para),
+    "First sentence here. The key idea is {{c1::focus}}. Last sentence there.", "widened to the paragraph")
+eq(cardgen.expandCloze("{{c1::First}} sentence here. The key idea is focus. Last sentence there.", para),
+    "{{c1::First}} sentence here. The key idea is focus. Last sentence there.", "whole highlight unchanged")
+eq(cardgen.expandCloze("A {{c1::sentence}} around a short highlight.", "short highlight"),
+    "A {{c1::sentence}} around a short highlight.", "longer than the highlight unchanged")
+eq(cardgen.expandCloze("The key idea is {{c1::focus::a hint}}.", para),
+    "First sentence here. The key idea is {{c1::focus::a hint}}. Last sentence there.", "hints kept")
 
 -- Definition cards
 local defReply = '{"term":"x"}'

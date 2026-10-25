@@ -65,7 +65,7 @@ The plugin remembers which highlights you've reviewed in the book's own KOReader
 
 ### Cloze cards
 
-A cloze card is a sentence with a gap: "A single man of large fortune must be in want of a [...]". Tick **Cloze** when you ask for suggestions and the AI writes these instead of questions. For batch mode, turn on **Suggest cloze cards** in the menu. The AI's cloze cards are always the book's own sentence, word for word, with only the gap blanked out; a card that rewords the text is dropped.
+A cloze card is a sentence with a gap: "A single man of large fortune must be in want of a [...]". Tick **Cloze** when you ask for suggestions and the AI writes these instead of questions. For batch mode, turn on **Suggest cloze cards** in the menu. The AI's cloze cards are always the book's own words with only the gap blanked out, and they keep the whole highlight, even a long paragraph. A card that rewords the text is dropped.
 
 You can make them by hand too. On the card's front, the **{{…}} Cloze** button opens a gap at the cursor. Type the hidden words and tap it again to close the gap. In pbAnki they become regular Anki cloze cards that still remember their book and passage.
 
@@ -99,20 +99,32 @@ Select a term of one to three words and the highlight menu offers **Suggest defi
 
 ### Your own AI prompts
 
-The prompt the AI follows makes a big difference to the cards. **Tools → pbAnki flashcards → AI prompt** lists your prompts, starting with the built-in **Standard**. Duplicate one, rename it, and edit its instructions for question, cloze and definition cards right on the device. A copy keeps only the parts you change; the rest follow Standard. The reply format the plugin needs is added automatically, so an edit can't break it.
+The prompt the AI follows makes a big difference to the cards. Prompts are Markdown files in `applications/pbanki/prompts/`, one folder per prompt:
 
-Pick a default prompt for all books, and a different one for any book that needs it.
+```
+prompts/
+  Standard/          the built-in prompt, written by the plugin
+    questions.md
+    cloze.md
+    definitions.md
+  Concise/           your own
+    definitions.md   kinds without a file use Standard's
+```
+
+To make your own, copy the Standard folder with KOReader's file browser (or from a computer), rename it and edit the files in KOReader's text editor. A folder doesn't need all three files: any that are missing use Standard. Edits to Standard itself are undone when a book opens, so it stays a clean copy of the built-in prompt. The plugin tidies the Markdown (line ends, blank lines, space around headings) and adds the reply format itself, so the files only hold instructions.
+
+**Tools → pbAnki flashcards → AI prompt** picks a default prompt for all books, and a different one for any book that needs it.
 
 <table>
   <tr>
-    <td><img src="docs/screenshots/koreader/39_prompts_with_copy.png" width="240" alt="The AI prompt menu with Standard and a copy named Concise"></td>
-    <td><img src="docs/screenshots/koreader/41_edit_saved.png" width="240" alt="Editing the question card instructions of the Concise prompt"></td>
-    <td><img src="docs/screenshots/koreader/43_book_choice.png" width="240" alt="Choosing Concise as this book's prompt"></td>
+    <td><img src="docs/screenshots/koreader/36_book_concise.png" width="240" alt="Choosing the Concise prompt for this book"></td>
+    <td><img src="docs/screenshots/koreader/37_prompts_after.png" width="240" alt="The AI prompt menu: this book uses Concise, the default is Standard"></td>
+    <td><img src="docs/screenshots/koreader/39_text_editor.png" width="240" alt="Standard's cloze.md open in KOReader's text editor"></td>
   </tr>
   <tr>
-    <td>Standard and your copies.</td>
-    <td>Edit on the device; Standard puts the original text back.</td>
-    <td>Use a different prompt for this book.</td>
+    <td>Each prompt lists the kinds of card it has files for.</td>
+    <td>This book's prompt and the default.</td>
+    <td>The prompt files open in KOReader's text editor.</td>
   </tr>
 </table>
 
@@ -253,7 +265,7 @@ If AnkiWeb can't merge the two collections (after a reset on another device, for
 ### Under the hood
 
 - One Cargo workspace with a single lock file. The Anki dependency is pinned to an exact commit.
-- 70 Rust tests, covering card layout, config, the KOReader inbox and the study flow against real Anki collections, plus specs for the plugin's card prompts and prompt manager. The original had none.
+- 70 Rust tests, covering card layout, config, the KOReader inbox and the study flow against real Anki collections, plus specs for the plugin's card prompts and prompt folders. The original had none.
 - CI checks formatting, runs Clippy and the tests, and cross-builds for the PocketBook on every push.
 - Fixes to the original: sync could never log in with the default config (an empty token counted as a real one), settings were always saved to the device path, the sync status got stuck after a failure, and a page size of 0 crashed the app.
 - The launcher works around firmware 6.11 refusing to load `libinkview.so`.
@@ -277,7 +289,7 @@ Not ready yet. Firmware 6.x lists apps from `system/config/desktop/view.json`, a
 
 ### KOReader plugin
 
-Copy `koreader/pbanki.koplugin` to `applications/koreader/plugins/` and restart KOReader. Highlight text, then tap **Create flashcard**, or open **Tools → pbAnki flashcards → Flashcards from highlights**. The same menu turns AI suggestions and cloze suggestions on and off, sets the most cards the AI may write per highlight in batch mode (1 to 10, default 3), picks the AI model, manages AI prompts, and can make all of a book's highlights new again. Batch mode can also be put on a gesture.
+Copy `koreader/pbanki.koplugin` to `applications/koreader/plugins/` and restart KOReader. Highlight text, then tap **Create flashcard**, or open **Tools → pbAnki flashcards → Flashcards from highlights**. The same menu turns AI suggestions and cloze suggestions on and off, sets the most cards the AI may write per highlight in batch mode (1 to 10, default 3), picks the AI model and AI prompt, and can make all of a book's highlights new again. Batch mode can also be put on a gesture.
 
 Cards are queued in `applications/pbanki/inbox.jsonl` and imported when pbAnki starts or when you return to the deck list. If a line can't be imported, it is kept in `inbox.failed.jsonl` rather than dropped.
 

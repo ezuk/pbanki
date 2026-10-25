@@ -1,5 +1,9 @@
--- AI prompts: duplicate Standard, edit the copy, and pick it for this book.
+-- AI prompt folders: Standard written by the plugin, a reader's folder with
+-- one file, picked for this book.
 local UIManager = require("ui/uimanager")
+local lfs = require("libs/libkoreader-lfs")
+
+local DIR = os.getenv("PBANKI_DIR") .. "/prompts"
 
 local function top()
     local stack = UIManager._window_stack
@@ -19,13 +23,25 @@ local function open(ui, prefix)
     end
     error("no menu item " .. prefix)
 end
-local function log(ui)
+local function system(ui, request)
     local p = ui.pbanki
-    local system = p:messagesFor({ text = "x" }, p:fullRequest{ count = 1 })[1].content
-    io.stderr:write("uxdriver active=", p:activePrompt().name, " system=", system:sub(1, 60), "\n")
+    return p:messagesFor({ text = "x" }, p:fullRequest(request))[1].content:sub(1, 50):gsub("\n", " ")
 end
 
 return {
+    function(ui)
+        local names = {}
+        for name in lfs.dir(DIR .. "/Standard") do
+            if name:sub(1, 1) ~= "." then table.insert(names, name) end
+        end
+        table.sort(names)
+        io.stderr:write("uxdriver standard=", table.concat(names, ","),
+            " readme=", tostring(lfs.attributes(DIR .. "/README.md", "mode")), "\n")
+        lfs.mkdir(DIR .. "/Concise")
+        local f = io.open(DIR .. "/Concise/definitions.md", "w")
+        f:write("# Short definitions\nDefine the term in under 10 words.\n- Use plain words.\n")
+        f:close()
+    end,
     function(ui)
         ui.menu:onShowMenu()
         local tm = menu(ui)
@@ -38,46 +54,25 @@ return {
             end
         end
     end,
-    function(ui, shot) shot("34_menu_prompt") end,
     function(ui) open(ui, "AI prompt") end,
-    function(ui, shot) shot("35_prompts") end,
-    function(ui) open(ui, "Standard") end,
-    function(ui, shot) shot("36_standard") end,
-    function(ui) open(ui, "Question cards") end,
-    function(ui, shot) shot("37_standard_view") end,
-    function(ui) UIManager:close(top()) end,
-    function(ui) open(ui, "Duplicate") end,
-    function(ui, shot) shot("38_duplicate_name") end,
-    function(ui)
-        local dialog = top()
-        dialog:setInputText("Concise")
-        dialog.button_table:getButtonById("done").callback()
-    end,
-    function(ui, shot) shot("39_prompts_with_copy") end,
-    function(ui) open(ui, "Concise") end,
-    function(ui) open(ui, "Question cards") end,
-    function(ui, shot) shot("40_edit_prompt") end,
-    function(ui)
-        local dialog = top()
-        dialog:setInputText("You write one short Anki question per idea a reader highlighted.\n\n"
-            .. "- Front: under 8 words.\n- Back: 1 to 3 words.")
-        -- As typing would
-        dialog._buttons_edit_callback(true)
-        dialog.button_table:getButtonById("save").callback()
-    end,
-    function(ui, shot) shot("41_edit_saved") end,
-    function(ui) top().button_table:getButtonById("close").callback() end,
-    function(ui, shot) shot("42_concise_edited") end,
-    function(ui) menu(ui):backToUpperMenu() end,
+    function(ui, shot) shot("34_prompts") end,
     function(ui) open(ui, "This book uses") end,
+    function(ui, shot) shot("35_book_choices") end,
     function(ui) open(ui, "Concise") end,
-    function(ui, shot) shot("43_book_choice") end,
+    function(ui, shot) shot("36_book_concise") end,
     function(ui) menu(ui):backToUpperMenu() end,
-    function(ui, shot) shot("44_prompts_after"); log(ui) end,
-    function(ui)
-        local saved = G_reader_settings:readSetting("pbanki").prompts
-        io.stderr:write("uxdriver saved=", #saved, " name=", saved[1].name, " questions=",
-            tostring(saved[1].questions):sub(1, 30), " cloze=", tostring(saved[1].cloze), "\n")
-        ui.menu:onCloseReaderMenu()
+    function(ui, shot)
+        shot("37_prompts_after")
+        io.stderr:write("uxdriver active=", ui.pbanki:activePromptName(),
+            " | definition=", system(ui, { definition = true }),
+            " | questions=", system(ui, { count = 1 }), "\n")
     end,
+    function(ui) open(ui, "About prompt folders") end,
+    function(ui, shot) shot("38_about_folders") end,
+    function(ui)
+        UIManager:close(top())
+        ui.menu:onCloseReaderMenu()
+        ui.texteditor:checkEditFile(DIR .. "/Standard/cloze.md")
+    end,
+    function(ui, shot) shot("39_text_editor") end,
 }

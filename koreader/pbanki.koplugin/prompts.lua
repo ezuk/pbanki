@@ -1,9 +1,13 @@
 --[[--
-The reader's AI prompts: the built-in Standard prompt and saved copies.
+AI prompts kept as Markdown files, one folder per prompt.
 
-A prompt has an id, a name and instructions for each kind of card. Saved
-prompts keep only the instructions the reader changed; the others come from
-Standard.
+    prompts/
+        Standard/           the built-in prompt, rewritten by the plugin
+            questions.md
+            cloze.md
+            definitions.md
+        Concise/            the reader's own prompt
+            questions.md    kinds without a file use Standard's
 
 No KOReader dependencies, so it runs under plain Lua in spec/.
 
@@ -14,107 +18,112 @@ local cardgen = require("cardgen")
 
 local M = {}
 
-M.STANDARD_ID = "standard"
+M.STANDARD = "Standard"
 
+-- The first file name is the one written for Standard
 M.KINDS = {
-    { key = "questions", label = "Question cards" },
-    { key = "cloze", label = "Cloze cards" },
-    { key = "definition", label = "Definition cards" },
+    { key = "questions", label = "questions", files = { "questions.md", "question.md" } },
+    { key = "cloze", label = "cloze", files = { "cloze.md" } },
+    { key = "definition", label = "definitions", files = { "definitions.md", "definition.md" } },
 }
 
-M.STANDARD = {
-    id = M.STANDARD_ID,
-    name = "Standard",
-    builtin = true,
-}
+M.README = [[# pbAnki prompts
 
---- Standard first, then the saved prompts.
-function M.all(saved)
-    local list = { M.STANDARD }
-    for _idx, p in ipairs(saved or {}) do table.insert(list, p) end
-    return list
+Each folder here is a prompt the AI can follow when it writes flashcards. Pick one in KOReader under Tools → pbAnki flashcards → AI prompt, for all books or just the book you are reading.
+
+A folder can hold up to three Markdown files:
+
+- `questions.md` for question and answer cards
+- `cloze.md` for cloze cards
+- `definitions.md` for definition cards
+
+A missing file means that kind of card uses the Standard prompt.
+
+To make your own prompt, copy the Standard folder, rename the copy and edit its files. The plugin rewrites Standard whenever a book opens, so edits made there are lost.
+
+The plugin adds the reply format itself, so the files only need the instructions.
+]]
+
+local function trim(s)
+    return (s:gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
---- The prompt with `id`, or nil.
-function M.find(saved, id)
-    if id == nil then return nil end
-    for _idx, p in ipairs(M.all(saved)) do
-        if p.id == id then return p end
-    end
+--- Markdown `text` tidied for the AI: Unix line ends, no trailing spaces,
+-- single blank lines between paragraphs, and headings set apart.
+function M.normalize(text)
+    text = text:gsub("^\239\187\191", ""):gsub("\r\n?", "\n"):gsub("[ \t]+\n", "\n"):gsub("[ \t]+$", "")
+    text = ("\n" .. text .. "\n"):gsub("\n(#+[ \t][^\n]*)", "\n\n%1\n\n")
+    return trim((text:gsub("\n\n\n+", "\n\n")))
 end
 
---- The prompt a book uses: its own choice, else the default, else Standard.
-function M.resolve(saved, book_id, default_id)
-    return M.find(saved, book_id) or M.find(saved, default_id) or M.STANDARD
+local function readFile(path)
+    local file = io.open(path, "r")
+    if not file then return nil end
+    local text = file:read("*a")
+    file:close()
+    return text
 end
 
---- Instructions of `prompt` for `kind`, falling back to Standard's.
-function M.text(prompt, kind)
-    local text = prompt[kind]
-    if type(text) == "string" and not text:match("^%s*$") then return text end
-    return cardgen.PROMPTS[kind]
-end
-
---- Whether `prompt` has its own instructions for `kind`.
-function M.isEdited(prompt, kind)
-    return M.text(prompt, kind) ~= cardgen.PROMPTS[kind]
-end
-
---- Stores `text` as `prompt`'s instructions for `kind`; Standard's text or
--- blank text clears them.
-function M.setText(prompt, kind, text)
-    if text == nil or text:match("^%s*$") or text == cardgen.PROMPTS[kind] then
-        prompt[kind] = nil
-    else
-        prompt[kind] = text
-    end
-end
-
-local function nameTaken(saved, name)
-    for _idx, p in ipairs(M.all(saved)) do
-        if p.name == name then return true end
-    end
-    return false
-end
-
---- A free name for a copy of `name`: "Standard copy", "Standard copy 2", …
-function M.copyName(saved, name)
-    local base = name .. " copy"
-    local candidate, n = base, 1
-    while nameTaken(saved, candidate) do
-        n = n + 1
-        candidate = base .. " " .. n
-    end
-    return candidate
-end
-
-local function newId(saved)
-    local highest = 0
-    for _idx, p in ipairs(saved) do
-        local n = tonumber(tostring(p.id):match("^p(%d+)$"))
-        if n and n > highest then highest = n end
-    end
-    return "p" .. (highest + 1)
-end
-
---- Adds a copy of `source` named `name` to `saved` and returns it.
-function M.duplicate(saved, source, name)
-    local copy = { id = newId(saved), name = name }
+--- Instructions by kind from prompt folder `dir`, without kinds that have
+-- no file or an empty one.
+function M.read(dir)
+    local prompt = {}
     for _idx, kind in ipairs(M.KINDS) do
-        if source[kind.key] then copy[kind.key] = source[kind.key] end
-    end
-    table.insert(saved, copy)
-    return copy
-end
-
---- Removes the saved prompt with `id`.
-function M.remove(saved, id)
-    for i, p in ipairs(saved) do
-        if p.id == id then
-            table.remove(saved, i)
-            return
+        for _idx2, name in ipairs(kind.files) do
+            local text = readFile(dir .. "/" .. name)
+            if text then
+                text = M.normalize(text)
+                if text ~= "" then
+                    prompt[kind.key] = text
+                    break
+                end
+            end
         end
     end
+    return prompt
+end
+
+--- Labels of the kinds `prompt` has its own instructions for.
+function M.ownKinds(prompt)
+    local labels = {}
+    for _idx, kind in ipairs(M.KINDS) do
+        if prompt[kind.key] then table.insert(labels, kind.label) end
+    end
+    return labels
+end
+
+--- Standard first, then the other folder names in alphabetical order.
+function M.names(folders)
+    local others = {}
+    for _idx, name in ipairs(folders) do
+        if name ~= M.STANDARD then table.insert(others, name) end
+    end
+    table.sort(others, function(a, b) return a:lower() < b:lower() end)
+    table.insert(others, 1, M.STANDARD)
+    return others
+end
+
+--- The prompt a book uses: its own choice, else the default, else Standard,
+-- skipping folders that no longer exist.
+function M.choose(folders, book_choice, default)
+    local function exists(wanted)
+        for _idx, name in ipairs(folders) do
+            if name == wanted then return true end
+        end
+        return false
+    end
+    if exists(book_choice) then return book_choice end
+    if exists(default) then return default end
+    return M.STANDARD
+end
+
+--- Files for the Standard folder, as {name, text}.
+function M.standardFiles()
+    local files = {}
+    for _idx, kind in ipairs(M.KINDS) do
+        table.insert(files, { name = kind.files[1], text = cardgen.PROMPTS[kind.key] .. "\n" })
+    end
+    return files
 end
 
 return M

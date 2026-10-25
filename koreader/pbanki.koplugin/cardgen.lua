@@ -10,7 +10,8 @@ local M = {}
 
 local CHOOSING = [[You write Anki flashcards from a passage a reader highlighted in a book.
 
-Choosing what to ask:
+## Choosing what to ask
+
 - Base every card on the highlighted text. Use the surrounding passage and book notes to understand it and to name things.
 - If the reader left a note on the highlight, it says what they care about or how they will use it. Let it decide which ideas you pick and how you frame the cards, even over the highlight's main point.
 - Pick what is worth remembering: the main claim, a surprising finding, or a practice the reader can use. Skip side examples and restatements.
@@ -20,7 +21,8 @@ Choosing what to ask:
 - When the text lists parallel items, write one card that asks for the list (up to 4 items) instead of one card per item. Wrong: four cards like "How does sleep deprivation affect attention?" Right: "What does chronic mild sleep deprivation make harder?" → "Controlling emotions, focusing attention, finding energy for big challenges."
 - Each card asks something different: another idea, or the same idea from the other direction. Never repeat a question in other words.]]
 
-local WRITING_BASIC = [[Writing the card:
+local WRITING_BASIC = [[## Writing the card
+
 - Front: one short, specific question, ideally under 12 words.
 - Back: the shortest complete answer, ideally 1 to 6 words. It may add a few words of takeaway after a full stop: "The enemy within, not the cake. Turn attention inward."
 - The answer must not be guessable from the question, and must not repeat its words. Wrong: "How does sleep deprivation affect emotional control?" → "It makes emotions harder to control."
@@ -30,12 +32,12 @@ local WRITING_BASIC = [[Writing the card:
 - Write in the language of the highlighted text.
 - Plain text only, no Markdown.]]
 
-local WRITING_CLOZE = [[Writing the card:
-- Write cloze cards. The examples above are questions and answers; for a cloze card, find the sentence in the text that states the same fact and hide the answer in it with {{c1::hidden words}}.
-- Quote the text word for word. The front is one sentence from the highlighted text, copied exactly as the book writes it, with only the cloze marks added. Never paraphrase, reorder, replace or add words, not even to name what the sentence is about.
-- You may leave out words at the start or end of the sentence to keep it short, but never in the middle.
+local WRITING_CLOZE = [[## Writing the card
+
+- Write cloze cards. The examples above are questions and answers; for a cloze card, find the words in the highlighted text that state the same fact and hide them with {{c1::hidden words}}.
+- The front is the whole highlighted text, copied word for word exactly as the book writes it, with only the cloze marks added. Keep all of it, even when it is a long paragraph. Never shorten, paraphrase, reorder, replace or add words, not even to name what it is about.
 - When the highlight is shorter than a sentence, quote the whole sentence around it from the passage.
-- When the highlight has several sentences, each card quotes a different one.
+- When you write several cards, each quotes the same whole text and hides different words.
 - Hide what the question would ask for: the key term, finding or practice, ideally 1 to 6 words. Never hide filler words, and never hide most of the sentence.
 - Use only c1, so each card is one flashcard. For a list, hide every item with c1.
 - The hidden words must not be guessable from the rest of the sentence, and the rest must still give enough of a cue to recall them.
@@ -407,6 +409,17 @@ function M.quotesText(front, source)
     return quote ~= "" and (" " .. words(source) .. " "):find(" " .. quote .. " ", 1, true) ~= nil
 end
 
+--- Cloze `front` widened to the whole highlight `text` when it quotes only
+-- part of it, word for word.
+function M.expandCloze(front, text)
+    local plain = front:gsub("{{c%d+::(.-)}}", function(inner)
+        return inner:match("^(.-)::") or inner
+    end)
+    local first, last = text:find(plain, 1, true)
+    if not first or #plain == #text then return front end
+    return text:sub(1, first - 1) .. front .. text:sub(last + 1)
+end
+
 --- The term and definition in a reply as two cards: term → definition and
 -- definition → term.
 -- @return cards, or nil and an error message
@@ -428,7 +441,8 @@ function M.parseDefinition(text, decode)
 end
 
 --- Cards from a reply to `request` (see M.buildMessages) for highlight `h`.
--- Cloze cards that do not quote the book are dropped.
+-- Cloze cards that do not quote the book are dropped; the rest cover the
+-- whole highlight.
 -- @return cards, or nil and an error message
 function M.parseReply(text, request, h, decode)
     if request.definition then
@@ -444,6 +458,7 @@ function M.parseReply(text, request, h, decode)
     local kept = {}
     for _idx, card in ipairs(cards) do
         if M.isCloze(card.front) and M.quotesText(card.front, source) then
+            card.front = M.expandCloze(card.front, h.text or "")
             table.insert(kept, card)
         end
         if limit and #kept >= limit then break end
