@@ -157,7 +157,7 @@ local clozeMessages = cardgen.buildMessages({ text = "x" }, {
     existing = { { front = "A {{c1::b}}.", back = "" } },
 })
 eq(clozeMessages[1].content, cardgen.CLOZE_PROMPT, "cloze request uses the cloze prompt")
-assert(cardgen.CLOZE_PROMPT:find("Choosing what to hide", 1, true), "cloze prompt has its own choosing rules")
+assert(cardgen.CLOZE_PROMPT:find("Write cloze cards", 1, true), "cloze prompt has its own rules")
 assert(not cardgen.CLOZE_PROMPT:find("→", 1, true), "cloze prompt has no question examples")
 assert(clozeMessages[2].content:find("- A {{c1::b}}.\n", 1, true), "cloze card without extra listed alone")
 eq(cardgen.buildMessages({ text = "x" }, { count = 1 })[1].content, cardgen.SYSTEM_PROMPT, "plain request")

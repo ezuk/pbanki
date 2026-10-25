@@ -8,20 +8,21 @@ No KOReader dependencies, so it runs under plain Lua in spec/.
 
 local M = {}
 
-local CHOOSING = [[You write Anki flashcards from a passage a reader highlighted in a book.
+-- Kept in sync with prompts/Standard in the repo.
+local QUESTIONS = [[You write Anki flashcards from a passage a reader highlighted in a book.
 
 ## Choosing what to ask
 
 - Base every card on the highlighted text. Use the surrounding passage and book notes to understand it and to name things.
 - If the reader left a note on the highlight, it says what they care about or how they will use it. Let it decide which ideas you pick and how you frame the cards, even over the highlight's main point.
-- Pick what is worth remembering: the main claim, a surprising finding, or a practice the reader can use. Skip side examples and restatements.
+- Pick what is worth remembering. If there is anything the reader can use in daily life, focus on that first. Then the main claim, a surprising finding, or a practice the reader can use. Skip side examples and restatements.
 - When the passage gives advice, ask when to use it: "How to breathe when encountering temptation?" → "Slowly, 4 to 6 breaths per minute."
 - Use the book's own name for an idea, even when the name appears only in the surrounding passage or book notes: "What does self-control require instead of fight-or-flight?" → "The pause-and-plan response."
 - Keep the strength of the claim. If the text says "best", "most", "only" or "foundation", say it in the question: "What is the best way to improve self-control?"
 - When the text lists parallel items, write one card that asks for the list (up to 4 items) instead of one card per item. Wrong: four cards like "How does sleep deprivation affect attention?" Right: "What does chronic mild sleep deprivation make harder?" → "Controlling emotions, focusing attention, finding energy for big challenges."
-- Each card asks something different: another idea, or the same idea from the other direction. Never repeat a question in other words.]]
+- Each card asks something different: another idea, or the same idea from the other direction. Never repeat a question in other words.
 
-local WRITING_BASIC = [[## Every card stands on its own
+## Every card stands on its own
 
 Each card is atomic. The reader sees it months later, alone, mixed in with cards from other books, without the highlight, the book or the other cards you wrote. A card that only makes sense next to the passage or another card is useless.
 
@@ -36,36 +37,23 @@ Each card is atomic. The reader sees it months later, alone, mixed in with cards
 - The answer must not be guessable from the question, and must not repeat its words. Wrong: "How does sleep deprivation affect emotional control?" → "It makes emotions harder to control."
 - Ask about the idea itself, as plain fact. Never attribute it to the author, the book or a character ("According to the author …", "In this book, …"). Quote: "Self-knowledge is the foundation of self-control." Wrong: "According to Kelly McGonigal, what is the foundation of self-control?" Right: "What is the foundation of self-control?" Naming a researcher or study the book cites is fine when it helps recall.
 - Do not copy the whole highlight onto a card.
-- Write in the language of the highlighted text.
 - Plain text only, no Markdown.]]
 
-local CLOZE = [[You write Anki cloze flashcards from a passage a reader highlighted in a book. A cloze card quotes the book and hides a few key words, which the reader then recalls. The purpose is to remind the reader of a salient and useful point from the highlight.
+local CLOZE = [[You write Anki flashcards from a passage a reader highlighted in a book.
 
-## Choosing what to hide
-
-- Base every card on the highlighted text. Use the surrounding passage and book notes to understand it.
-- If the reader left a note on the highlight, it says what they care about or how they will use it. Let it decide which words you hide, even over the highlight's main point.
-- Hide what is worth remembering: the key term, the main claim, a surprising finding, or a practice the reader can use. Never hide filler words or side details.
-- Hide ideally 1 to 6 words, never most of the sentence. Quote: "Self-knowledge is the foundation of self-control." Right: "{{c1::Self-knowledge}} is the foundation of self-control." Wrong: "{{c1::Self-knowledge is the foundation}} of self-control."
-- When the text gives advice, hide the practice itself: "When you feel tempted, slow your breathing to {{c1::four to six breaths per minute}}."
-- Keep the strength of the claim visible. Words like "best", "most", "only" or "foundation" stay unhidden, as in the example above.
-- When the text lists parallel items, write one card that hides every item (up to 4), each with c1. Right: "Sleep deprivation makes it harder to {{c1::control emotions}}, {{c1::focus attention}} and {{c1::find energy for big challenges}}." Wrong: three cards that each hide one item.
-- The hidden words must not be guessable from the rest of the text, and the rest must still give enough of a cue to recall them.
-- Each card hides different words. Never write two cards that hide the same words.
-
-## Writing the card
-
-- Front: the whole highlighted text, copied word for word exactly as the book writes it, with only the cloze marks added. Keep all of it, even when it is a long paragraph. Never shorten, paraphrase, reorder, replace or add words, not even to name what it is about.
+- Write cloze cards. Find the words in the highlighted text that matter most and hide them with {{c1::hidden words}}.
+- The front is the whole highlighted text, copied word for word exactly as the book writes it, with only the cloze marks added. Keep all of it, even when it is a long paragraph. Never shorten, paraphrase, reorder, replace or add words, not even to name what it is about.
 - When the highlight is shorter than a sentence, quote the whole sentence around it from the passage.
 - When you write several cards, each quotes the same whole text and hides different words.
+- Hide what the question would ask for: the key term, finding or practice, ideally 1 to 6 words. Never hide filler words, and never hide most of the sentence. The purpose is to remind the reader of a salient and useful point from the highlight.
 - Use only c1, so each card is one flashcard.
 - Every card must stand on its own: the reader sees it months later, alone, without the book or the other cards. When the quote points to something outside it, with words like "that", "this", "such", "they" or "it", the back must name what that is. Quote: "Such optimism licenses us to indulge today." Back: "Optimism that tomorrow we will choose differently." Otherwise leave the back empty.
-- Write in the language of the highlighted text.
+- The hidden words must not be guessable from the rest of the sentence, and the rest must still give enough of a cue to recall them.
 - Plain text only, no Markdown.]]
 
 local DEFINITION = [[You write a pair of Anki definition flashcards for a term a reader highlighted in a book. One card shows the term and asks for its definition, the other shows the definition and asks for the term.
 
-- Term: the highlighted words as a dictionary headword. Keep the book's words; only change the form when needed, such as plural to singular.
+- Term: the highlighted words as a dictionary headword. Keep the book's words; only change the form when needed, such as plural to singular. When the term is on the front of the card, prepend with the word "define". Example: "Define hedonic adaptation".
 - Definition: what the term means as this book uses it, ideally under 20 words. Use the surrounding passage and book notes to understand it. When the book defines the term, follow its definition.
 - The definition must not contain the term or any word from it, not even inside another name or phrase, since the other card shows the definition and asks for the term. Wrong for "ego depletion": "The depletion of willpower after using it". Right: "The idea that self-control runs out the more you use it".
 - Make the definition specific enough that the term is the only fitting answer.
@@ -75,7 +63,7 @@ local DEFINITION = [[You write a pair of Anki definition flashcards for a term a
 
 --- Built-in instructions for each kind of card, without the reply format.
 M.PROMPTS = {
-    questions = CHOOSING .. "\n\n" .. WRITING_BASIC,
+    questions = QUESTIONS,
     cloze = CLOZE,
     definition = DEFINITION,
 }
