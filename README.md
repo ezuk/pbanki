@@ -99,7 +99,7 @@ Select a term of one to three words and the highlight menu offers **Suggest defi
 
 ### Your own AI prompts
 
-The prompt the AI follows makes a big difference to the cards. Prompts are Markdown files in `applications/pbanki/prompts/`, one folder per prompt:
+The prompt the AI follows makes a big difference to the cards. Prompts are Markdown files, one folder per prompt, in `applications/pbanki/prompts/` unless you pick another folder:
 
 ```
 prompts/
@@ -113,7 +113,7 @@ prompts/
 
 To make your own, copy the Standard folder with KOReader's file browser (or from a computer), rename it and edit the files in KOReader's text editor. A folder doesn't need all three files: any that are missing use Standard. Edits to Standard itself are undone when a book opens, so it stays a clean copy of the built-in prompt. The plugin tidies the Markdown (line ends, blank lines, space around headings) and adds the reply format itself, so the files only hold instructions.
 
-**Tools → pbAnki flashcards → AI prompt** picks a default prompt for all books, and a different one for any book that needs it.
+**Tools → pbAnki flashcards → AI prompt** picks a default prompt for all books, and a different one for any book that needs it. **Prompts folder** there moves the whole set elsewhere with KOReader's folder picker, say next to your books; the plugin adds Standard to the folder you choose.
 
 <table>
   <tr>

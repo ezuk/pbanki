@@ -28,13 +28,15 @@ local json = require("json")
 local lfs = require("libs/libkoreader-lfs")
 local logger = require("logger")
 local prompts = require("prompts")
+local filemanagerutil = require("apps/filemanager/filemanagerutil")
 local util = require("util")
 local _ = require("gettext")
-local T = require("ffi/util").template
+local ffiUtil = require("ffi/util")
+local T = ffiUtil.template
 
 local PBANKI_DIR = os.getenv("PBANKI_DIR") or "/mnt/ext1/applications/pbanki"
 local INBOX_FILE = PBANKI_DIR .. "/inbox.jsonl"
-local PROMPTS_DIR = PBANKI_DIR .. "/prompts"
+local DEFAULT_PROMPTS_DIR = PBANKI_DIR .. "/prompts"
 
 -- Words of book text on each side of the highlight sent to the AI
 local CONTEXT_WORDS = 150
@@ -210,11 +212,16 @@ end
 --- Writes the built-in prompt to the Standard folder, as a starting point
 -- for the reader's own prompts.
 function PbAnki:writeStandardPrompt()
-    if lfs.attributes(PBANKI_DIR, "mode") ~= "directory" then return end
-    local dir = PROMPTS_DIR .. "/" .. prompts.STANDARD
-    lfs.mkdir(PROMPTS_DIR)
+    local root = self:promptsDir()
+    if root == DEFAULT_PROMPTS_DIR then
+        if lfs.attributes(PBANKI_DIR, "mode") ~= "directory" then return end
+        lfs.mkdir(root)
+    elseif lfs.attributes(root, "mode") ~= "directory" then
+        return
+    end
+    local dir = root .. "/" .. prompts.STANDARD
     lfs.mkdir(dir)
-    local files = { { path = PROMPTS_DIR .. "/README.md", text = prompts.README } }
+    local files = { { path = root .. "/README.md", text = prompts.README } }
     for _idx, f in ipairs(prompts.standardFiles()) do
         table.insert(files, { path = dir .. "/" .. f.name, text = f.text })
     end
@@ -235,12 +242,18 @@ function PbAnki:writeStandardPrompt()
     end
 end
 
+--- The folder that holds the prompt folders.
+function PbAnki:promptsDir()
+    return self.settings.prompts_dir or DEFAULT_PROMPTS_DIR
+end
+
 --- Names of the folders in the prompts folder.
 function PbAnki:promptFolders()
     local folders = {}
-    if lfs.attributes(PROMPTS_DIR, "mode") ~= "directory" then return folders end
-    for name in lfs.dir(PROMPTS_DIR) do
-        if name:sub(1, 1) ~= "." and lfs.attributes(PROMPTS_DIR .. "/" .. name, "mode") == "directory" then
+    local root = self:promptsDir()
+    if lfs.attributes(root, "mode") ~= "directory" then return folders end
+    for name in lfs.dir(root) do
+        if name:sub(1, 1) ~= "." and lfs.attributes(root .. "/" .. name, "mode") == "directory" then
             table.insert(folders, name)
         end
     end
@@ -257,13 +270,13 @@ end
 function PbAnki:activePrompt()
     local name = self:activePromptName()
     if name == prompts.STANDARD then return {} end
-    return prompts.read(PROMPTS_DIR .. "/" .. name)
+    return prompts.read(self:promptsDir() .. "/" .. name)
 end
 
 --- `name` with the kinds of card its folder has files for.
 function PbAnki:promptLabel(name)
     if name == prompts.STANDARD then return name end
-    local kinds = prompts.ownKinds(prompts.read(PROMPTS_DIR .. "/" .. name))
+    local kinds = prompts.ownKinds(prompts.read(self:promptsDir() .. "/" .. name))
     if #kinds == 0 then return T(_("%1 (no files)"), name) end
     return T(_("%1 (%2)"), name, table.concat(kinds, ", "))
 end
@@ -324,12 +337,27 @@ function PbAnki:promptsMenu()
             separator = true,
         },
         {
+            text_func = function()
+                return T(_("Prompts folder: %1"), ffiUtil.basename(self:promptsDir()))
+            end,
+            keep_menu_open = true,
+            callback = function(touchmenu_instance)
+                filemanagerutil.showChooseDialog(_("Prompts folder:"), function(path)
+                    self.settings.prompts_dir = path ~= DEFAULT_PROMPTS_DIR and path or nil
+                    self:saveSettings()
+                    self:writeStandardPrompt()
+                    touchmenu_instance:updateItems()
+                end, self:promptsDir(), DEFAULT_PROMPTS_DIR)
+            end,
+            help_text = _("The folder that holds your prompt folders. The plugin adds a Standard folder to it."),
+        },
+        {
             text = _("About prompt folders"),
             keep_menu_open = true,
             callback = function()
                 UIManager:show(InfoMessage:new{
-                    text = T(_("Prompts are folders in\n%1\n\nEach can hold questions.md, cloze.md and definitions.md. A missing file uses the Standard prompt.\n\nTo make your own, copy the Standard folder in the file browser, rename it and edit its files with the text editor. Edits to Standard itself are undone when a book opens."),
-                        PROMPTS_DIR),
+                    text = T(_("Prompts are the folders in\n%1\n\nEach can hold questions.md, cloze.md and definitions.md. A missing file uses the Standard prompt.\n\nTo make your own, copy the Standard folder in the file browser, rename it and edit its files with the text editor. Edits to Standard itself are undone when a book opens."),
+                        self:promptsDir()),
                 })
             end,
         },

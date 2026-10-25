@@ -69,6 +69,25 @@ return {
     end,
     function(ui) open(ui, "About prompt folders") end,
     function(ui, shot) shot("38_about_folders") end,
+    function(ui) UIManager:close(top()) end,
+    function(ui) open(ui, "Prompts folder") end,
+    function(ui, shot) shot("40_folder_dialog") end,
+    function(ui)
+        lfs.mkdir("/tmp/My prompts")
+        top().buttons[1][1].callback()
+    end,
+    function(ui, shot) shot("41_folder_chooser") end,
+    function(ui)
+        local chooser = top()
+        UIManager:close(chooser)
+        chooser.onConfirm("/tmp/My prompts")
+    end,
+    function(ui, shot)
+        shot("42_folder_chosen")
+        io.stderr:write("uxdriver dir=", ui.pbanki:promptsDir(),
+            " standard=", tostring(lfs.attributes("/tmp/My prompts/Standard/cloze.md", "mode")),
+            " active=", ui.pbanki:activePromptName(), "\n")
+    end,
     function(ui)
         UIManager:close(top())
         ui.menu:onCloseReaderMenu()
