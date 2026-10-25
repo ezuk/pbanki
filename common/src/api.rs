@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
-use anki::card::Card;
+use anki::card::{Card, CardQueueNumber};
 use anki::collection::Collection;
 use anki::error::{OrNotFound, Result as AnkiResult};
 use anki::notes::Note;
@@ -17,6 +17,7 @@ use anki::timestamp::{TimestampMillis, TimestampSecs};
 use anki_proto::decks::DeckTreeNode;
 
 use crate::collection::{SharedCollection, open_collection};
+use crate::limits::{DailyLimits, remaining_today};
 use crate::{CardNode, Config, Constants, DeckNode, DeckTree, LoginState, MainWindow};
 
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
@@ -127,9 +128,15 @@ pub fn setup_ui(ui: &MainWindow, config: &Config, hooks: PlatformHooks) {
     constants.set_font_size_px(config.display.font_size() as i32);
 
     let shared_config = Rc::new(RefCell::new(config.clone()));
-    setup_settings(ui, shared_config.clone(), hooks.clone());
+    let session = init_session(config);
+    setup_settings(
+        ui,
+        shared_config.clone(),
+        hooks.clone(),
+        session.as_ref().ok().cloned(),
+    );
 
-    let session = match init_session(config) {
+    let session = match session {
         Ok(session) => session,
         Err(message) => {
             eprintln!("{message}");
@@ -249,9 +256,16 @@ fn login_message(state: LoginState, config: &Config) -> String {
     }
 }
 
-fn setup_settings(ui: &MainWindow, config: Rc<RefCell<Config>>, hooks: PlatformHooks) {
+fn setup_settings(
+    ui: &MainWindow,
+    config: Rc<RefCell<Config>>,
+    hooks: PlatformHooks,
+    session: Option<Rc<LearnSession>>,
+) {
     ui.set_native_keyboard(hooks.text_prompt.is_some());
     let draft = Rc::new(RefCell::new(LoginDraft::default()));
+    // Limits as the settings screen opened with them
+    let opened_limits = Rc::new(RefCell::new(None::<DailyLimits>));
 
     let refresh_login_state = {
         let config = config.clone();
@@ -280,6 +294,8 @@ fn setup_settings(ui: &MainWindow, config: Rc<RefCell<Config>>, hooks: PlatformH
     let config_for_open = config.clone();
     let draft_for_open = draft.clone();
     let refresh = refresh_login_state.clone();
+    let session_for_open = session.clone();
+    let limits_for_open = opened_limits.clone();
     ui.on_open_settings(move || {
         let Some(ui) = ui_weak.upgrade() else {
             return;
@@ -295,6 +311,17 @@ fn setup_settings(ui: &MainWindow, config: Rc<RefCell<Config>>, hooks: PlatformH
         ui.set_settings_font_size(config.display.font_size() as i32);
         ui.set_settings_sync_on_startup(config.ankiweb.auto_sync);
         drop(config);
+        let limits = session_for_open.as_ref().and_then(|session| {
+            crate::limits::daily_limits(&mut session.collection.lock())
+                .map_err(|e| eprintln!("Failed to read daily limits: {e}"))
+                .ok()
+        });
+        ui.set_settings_limits_available(limits.is_some());
+        if let Some(limits) = limits {
+            ui.set_settings_new_per_day(limits.new as i32);
+            ui.set_settings_reviews_per_day(limits.reviews as i32);
+        }
+        *limits_for_open.borrow_mut() = limits;
         refresh(&ui);
     });
 
@@ -424,20 +451,37 @@ fn setup_settings(ui: &MainWindow, config: Rc<RefCell<Config>>, hooks: PlatformH
         if let Err(e) = config.save() {
             eprintln!("Failed to save settings: {e}");
         }
+        let limits = DailyLimits {
+            new: ui.get_settings_new_per_day().max(0) as u32,
+            reviews: ui.get_settings_reviews_per_day().max(0) as u32,
+        };
+        if let Some(session) = &session
+            && opened_limits
+                .borrow()
+                .is_some_and(|opened| opened != limits)
+        {
+            let saved = crate::limits::set_daily_limits(&mut session.collection.lock(), limits);
+            match saved {
+                Ok(()) => ui.set_deck_tree(update_deck_tree(session)),
+                Err(e) => eprintln!("Failed to save daily limits: {e}"),
+            }
+        }
         ui.set_showing_settings(false);
     });
 }
 
 pub fn update_deck_tree(session: &LearnSession) -> DeckTree {
     import_inbox(session);
-    match session
-        .collection
-        .lock()
-        .deck_tree(Some(TimestampSecs::now()))
-    {
-        Ok(deck_tree) => {
+    let mut col = session.collection.lock();
+    let tree = col.deck_tree(Some(TimestampSecs::now())).and_then(|tree| {
+        let remaining = remaining_today(&mut col, &top_level_decks(&tree))?;
+        Ok((tree, remaining))
+    });
+    drop(col);
+    match tree {
+        Ok((deck_tree, remaining)) => {
             let deck_nodes = crate::utils::flatten_tree(&deck_tree);
-            deck_nodes.insert(0, everything_deck(&deck_tree));
+            deck_nodes.insert(0, everything_deck(&deck_tree, remaining));
             DeckTree {
                 new_total: deck_tree.new_count as i32,
                 learn_total: deck_tree.learn_count as i32,
@@ -455,16 +499,24 @@ pub fn update_deck_tree(session: &LearnSession) -> DeckTree {
 /// Id of the "Everything" row, which studies every top-level deck in turn.
 pub const EVERYTHING_ID: i64 = 0;
 
-fn everything_deck(deck_tree: &DeckTreeNode) -> DeckNode {
+fn everything_deck(deck_tree: &DeckTreeNode, remaining: DailyLimits) -> DeckNode {
     DeckNode {
         id: EVERYTHING_ID,
         name: "Everything".into(),
         level: 1,
-        new: deck_tree.new_count as i32,
+        new: deck_tree.new_count.min(remaining.new) as i32,
         learn: deck_tree.learn_count as i32,
-        due: deck_tree.review_count as i32,
+        due: deck_tree.review_count.min(remaining.reviews) as i32,
         ..Default::default()
     }
+}
+
+fn top_level_decks(deck_tree: &DeckTreeNode) -> Vec<anki::decks::DeckId> {
+    deck_tree
+        .children
+        .iter()
+        .map(|deck| anki::decks::DeckId(deck.deck_id))
+        .collect()
 }
 
 /// Collapses or expands a deck in the study screen's deck list.
@@ -546,8 +598,13 @@ struct NextCard {
     due: usize,
 }
 
-/// The next card of a deck and its children.
-fn queued_card(col: &mut Collection, deck_id: i64) -> AnkiResult<Option<NextCard>> {
+/// The next card of a deck and its children. With `cap`, new cards and
+/// reviews past it are buried until tomorrow.
+fn queued_card(
+    col: &mut Collection,
+    deck_id: i64,
+    cap: Option<DailyLimits>,
+) -> AnkiResult<Option<NextCard>> {
     col.set_current_deck(anki::decks::DeckId(deck_id))?;
     // Bury type-in cards until one pbAnki can show is at the front
     loop {
@@ -555,6 +612,29 @@ fn queued_card(col: &mut Collection, deck_id: i64) -> AnkiResult<Option<NextCard
         let Some(card) = queued_cards.cards.first().cloned() else {
             return Ok(None);
         };
+        let capped = |kind: CardQueueNumber| {
+            cap.is_some_and(|cap| match kind {
+                CardQueueNumber::New => cap.new == 0,
+                CardQueueNumber::Review => cap.reviews == 0,
+                _ => false,
+            })
+        };
+        if capped(card.card.queue_number()) {
+            let total =
+                queued_cards.new_count + queued_cards.learning_count + queued_cards.review_count;
+            let over: Vec<_> = col
+                .get_queued_cards(total, false)?
+                .cards
+                .iter()
+                .filter(|c| capped(c.card.queue_number()))
+                .map(|c| c.card.id())
+                .collect();
+            col.bury_or_suspend_cards(
+                &over,
+                anki_proto::scheduler::bury_or_suspend_cards_request::Mode::BurySched,
+            )?;
+            continue;
+        }
         let note = col
             .storage
             .get_note(card.card.note_id())?
@@ -581,18 +661,20 @@ fn queued_card(col: &mut Collection, deck_id: i64) -> AnkiResult<Option<NextCard
 }
 
 /// The next card of the first top-level deck with cards to study, in list
-/// order, with the counts of all decks.
+/// order, with the counts of all decks. The Default preset's limits cap all
+/// decks together.
 fn everything_card(col: &mut Collection) -> AnkiResult<Option<NextCard>> {
     let tree = col.deck_tree(Some(TimestampSecs::now()))?;
+    let remaining = remaining_today(col, &top_level_decks(&tree))?;
     for deck in &tree.children {
         if deck.new_count + deck.learn_count + deck.review_count == 0 {
             continue;
         }
-        if let Some(next) = queued_card(col, deck.deck_id)? {
+        if let Some(next) = queued_card(col, deck.deck_id, Some(remaining))? {
             return Ok(Some(NextCard {
-                new: tree.new_count as usize,
+                new: tree.new_count.min(remaining.new) as usize,
                 learn: tree.learn_count as usize,
-                due: tree.review_count as usize,
+                due: tree.review_count.min(remaining.reviews) as usize,
                 ..next
             }));
         }
@@ -609,7 +691,7 @@ fn load_next_card(
     let next = if deck.id == EVERYTHING_ID {
         everything_card(&mut col)?
     } else {
-        queued_card(&mut col, deck.id)?
+        queued_card(&mut col, deck.id, None)?
     };
     let Some(NextCard {
         card,
@@ -922,6 +1004,128 @@ mod tests {
 
         rate_card(&session, 3, everything.clone(), GRID);
         assert_eq!(rate_card(&session, 3, everything, GRID).id, -1);
+    }
+
+    #[test]
+    fn new_cards_stop_at_the_daily_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = session_in(dir.path());
+        {
+            let mut col = session.collection.lock();
+            let notetype = col.get_notetype_by_name("Basic").unwrap().unwrap();
+            for book in ["KOReader::Dune", "KOReader::Emma"] {
+                let deck = col.get_or_create_normal_deck(book).unwrap();
+                for i in 0..50 {
+                    let mut note = notetype.new_note();
+                    note.set_field(0, format!("{book} {i}")).unwrap();
+                    col.add_note(&mut note, deck.id).unwrap();
+                }
+            }
+        }
+
+        let everything = update_deck_tree(&session).deck_nodes.row_data(0).unwrap();
+        assert_eq!(everything.new, 20);
+
+        let mut shown = 0;
+        let mut card = next_card(&session, everything.clone(), GRID);
+        while card.id != -1 {
+            shown += 1;
+            card = rate_card(&session, 3, everything.clone(), GRID);
+        }
+        assert_eq!(shown, 20);
+    }
+
+    fn add_notes_to(session: &LearnSession, deck: &str, count: usize) {
+        let mut col = session.collection.lock();
+        let notetype = col.get_notetype_by_name("Basic").unwrap().unwrap();
+        let deck = col.get_or_create_normal_deck(deck).unwrap();
+        for i in 0..count {
+            let mut note = notetype.new_note();
+            note.set_field(0, format!("{} {i}", deck.human_name()))
+                .unwrap();
+            col.add_note(&mut note, deck.id).unwrap();
+        }
+    }
+
+    /// Ratings until the deck is finished.
+    fn study_all(session: &LearnSession, deck: DeckNode) -> usize {
+        let mut shown = 0;
+        let mut card = next_card(session, deck.clone(), GRID);
+        while card.id != -1 {
+            shown += 1;
+            card = rate_card(session, 3, deck.clone(), GRID);
+        }
+        shown
+    }
+
+    #[test]
+    fn everything_caps_all_decks_together() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = session_in(dir.path());
+        add_notes_to(&session, "First", 15);
+        add_notes_to(&session, "Second", 15);
+
+        let everything = update_deck_tree(&session).deck_nodes.row_data(0).unwrap();
+        assert_eq!(everything.new, 20);
+        assert_eq!(study_all(&session, everything.clone()), 20);
+        assert!(undo_rating(&session, everything, GRID).is_some());
+        rate_card(
+            &session,
+            3,
+            update_deck_tree(&session).deck_nodes.row_data(0).unwrap(),
+            GRID,
+        );
+
+        // The rest wait until tomorrow
+        let tree = update_deck_tree(&session);
+        assert_eq!(tree.deck_nodes.row_data(0).unwrap().new, 0);
+        assert_eq!(tree.new_total, 0);
+    }
+
+    #[test]
+    fn daily_limits_apply_to_every_preset() {
+        use crate::limits::{DailyLimits, daily_limits, set_daily_limits};
+        let dir = tempfile::tempdir().unwrap();
+        let session = session_in(dir.path());
+        add_notes_to(&session, "First", 30);
+        add_notes_to(&session, "Second", 30);
+        {
+            let mut col = session.collection.lock();
+            let second = col.get_deck_id("Second").unwrap().unwrap();
+            let current = col.get_deck_configs_for_update(second).unwrap();
+            let mut other = anki::deckconfig::DeckConfig {
+                name: "Other".into(),
+                ..Default::default()
+            };
+            other.inner.new_per_day = 30;
+            col.update_deck_configs(anki::deckconfig::UpdateDeckConfigsRequest {
+                target_deck_id: second,
+                configs: vec![other],
+                removed_config_ids: vec![],
+                mode: anki_proto::deck_config::UpdateDeckConfigsMode::Normal,
+                card_state_customizer: String::new(),
+                limits: current.current_deck.unwrap().limits.unwrap(),
+                new_cards_ignore_review_limit: false,
+                apply_all_parent_limits: false,
+                fsrs: false,
+                fsrs_reschedule: false,
+                fsrs_health_check: false,
+            })
+            .unwrap();
+
+            let limits = DailyLimits {
+                new: 5,
+                reviews: 100,
+            };
+            set_daily_limits(&mut col, limits).unwrap();
+            assert_eq!(daily_limits(&mut col).unwrap(), limits);
+        }
+
+        let tree = update_deck_tree(&session);
+        let deck = |name: &str| tree.deck_nodes.iter().find(|d| d.name == name).unwrap();
+        assert_eq!(deck("First").new, 5);
+        assert_eq!(deck("Second").new, 5);
+        assert_eq!(study_all(&session, deck("Second")), 5);
     }
 
     #[test]

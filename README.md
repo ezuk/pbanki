@@ -173,7 +173,7 @@ The original stripped cards to plain text. Question and answer ran together ("Wh
 
 ### A deck list you can read at a glance
 
-Columns are labelled, due counts are bold and zeros are grey. Every row is a full-width tap target. Collapsing a deck hides its sub-decks and is saved in the collection, as in desktop Anki. **Everything**, at the top, studies all your decks in one session, going through the top-level decks in list order with each deck's own daily limits.
+Columns are labelled, due counts are bold and zeros are grey. Every row is a full-width tap target. Collapsing a deck hides its sub-decks and is saved in the collection, as in desktop Anki. **Everything**, at the top, studies all your decks in one session, going through the top-level decks in list order. Your daily limits cover all of them together, so five decks don't mean five times the new cards.
 
 <table>
   <tr>
@@ -221,7 +221,7 @@ If AnkiWeb can't merge the two collections (after a reset on another device, for
 
 ### Settings
 
-Text size has a live preview. You type your AnkiWeb login on the PocketBook keyboard, and **Validate** tries it against AnkiWeb before you can save. A wrong password shows up right there, not at your first sync.
+**Daily limits** set how many new cards and reviews you get each day, as in Anki's deck options. They're saved to your Anki presets and sync to your other devices, so making 100 cards from one book doesn't give you 100 new cards tomorrow. Text size has a live preview. You type your AnkiWeb login on the PocketBook keyboard, and **Validate** tries it against AnkiWeb before you can save. A wrong password shows up right there, not at your first sync.
 
 <table>
   <tr>
@@ -234,7 +234,7 @@ Text size has a live preview. You type your AnkiWeb login on the PocketBook keyb
 ### Under the hood
 
 - One Cargo workspace with a single lock file. The Anki dependency is pinned to an exact commit.
-- 67 Rust tests, covering card layout, config, the KOReader inbox and the study flow against real Anki collections, plus a spec for the plugin's card prompts. The original had none.
+- 70 Rust tests, covering card layout, config, the KOReader inbox and the study flow against real Anki collections, plus a spec for the plugin's card prompts. The original had none.
 - CI checks formatting, runs Clippy and the tests, and cross-builds for the PocketBook on every push.
 - Fixes to the original: sync could never log in with the default config (an empty token counted as a real one), settings were always saved to the device path, the sync status got stuck after a failure, and a page size of 0 crashed the app.
 - The launcher works around firmware 6.11 refusing to load `libinkview.so`.

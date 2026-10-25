@@ -85,6 +85,57 @@ component Field {
     }
 }
 
+// A labelled number with − and + buttons
+component Stepper {
+    in property <string> label;
+    in property <int> step;
+    in property <int> minimum;
+    in property <int> maximum;
+    in-out property <int> value;
+
+    height: Constants.nav_height;
+
+    HorizontalLayout {
+        spacing: Constants.spacing;
+
+        Text {
+            horizontal-stretch: 1;
+            text: label;
+            font-family: Constants.font_family;
+            font-size: Constants.font_size_small;
+            vertical-alignment: center;
+        }
+
+        InkButton {
+            width: Constants.nav_height * 2;
+            text: "−";
+            enabled: value > minimum;
+            clicked => {
+                value = Math.max(minimum, value - step);
+            }
+        }
+
+        Text {
+            width: Constants.nav_height * 2;
+            text: value;
+            font-family: Constants.font_family;
+            font-size: Constants.font_size_content;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        InkButton {
+            width: Constants.nav_height * 2;
+            text: "+";
+            enabled: value < maximum;
+            clicked => {
+                value = Math.min(maximum, value + step);
+            }
+        }
+    }
+}
+
 export component SettingsScreen {
     in property <bool> native_keyboard;
     in-out property <string> username;
@@ -92,6 +143,10 @@ export component SettingsScreen {
     // Card text size in device pixels
     in-out property <int> font_size;
     in-out property <bool> sync_on_startup;
+    // Anki's daily limits, shown when the collection is open
+    in property <bool> limits_available;
+    in-out property <int> new_per_day;
+    in-out property <int> reviews_per_day;
     in property <LoginState> login_state;
     in property <string> login_message;
     property <bool> can_save: login_state == LoginState.unchanged || login_state == LoginState.cleared || login_state == LoginState.passed;
@@ -201,6 +256,31 @@ export component SettingsScreen {
                         sync_on_startup = !sync_on_startup;
                     }
                 }
+            }
+        }
+
+        if limits_available: VerticalLayout {
+            vertical-stretch: 0;
+            spacing: Constants.spacing;
+
+            SectionTitle {
+                text: "DAILY LIMITS";
+            }
+
+            Stepper {
+                label: "New cards";
+                step: 5;
+                minimum: 0;
+                maximum: 9999;
+                value <=> new_per_day;
+            }
+
+            Stepper {
+                label: "Reviews";
+                step: 25;
+                minimum: 0;
+                maximum: 9999;
+                value <=> reviews_per_day;
             }
         }
 

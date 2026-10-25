@@ -40,6 +40,9 @@ export component MainWindow inherits Window {
     in property <LoginState> settings_login_state;
     in property <string> settings_login_message;
     in-out property <bool> settings_sync_on_startup;
+    in property <bool> settings_limits_available;
+    in-out property <int> settings_new_per_day;
+    in-out property <int> settings_reviews_per_day;
 
     // AnkiWeb sync status on the deck list
     in-out property <bool> syncing;
@@ -103,6 +106,9 @@ export component MainWindow inherits Window {
             password <=> settings_password;
             font_size <=> settings_font_size;
             sync_on_startup <=> settings_sync_on_startup;
+            limits_available: settings_limits_available;
+            new_per_day <=> settings_new_per_day;
+            reviews_per_day <=> settings_reviews_per_day;
             login_state: settings_login_state;
             login_message: settings_login_message;
             request_text(field) => {
