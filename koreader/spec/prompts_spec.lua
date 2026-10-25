@@ -48,10 +48,13 @@ eq(prompts.choose(folders, nil, "Concise"), "Concise", "default")
 eq(prompts.choose(folders, "gone", "Concise"), "Concise", "missing book choice falls back")
 eq(prompts.choose(folders, "gone", "also gone"), "Standard", "then Standard")
 
--- Standard files hold the built-in instructions
-local files = prompts.standardFiles()
-eq(files[3].name, "definitions.md", "definitions file name")
-eq(files[1].text, cardgen.PROMPTS.questions .. "\n", "questions file text")
-eq(prompts.normalize(files[2].text), cardgen.PROMPTS.cloze, "built-in prompts are tidy Markdown")
+-- Built-in files ship in the plugin folder and are the built-in instructions
+local files = prompts.builtinFiles()
+eq(#files, 4, "README and three Standard files")
+eq(files[1].name, "README.md", "README first")
+eq(files[4].name, "Standard/definitions.md", "definitions file name")
+eq(prompts.normalize(files[2].text), cardgen.PROMPTS.questions, "questions from the file")
+eq(prompts.normalize(files[3].text), cardgen.PROMPTS.cloze, "cloze from the file")
+assert(cardgen.PROMPTS.definition:find("dictionary headword", 1, true), "definition from the file")
 
 print("prompts_spec: OK")

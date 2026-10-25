@@ -219,14 +219,9 @@ function PbAnki:writeStandardPrompt()
     elseif lfs.attributes(root, "mode") ~= "directory" then
         return
     end
-    local dir = root .. "/" .. prompts.STANDARD
-    lfs.mkdir(dir)
-    local files = { { path = root .. "/README.md", text = prompts.README } }
-    for _idx, f in ipairs(prompts.standardFiles()) do
-        table.insert(files, { path = dir .. "/" .. f.name, text = f.text })
-    end
-    for _idx, f in ipairs(files) do
-        local path = f.path
+    lfs.mkdir(root .. "/" .. prompts.STANDARD)
+    for _idx, f in ipairs(prompts.builtinFiles()) do
+        local path = root .. "/" .. f.name
         local current = io.open(path, "r")
         local same = current and current:read("*a") == f.text
         if current then current:close() end

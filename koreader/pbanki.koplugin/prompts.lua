@@ -2,7 +2,7 @@
 AI prompts kept as Markdown files, one folder per prompt.
 
     prompts/
-        Standard/           the built-in prompt, rewritten by the plugin
+        Standard/           the built-in prompt, copied from the plugin's prompts/
             questions.md
             cloze.md
             definitions.md
@@ -13,8 +13,6 @@ No KOReader dependencies, so it runs under plain Lua in spec/.
 
 @module koplugin.pbanki.prompts
 --]]--
-
-local cardgen = require("cardgen")
 
 local M = {}
 
@@ -27,22 +25,8 @@ M.KINDS = {
     { key = "definition", label = "definitions", files = { "definitions.md", "definition.md" } },
 }
 
-M.README = [[# pbAnki prompts
-
-Each folder here is a prompt the AI can follow when it writes flashcards. Pick one in KOReader under Tools → pbAnki flashcards → AI prompt, for all books or just the book you are reading.
-
-A folder can hold up to three Markdown files:
-
-- `questions.md` for question and answer cards
-- `cloze.md` for cloze cards
-- `definitions.md` for definition cards
-
-A missing file means that kind of card uses the Standard prompt.
-
-To make your own prompt, copy the Standard folder, rename the copy and edit its files. The plugin rewrites Standard whenever a book opens, so edits made there are lost.
-
-The plugin adds the reply format itself, so the files only need the instructions.
-]]
+-- Built-in prompts shipped in the plugin folder
+M.BUILTIN_DIR = (debug.getinfo(1, "S").source:match("^@(.*)/[^/]*$") or ".") .. "/prompts"
 
 local function trim(s)
     return (s:gsub("^%s+", ""):gsub("%s+$", ""))
@@ -117,11 +101,17 @@ function M.choose(folders, book_choice, default)
     return M.STANDARD
 end
 
---- Files for the Standard folder, as {name, text}.
-function M.standardFiles()
+--- Built-in files to copy into the prompts folder, as {name, text} with
+-- names relative to it.
+function M.builtinFiles()
     local files = {}
+    local names = { "README.md" }
     for _idx, kind in ipairs(M.KINDS) do
-        table.insert(files, { name = kind.files[1], text = cardgen.PROMPTS[kind.key] .. "\n" })
+        table.insert(names, M.STANDARD .. "/" .. kind.files[1])
+    end
+    for _idx, name in ipairs(names) do
+        local text = readFile(M.BUILTIN_DIR .. "/" .. name)
+        if text then table.insert(files, { name = name, text = text }) end
     end
     return files
 end
