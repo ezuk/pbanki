@@ -32,16 +32,28 @@ local WRITING_BASIC = [[## Writing the card
 - Write in the language of the highlighted text.
 - Plain text only, no Markdown.]]
 
-local WRITING_CLOZE = [[## Writing the card
+local CLOZE = [[You write Anki cloze flashcards from a passage a reader highlighted in a book. A cloze card quotes the book and hides a few key words, which the reader then recalls. The purpose is to remind the reader of a salient and useful point from the highlight.
 
-- Write cloze cards. The examples above are questions and answers; for a cloze card, find the words in the highlighted text that state the same fact and hide them with {{c1::hidden words}}.
-- The front is the whole highlighted text, copied word for word exactly as the book writes it, with only the cloze marks added. Keep all of it, even when it is a long paragraph. Never shorten, paraphrase, reorder, replace or add words, not even to name what it is about.
+## Choosing what to hide
+
+- Base every card on the highlighted text. Use the surrounding passage and book notes to understand it.
+- If the reader left a note on the highlight, it says what they care about or how they will use it. Let it decide which words you hide, even over the highlight's main point.
+- Hide what is worth remembering: the key term, the main claim, a surprising finding, or a practice the reader can use. Never hide filler words or side details.
+- Hide ideally 1 to 6 words, never most of the sentence. Quote: "Self-knowledge is the foundation of self-control." Right: "{{c1::Self-knowledge}} is the foundation of self-control." Wrong: "{{c1::Self-knowledge is the foundation}} of self-control."
+- When the text gives advice, hide the practice itself: "When you feel tempted, slow your breathing to {{c1::four to six breaths per minute}}."
+- Keep the strength of the claim visible. Words like "best", "most", "only" or "foundation" stay unhidden, as in the example above.
+- When the text lists parallel items, write one card that hides every item (up to 4), each with c1. Right: "Sleep deprivation makes it harder to {{c1::control emotions}}, {{c1::focus attention}} and {{c1::find energy for big challenges}}." Wrong: three cards that each hide one item.
+- The hidden words must not be guessable from the rest of the text, and the rest must still give enough of a cue to recall them.
+- Each card hides different words. Never write two cards that hide the same words.
+
+## Writing the card
+
+- Front: the whole highlighted text, copied word for word exactly as the book writes it, with only the cloze marks added. Keep all of it, even when it is a long paragraph. Never shorten, paraphrase, reorder, replace or add words, not even to name what it is about.
 - When the highlight is shorter than a sentence, quote the whole sentence around it from the passage.
 - When you write several cards, each quotes the same whole text and hides different words.
-- Hide what the question would ask for: the key term, finding or practice, ideally 1 to 6 words. Never hide filler words, and never hide most of the sentence.
-- Use only c1, so each card is one flashcard. For a list, hide every item with c1.
-- The hidden words must not be guessable from the rest of the sentence, and the rest must still give enough of a cue to recall them.
-- Back: empty, or a few words saying what the sentence is about when that would be unclear months later without the book open, such as who "she" is or which study "it" means.
+- Use only c1, so each card is one flashcard.
+- Back: empty, or a few words saying what the text is about when that would be unclear months later without the book open, such as who "she" is or which study "it" means.
+- Write in the language of the highlighted text.
 - Plain text only, no Markdown.]]
 
 local DEFINITION = [[You write a pair of Anki definition flashcards for a term a reader highlighted in a book. One card shows the term and asks for its definition, the other shows the definition and asks for the term.
@@ -56,7 +68,7 @@ local DEFINITION = [[You write a pair of Anki definition flashcards for a term a
 --- Built-in instructions for each kind of card, without the reply format.
 M.PROMPTS = {
     questions = CHOOSING .. "\n\n" .. WRITING_BASIC,
-    cloze = CHOOSING .. "\n\n" .. WRITING_CLOZE,
+    cloze = CLOZE,
     definition = DEFINITION,
 }
 
@@ -136,7 +148,15 @@ function M.wasEdited(card)
     return s ~= nil and (s.front ~= card.front or s.back ~= card.back)
 end
 
---- Messages for Assistant's querier.
+--- `body` inside <tag> … </tag>, after an optional `intro` line.
+local function tagged(tag, body, intro)
+    local block = "<" .. tag .. ">\n" .. body .. "\n</" .. tag .. ">"
+    if intro then return intro .. "\n" .. block end
+    return block
+end
+
+--- Messages for Assistant's querier: the Book Companion first, then the
+-- instructions, then the highlight and the task.
 -- @tparam table h highlight: text, before, after, note, book, author, chapter, percent
 -- @tparam table request `{count = n}` for exactly n cards, or `{max = n}` to let the AI choose 1 to n;
 -- optional `existing`, a list of {front, back, suggested} the new cards must not repeat,
@@ -150,16 +170,16 @@ end
 -- @string companion optional Book Companion text
 -- @string position_note optional Book Companion note about the reading position
 function M.buildMessages(h, request, companion, position_note)
-    local messages = {
-        { role = "system", content = M.systemPrompt(request.prompt, M.requestKind(request)) },
-    }
+    local messages = {}
     if companion and companion ~= "" then
         table.insert(messages, {
             role = "system",
-            content = "Reference notes about this book (background only, never quiz on them directly):\n\n" .. companion,
+            content = "Reference notes about this book (background only, never quiz on them directly):\n\n"
+                .. tagged("book_notes", companion),
             cache = true,
         })
     end
+    table.insert(messages, { role = "system", content = M.systemPrompt(request.prompt, M.requestKind(request)) })
 
     local parts = {}
     local about = {
@@ -169,17 +189,17 @@ function M.buildMessages(h, request, companion, position_note)
         h.percent and string.format("Position in book: %d%%", math.floor(h.percent + 0.5)) or nil,
     }
     if #about > 0 then
-        table.insert(parts, table.concat(about, "\n"))
+        table.insert(parts, tagged("book", table.concat(about, "\n")))
     end
     local before, after = h.before or "", h.after or ""
     if before ~= "" or after ~= "" then
-        table.insert(parts, "Passage around the highlight (the highlight is between « and »):\n\n"
-            .. before .. " «" .. h.text .. "» " .. after)
+        table.insert(parts, tagged("passage", before .. " «" .. h.text .. "» " .. after,
+            "Passage around the highlight (the highlight is between « and »):"))
     end
-    table.insert(parts, "Highlighted text:\n\n" .. h.text)
+    table.insert(parts, tagged("highlight", h.text, "Highlighted text:"))
     if h.note and h.note ~= "" then
-        table.insert(parts, "The reader's note on this highlight. It says what they care about here, "
-            .. "so let it steer which ideas you pick and how you ask:\n\n" .. h.note)
+        table.insert(parts, tagged("reader_note", h.note, "The reader's note on this highlight. It says what "
+            .. "they care about here, so let it steer which ideas you pick and how you ask:"))
     end
     if position_note and position_note ~= "" then
         table.insert(parts, position_note)
@@ -197,16 +217,17 @@ function M.buildMessages(h, request, companion, position_note)
             end
         end
         if request.definition then
-            table.insert(parts, "The reader already has these cards for this term. "
-                .. "Write a different definition:\n\n" .. table.concat(lines, "\n"))
+            table.insert(parts, tagged("existing_cards", table.concat(lines, "\n"),
+                "The reader already has these cards for this term. Write a different definition:"))
         else
-            table.insert(parts, "The reader already has these cards. Write new ones that ask something else, "
-                .. "in the same style and level of detail:\n\n" .. table.concat(lines, "\n"))
+            table.insert(parts, tagged("existing_cards", table.concat(lines, "\n"),
+                "The reader already has these cards. Write new ones that ask something else, "
+                .. "in the same style and level of detail:"))
         end
         if #edits > 0 then
-            table.insert(parts, "The reader rewrote some of your earlier suggestions. "
-                .. "Notice what they changed and write new cards the way they would:\n\n"
-                .. table.concat(edits, "\n"))
+            table.insert(parts, tagged("edited_cards", table.concat(edits, "\n"),
+                "The reader rewrote some of your earlier suggestions. "
+                .. "Notice what they changed and write new cards the way they would:"))
         end
     end
     if request.rejected and #request.rejected > 0 then
@@ -214,18 +235,19 @@ function M.buildMessages(h, request, companion, position_note)
         for _idx, card in ipairs(request.rejected) do
             table.insert(lines, "- " .. cardLine(card))
         end
-        table.insert(parts, "The reader removed these suggested cards. Do not write them again or close "
+        table.insert(parts, tagged("removed_cards", table.concat(lines, "\n"),
+            "The reader removed these suggested cards. Do not write them again or close "
             .. "variants of them. Notice what they have in common (for example too easy, too long, "
-            .. "or about a side detail) and avoid that, while still basing new cards on the highlight:\n\n"
-            .. table.concat(lines, "\n"))
+            .. "or about a side detail) and avoid that, while still basing new cards on the highlight:"))
     end
     if request.guidance and request.guidance ~= "" then
-        table.insert(parts, "The reader asked for these cards:\n\n" .. request.guidance
-            .. "\n\nFollow it, within the rules above.")
+        table.insert(parts, tagged("reader_request", request.guidance, "The reader asked for these cards:")
+            .. "\nFollow it, within the rules above.")
     end
     if not request.definition then
         table.insert(parts, M.countInstruction(request))
     end
+    table.insert(parts, "Reply with the JSON only, in the shape given in the instructions.")
 
     table.insert(messages, { role = "user", content = table.concat(parts, "\n\n") })
     return messages
@@ -307,9 +329,10 @@ function M.recentSection(recent)
     end
     local texts = {}
     for _idx, b in ipairs(blocks) do table.insert(texts, table.concat(b, "\n")) end
-    return "Cards this reader saved recently from this book. They show what the reader chooses to ask "
+    return tagged("recent_cards", table.concat(texts, "\n\n"),
+        "Cards this reader saved recently from this book. They show what the reader chooses to ask "
         .. "about and how they word questions and answers, including how they rewrote your suggestions. "
-        .. "Write the new cards the same way, but do not repeat these:\n\n" .. table.concat(texts, "\n\n")
+        .. "Write the new cards the same way, but do not repeat these:")
 end
 
 --- How many cards to write, as an instruction for the AI.
@@ -322,6 +345,9 @@ function M.countInstruction(request)
             request.max)
     end
     if request.count == 1 then return "Write 1 card." end
+    if request.cloze then
+        return string.format("Write %d cards, each hiding different words.", request.count)
+    end
     return string.format("Write %d cards, each asking something different.", request.count)
 end
 
