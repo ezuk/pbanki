@@ -28,10 +28,7 @@ local WRITING_BASIC = [[Writing the card:
 - The question must still make sense months later without the book open: name the specific thing it is about.
 - Do not copy the whole highlight onto a card.
 - Write in the language of the highlighted text.
-- Plain text only, no Markdown.
-
-Reply with JSON only, no other text, in this shape:
-{"cards": [{"front": "question", "back": "answer"}]}]]
+- Plain text only, no Markdown.]]
 
 local WRITING_CLOZE = [[Writing the card:
 - Write cloze cards. The examples above are questions and answers; for a cloze card, find the sentence in the text that states the same fact and hide the answer in it with {{c1::hidden words}}.
@@ -43,25 +40,54 @@ local WRITING_CLOZE = [[Writing the card:
 - Use only c1, so each card is one flashcard. For a list, hide every item with c1.
 - The hidden words must not be guessable from the rest of the sentence, and the rest must still give enough of a cue to recall them.
 - Back: empty, or a few words saying what the sentence is about when that would be unclear months later without the book open, such as who "she" is or which study "it" means.
-- Plain text only, no Markdown.
+- Plain text only, no Markdown.]]
 
-Reply with JSON only, no other text, in this shape:
-{"cards": [{"front": "Sentence quoted from the text with {{c1::hidden words}}.", "back": ""}]}]]
-
-M.DEFINITION_PROMPT = [[You write a pair of Anki definition flashcards for a term a reader highlighted in a book. One card shows the term and asks for its definition, the other shows the definition and asks for the term.
+local DEFINITION = [[You write a pair of Anki definition flashcards for a term a reader highlighted in a book. One card shows the term and asks for its definition, the other shows the definition and asks for the term.
 
 - Term: the highlighted words as a dictionary headword. Keep the book's words; only change the form when needed, such as plural to singular.
 - Definition: what the term means as this book uses it, ideally under 20 words. Use the surrounding passage and book notes to understand it. When the book defines the term, follow its definition.
 - The definition must not contain the term or any word from it, not even inside another name or phrase, since the other card shows the definition and asks for the term. Wrong for "ego depletion": "The depletion of willpower after using it". Right: "The idea that self-control runs out the more you use it".
 - Make the definition specific enough that the term is the only fitting answer.
 - If the reader left a note on the highlight, let it steer the definition.
-- Write in the language of the book. Plain text only, no Markdown.
+- Write in the language of the book. Plain text only, no Markdown.]]
 
-Reply with JSON only, no other text, in this shape:
-{"term": "term", "definition": "definition"}]]
+--- Built-in instructions for each kind of card, without the reply format.
+M.PROMPTS = {
+    questions = CHOOSING .. "\n\n" .. WRITING_BASIC,
+    cloze = CHOOSING .. "\n\n" .. WRITING_CLOZE,
+    definition = DEFINITION,
+}
 
-M.SYSTEM_PROMPT = CHOOSING .. "\n\n" .. WRITING_BASIC
-M.CLOZE_PROMPT = CHOOSING .. "\n\n" .. WRITING_CLOZE
+--- The reply format for each kind of card, added after its instructions.
+M.REPLY_FORMATS = {
+    questions = [[Reply with JSON only, no other text, in this shape:
+{"cards": [{"front": "question", "back": "answer"}]}]],
+    cloze = [[Reply with JSON only, no other text, in this shape:
+{"cards": [{"front": "Sentence quoted from the text with {{c1::hidden words}}.", "back": ""}]}]],
+    definition = [[Reply with JSON only, no other text, in this shape:
+{"term": "term", "definition": "definition"}]],
+}
+
+--- The kind of card a request asks for: "questions", "cloze" or "definition".
+function M.requestKind(request)
+    if request.definition then return "definition" end
+    if request.cloze then return "cloze" end
+    return "questions"
+end
+
+--- System prompt for `kind`: the instructions from `prompt` (a table keyed
+-- by kind, see prompts.lua), or the built-in ones, then the reply format.
+function M.systemPrompt(prompt, kind)
+    local text = prompt and prompt[kind]
+    if type(text) ~= "string" or text:match("^%s*$") then
+        text = M.PROMPTS[kind]
+    end
+    return text .. "\n\n" .. M.REPLY_FORMATS[kind]
+end
+
+M.SYSTEM_PROMPT = M.systemPrompt(nil, "questions")
+M.CLOZE_PROMPT = M.systemPrompt(nil, "cloze")
+M.DEFINITION_PROMPT = M.systemPrompt(nil, "definition")
 
 local function line(label, value)
     if value == nil or value == "" then return nil end
@@ -118,17 +144,12 @@ end
 -- optional `cloze`, true for cloze cards;
 -- optional `definition`, true for a term and definition pair (see M.parseDefinition);
 -- optional `guidance`, the reader's own instructions for these cards
+-- optional `prompt`, instructions by kind of card (see M.systemPrompt)
 -- @string companion optional Book Companion text
 -- @string position_note optional Book Companion note about the reading position
 function M.buildMessages(h, request, companion, position_note)
-    local system = M.SYSTEM_PROMPT
-    if request.definition then
-        system = M.DEFINITION_PROMPT
-    elseif request.cloze then
-        system = M.CLOZE_PROMPT
-    end
     local messages = {
-        { role = "system", content = system },
+        { role = "system", content = M.systemPrompt(request.prompt, M.requestKind(request)) },
     }
     if companion and companion ~= "" then
         table.insert(messages, {

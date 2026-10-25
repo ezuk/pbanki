@@ -97,6 +97,25 @@ Select a term of one to three words and the highlight menu offers **Suggest defi
   </tr>
 </table>
 
+### Your own AI prompts
+
+The prompt the AI follows makes a big difference to the cards. **Tools → pbAnki flashcards → AI prompt** lists your prompts, starting with the built-in **Standard**. Duplicate one, rename it, and edit its instructions for question, cloze and definition cards right on the device. A copy keeps only the parts you change; the rest follow Standard. The reply format the plugin needs is added automatically, so an edit can't break it.
+
+Pick a default prompt for all books, and a different one for any book that needs it.
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/koreader/39_prompts_with_copy.png" width="240" alt="The AI prompt menu with Standard and a copy named Concise"></td>
+    <td><img src="docs/screenshots/koreader/41_edit_saved.png" width="240" alt="Editing the question card instructions of the Concise prompt"></td>
+    <td><img src="docs/screenshots/koreader/43_book_choice.png" width="240" alt="Choosing Concise as this book's prompt"></td>
+  </tr>
+  <tr>
+    <td>Standard and your copies.</td>
+    <td>Edit on the device; Standard puts the original text back.</td>
+    <td>Use a different prompt for this book.</td>
+  </tr>
+</table>
+
 ### Offline, or without AI
 
 Everything works without AI. Turn suggestions off (in flight mode, say) and the editor opens straight onto a blank card: the front on one full screen with a large keyboard, then the back on the next.
@@ -234,7 +253,7 @@ If AnkiWeb can't merge the two collections (after a reset on another device, for
 ### Under the hood
 
 - One Cargo workspace with a single lock file. The Anki dependency is pinned to an exact commit.
-- 70 Rust tests, covering card layout, config, the KOReader inbox and the study flow against real Anki collections, plus a spec for the plugin's card prompts. The original had none.
+- 70 Rust tests, covering card layout, config, the KOReader inbox and the study flow against real Anki collections, plus specs for the plugin's card prompts and prompt manager. The original had none.
 - CI checks formatting, runs Clippy and the tests, and cross-builds for the PocketBook on every push.
 - Fixes to the original: sync could never log in with the default config (an empty token counted as a real one), settings were always saved to the device path, the sync status got stuck after a failure, and a page size of 0 crashed the app.
 - The launcher works around firmware 6.11 refusing to load `libinkview.so`.
@@ -258,7 +277,7 @@ Not ready yet. Firmware 6.x lists apps from `system/config/desktop/view.json`, a
 
 ### KOReader plugin
 
-Copy `koreader/pbanki.koplugin` to `applications/koreader/plugins/` and restart KOReader. Highlight text, then tap **Create flashcard**, or open **Tools → pbAnki flashcards → Flashcards from highlights**. The same menu turns AI suggestions and cloze suggestions on and off, sets the most cards the AI may write per highlight in batch mode (1 to 10, default 3), picks the AI model, and can make all of a book's highlights new again. Batch mode can also be put on a gesture.
+Copy `koreader/pbanki.koplugin` to `applications/koreader/plugins/` and restart KOReader. Highlight text, then tap **Create flashcard**, or open **Tools → pbAnki flashcards → Flashcards from highlights**. The same menu turns AI suggestions and cloze suggestions on and off, sets the most cards the AI may write per highlight in batch mode (1 to 10, default 3), picks the AI model, manages AI prompts, and can make all of a book's highlights new again. Batch mode can also be put on a gesture.
 
 Cards are queued in `applications/pbanki/inbox.jsonl` and imported when pbAnki starts or when you return to the deck list. If a line can't be imported, it is kept in `inbox.failed.jsonl` rather than dropped.
 
@@ -322,7 +341,7 @@ src/         PocketBook entry point (inkview-rs, keyboard, Wi-Fi)
 common/      App logic: Anki backend, card layout, KOReader inbox, settings
 dev/         Desktop build, the emulator and the KOReader screenshot runner
 ui/          Slint UI and the bundled JetBrains Mono font
-koreader/    KOReader plugin and its specs (lua koreader/spec/cardgen_spec.lua)
+koreader/    KOReader plugin and its specs (lua koreader/spec/cardgen_spec.lua, prompts_spec.lua)
 pocketbook/  Device launcher, app icon and icon build script
 docs/        README screenshots and the script that renders them
 ```

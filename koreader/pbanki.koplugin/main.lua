@@ -14,12 +14,14 @@ imports into its "KOReader" deck.
 --]]--
 
 local CardEditor = require("cardeditor")
+local ConfirmBox = require("ui/widget/confirmbox")
 local Dispatcher = require("dispatcher")
 local InputDialog = require("ui/widget/inputdialog")
 local InfoMessage = require("ui/widget/infomessage")
 local NetworkMgr = require("ui/network/manager")
 local Notification = require("ui/widget/notification")
 local SpinWidget = require("ui/widget/spinwidget")
+local TextViewer = require("ui/widget/textviewer")
 local Trapper = require("ui/trapper")
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
@@ -27,6 +29,7 @@ local cardgen = require("cardgen")
 local json = require("json")
 local lfs = require("libs/libkoreader-lfs")
 local logger = require("logger")
+local prompts = require("prompts")
 local util = require("util")
 local _ = require("gettext")
 local T = require("ffi/util").template
@@ -56,6 +59,9 @@ function PbAnki:init()
     })
     -- The AI writes cloze cards instead of questions
     self.settings.cloze = self.settings.cloze or false
+    -- Saved AI prompts and the id of the one books use unless they pick another
+    self.settings.prompts = self.settings.prompts or {}
+    self.settings.default_prompt = self.settings.default_prompt or prompts.STANDARD_ID
     self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
     if self.ui.highlight then
@@ -162,6 +168,13 @@ function PbAnki:addToMainMenu(menu_items)
                         touchmenu_instance:updateItems()
                     end)
                 end,
+            },
+            {
+                text_func = function()
+                    return T(_("AI prompt: %1"), self:activePrompt().name)
+                end,
+                enabled_func = function() return self:assistant() ~= nil end,
+                sub_item_table_func = function() return self:promptsMenu() end,
                 separator = true,
             },
             {
@@ -191,6 +204,236 @@ end
 
 function PbAnki:aiEnabled()
     return self.settings.use_ai and self:assistant() ~= nil
+end
+
+-- AI prompts
+
+--- The prompt this book uses.
+function PbAnki:activePrompt()
+    return prompts.resolve(self.settings.prompts, self.ui.doc_settings:readSetting("pbanki_prompt"),
+        self.settings.default_prompt)
+end
+
+--- Saves prompt changes to disk right away, so typed edits survive a crash.
+function PbAnki:savePrompts()
+    self:saveSettings()
+    G_reader_settings:flush()
+end
+
+--- Asks for a prompt name, then calls `fn(name)`.
+function PbAnki:askPromptName(title, name, ok_text, fn)
+    local dialog
+    dialog = InputDialog:new{
+        title = title,
+        input = name,
+        allow_newline = false,
+        buttons = { {
+            {
+                text = _("Cancel"),
+                id = "close",
+                callback = function() UIManager:close(dialog) end,
+            },
+            {
+                text = ok_text,
+                id = "done",
+                is_enter_default = true,
+                callback = function()
+                    local text = util.trim(dialog:getInputText())
+                    if text == "" then return end
+                    UIManager:close(dialog)
+                    fn(text)
+                end,
+            },
+        } },
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+--- Shows `prompt`'s instructions for `kind`, in an editor unless it is Standard.
+function PbAnki:editPromptText(prompt, kind, touchmenu_instance)
+    local title = T(_("%1: %2"), prompt.name, _(kind.label))
+    if prompt.builtin then
+        UIManager:show(TextViewer:new{
+            title = title,
+            text = prompts.text(prompt, kind.key),
+        })
+        return
+    end
+    local dialog
+    dialog = InputDialog:new{
+        title = title,
+        description = _("The reply format is added after this automatically."),
+        input = prompts.text(prompt, kind.key),
+        fullscreen = true,
+        condensed = true,
+        allow_newline = true,
+        cursor_at_end = false,
+        add_nav_bar = true,
+        reset_button_text = _("Standard"),
+        reset_callback = function()
+            return prompts.text(prompts.STANDARD, kind.key), _("Standard text restored. Save to keep it.")
+        end,
+        save_callback = function(content)
+            prompts.setText(prompt, kind.key, content)
+            self:savePrompts()
+            touchmenu_instance:updateItems()
+            return true, _("Prompt saved.")
+        end,
+    }
+    UIManager:show(dialog)
+    dialog:onShowKeyboard()
+end
+
+--- A menu table that rebuilds itself when a submenu closes.
+function PbAnki:refreshingMenu(build)
+    local items = build()
+    items.needs_refresh = true
+    items.refresh_func = function() return self:refreshingMenu(build) end
+    return items
+end
+
+--- Menu for choosing and managing AI prompts.
+function PbAnki:promptsMenu()
+    return self:refreshingMenu(function()
+        local saved = self.settings.prompts
+        local items = {
+            {
+                text_func = function()
+                    local own = prompts.find(saved, self.ui.doc_settings:readSetting("pbanki_prompt"))
+                    return own and T(_("This book uses: %1"), own.name)
+                        or T(_("This book uses: %1 (default)"), self:activePrompt().name)
+                end,
+                sub_item_table_func = function() return self:bookPromptMenu() end,
+                help_text = _("The prompt the AI follows for cards from this book. Books use the default unless you pick another."),
+            },
+            {
+                text_func = function()
+                    return T(_("Default for all books: %1"), prompts.resolve(saved, nil, self.settings.default_prompt).name)
+                end,
+                sub_item_table_func = function() return self:defaultPromptMenu() end,
+                separator = true,
+            },
+        }
+        for _idx, p in ipairs(prompts.all(saved)) do
+            table.insert(items, {
+                text_func = function()
+                    return p.builtin and T(_("%1 (built-in)"), p.name) or p.name
+                end,
+                sub_item_table_func = function() return self:promptMenu(p) end,
+            })
+        end
+        return items
+    end)
+end
+
+function PbAnki:bookPromptMenu()
+    local function bookChoice()
+        return prompts.find(self.settings.prompts, self.ui.doc_settings:readSetting("pbanki_prompt"))
+    end
+    local items = {
+        {
+            text_func = function()
+                return T(_("Default (%1)"), prompts.resolve(self.settings.prompts, nil, self.settings.default_prompt).name)
+            end,
+            radio = true,
+            checked_func = function() return bookChoice() == nil end,
+            callback = function() self.ui.doc_settings:delSetting("pbanki_prompt") end,
+            separator = true,
+        },
+    }
+    for _idx, p in ipairs(prompts.all(self.settings.prompts)) do
+        table.insert(items, {
+            text = p.name,
+            radio = true,
+            checked_func = function() return bookChoice() == p end,
+            callback = function() self.ui.doc_settings:saveSetting("pbanki_prompt", p.id) end,
+        })
+    end
+    return items
+end
+
+function PbAnki:defaultPromptMenu()
+    local items = {}
+    for _idx, p in ipairs(prompts.all(self.settings.prompts)) do
+        table.insert(items, {
+            text = p.name,
+            radio = true,
+            checked_func = function()
+                return prompts.resolve(self.settings.prompts, nil, self.settings.default_prompt) == p
+            end,
+            callback = function()
+                self.settings.default_prompt = p.id
+                self:savePrompts()
+            end,
+        })
+    end
+    return items
+end
+
+--- Menu for one prompt: its instructions, rename, duplicate and delete.
+function PbAnki:promptMenu(prompt)
+    local saved = self.settings.prompts
+    local items = {}
+    for _idx, kind in ipairs(prompts.KINDS) do
+        table.insert(items, {
+            text_func = function()
+                if prompt.builtin then return _(kind.label) end
+                return prompts.isEdited(prompt, kind.key) and T(_("%1: edited"), _(kind.label))
+                    or T(_("%1: same as Standard"), _(kind.label))
+            end,
+            keep_menu_open = true,
+            callback = function(touchmenu_instance)
+                self:editPromptText(prompt, kind, touchmenu_instance)
+            end,
+        })
+    end
+    items[#items].separator = true
+    table.insert(items, {
+        text = _("Rename"),
+        enabled_func = function() return not prompt.builtin end,
+        keep_menu_open = true,
+        callback = function(touchmenu_instance)
+            self:askPromptName(_("Rename prompt"), prompt.name, _("Rename"), function(name)
+                prompt.name = name
+                self:savePrompts()
+                touchmenu_instance:updateItems()
+            end)
+        end,
+    })
+    table.insert(items, {
+        text = _("Duplicate"),
+        keep_menu_open = true,
+        callback = function(touchmenu_instance)
+            self:askPromptName(_("Duplicate prompt"), prompts.copyName(saved, prompt.name), _("Duplicate"),
+                function(name)
+                    prompts.duplicate(saved, prompt, name)
+                    self:savePrompts()
+                    touchmenu_instance:backToUpperMenu()
+                    UIManager:show(Notification:new{ text = T(_("Added %1."), name) })
+                end)
+        end,
+    })
+    table.insert(items, {
+        text = _("Delete"),
+        enabled_func = function() return not prompt.builtin end,
+        keep_menu_open = true,
+        callback = function(touchmenu_instance)
+            UIManager:show(ConfirmBox:new{
+                text = T(_("Delete the prompt %1? Books that use it go back to the default."), prompt.name),
+                ok_text = _("Delete"),
+                ok_callback = function()
+                    prompts.remove(saved, prompt.id)
+                    if self.settings.default_prompt == prompt.id then
+                        self.settings.default_prompt = prompts.STANDARD_ID
+                    end
+                    self:savePrompts()
+                    touchmenu_instance:backToUpperMenu()
+                end,
+            })
+        end,
+    })
+    return items
 end
 
 -- Reviewed highlights
@@ -340,10 +583,11 @@ function PbAnki:askGuidance(editor, fn)
     dialog:onShowKeyboard()
 end
 
---- `request` with the book's card history and the cloze setting added.
+--- `request` with the book's prompt, card history and the cloze setting added.
 function PbAnki:fullRequest(request)
     local full = {}
     for key, value in pairs(request) do full[key] = value end
+    full.prompt = self:activePrompt()
     if not request.definition then
         full.recent = cardgen.pickRecent(self:cardHistory(), HISTORY_SHOWN)
         full.cloze = self.settings.cloze
