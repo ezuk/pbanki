@@ -9,6 +9,7 @@
 //! Steps:
 //!   shot:<name>     save <output dir>/<name>.png
 //!   tap:<x>,<y>     tap at physical pixel coordinates
+//!   hold:<x>,<y>    press for a second, then let go
 //!   swipe:<x1>,<y1>,<x2>,<y2>  swipe from one point to another
 //!   key:<name>      press left|right|up|down|pageup|pagedown|menu|return
 //!   type:<text>     text the next keyboard prompt returns
@@ -44,6 +45,11 @@ struct Emulator {
 impl Platform for Emulator {
     fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, PlatformError> {
         Ok(self.window.clone())
+    }
+
+    // Matches the device, where the cursor doesn't blink
+    fn cursor_flash_cycle(&self) -> Duration {
+        Duration::ZERO
     }
 }
 
@@ -126,6 +132,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 settle();
                 window.dispatch_event(WindowEvent::PointerReleased { position, button });
             }
+            "hold" => {
+                let [x, y] = parse_numbers::<2>(arg)?;
+                let position = logical(x, y);
+                let button = PointerEventButton::Left;
+                window.dispatch_event(WindowEvent::PointerPressed { position, button });
+                let until = std::time::Instant::now() + Duration::from_secs(1);
+                while std::time::Instant::now() < until {
+                    settle();
+                }
+                window.dispatch_event(WindowEvent::PointerReleased { position, button });
+            }
             "swipe" => {
                 let [x1, y1, x2, y2] = parse_numbers::<4>(arg)?;
                 let button = PointerEventButton::Left;
@@ -139,7 +156,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     window.dispatch_event(WindowEvent::PointerMoved {
                         position: logical(x, y),
                     });
-                    settle();
+                    // Quick, like a finger, so it isn't taken for a hold
+                    slint::platform::update_timers_and_animations();
                 }
                 window.dispatch_event(WindowEvent::PointerReleased {
                     position: logical(x2, y2),

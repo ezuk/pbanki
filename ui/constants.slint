@@ -29,6 +29,12 @@ export global Constants {
     out property <length> deck_row_height: Math.max(20px, font_size_content * 2.6);
     out property <length> indent: 8px;
 
+    // On-screen keyboard: five rows of 80 device pixels
+    out property <length> key_height: 80px / device_scale;
+    out property <length> keyboard_height: 5 * key_height + border;
+    // One device pixel
+    out property <length> hairline: 1px / device_scale;
+
     // Count columns in the deck list
     out property <length> count_width: Math.max(20px, font_size_content * 2.6);
 
@@ -36,5 +42,8 @@ export global Constants {
     in-out property <bool> dark_mode: false;
     out property <color> ink: dark_mode ? #ffffff : #000000;
     out property <color> faded: #808080;
+    // Pressed and active keys
+    out property <color> shade: dark_mode ? #444444 : #cccccc;
+    out property <color> key_border: dark_mode ? #555555 : #bbbbbb;
     out property <color> paper: dark_mode ? #000000 : #ffffff;
 }

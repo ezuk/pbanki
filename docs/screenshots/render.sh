@@ -28,23 +28,31 @@ good=489,946
 easy=678,946
 context=678,850
 edit=295,850
-edit_text=379,400
-edit_next=564,946
+edit_next=560,542
 settings=555,50
 username=490,183
 password=490,252
 validate=627,320
 dark=626,705
 settings_save=564,944
+# Keyboard keys used by the edit screens
+key_e=189,743
+key_h=417,823
+key_a=38,823
+key_v=379,903
+key_sym=57,983
+key_backspace=701,903
 
 emulate shot:decks tap:$expand shot:decks_expanded
 emulate tap:$everything shot:everything
 emulate tap:42,242 shot:decks_koreader
 emulate tap:$koreader shot:koreader_question tap:$show shot:koreader_answer \
     tap:$context shot:context tap:150,946 tap:$easy shot:finished
+# Holds e for its popup, closes it on an empty cell, then changes "want?" to "have?"
 emulate tap:42,242 tap:$koreader tap:$edit shot:edit_front \
-    "type:What does every rich single man want, according to Pride and Prejudice?" \
-    tap:$edit_text tap:$edit_next shot:edit_back tap:$edit_next shot:edited
+    hold:$key_e shot:keyboard_popup tap:113,743 tap:$key_sym shot:keyboard_symbols tap:$key_sym \
+    tap:$key_backspace swipe:701,903,630,903 tap:$key_h tap:$key_a tap:$key_v tap:$key_e \
+    swipe:152,983,90,983 shot:edit_typed tap:$edit_next shot:edit_back tap:$edit_next shot:edited
 emulate tap:$expand tap:$basics tap:$show tap:$good tap:$edit shot:edit_formatted
 emulate tap:$expand tap:$basics shot:question tap:$show shot:answer \
     tap:$good shot:formatting_question tap:$show shot:formatting_answer \
@@ -56,7 +64,7 @@ emulate tap:$settings shot:settings \
     tap:$validate wait:300 shot:login_failed \
     type:correct-password tap:$password tap:$validate wait:300 shot:login_passed
 emulate tap:$settings tap:$dark shot:settings_dark tap:$settings_save shot:decks_dark \
-    tap:$expand tap:$basics tap:$show shot:answer_dark
+    tap:$expand tap:$basics tap:$show shot:answer_dark tap:$edit shot:edit_dark
 PBANKI_EMULATOR_12H=1 target/debug/emulator "$tmp/app" "$out" tap:$everything shot:clock_12h >/dev/null
 
 # AnkiWeb sync, against the emulator's stand-in for AnkiWeb

@@ -224,15 +224,29 @@ Columns are labelled, due counts are bold and zeros are grey. Every row is a ful
 - Tap the question to see the answer, then tap the answer to rate it Good. Again, Hard and Easy have their own buttons. On a long answer, a tap turns the page first.
 - Rated too fast? Swipe from right to left, or press the **prev** button, to undo. Undo also brings back a card you just suspended.
 - The **next** button does what a tap does. **Prev** turns back a page, or undoes on a card's first page.
-- **Suspend** takes a card out of review. **Edit** fixes a typo without losing the card's schedule. You get the front on one screen and the back on the next, typed with the PocketBook keyboard.
+- **Suspend** takes a card out of review. **Edit** fixes a typo without losing the card's schedule (see [Editing a card](#editing-a-card)).
 - Buttons are outlined and invert while pressed, which shows clearly on e-ink.
 - Type-in cards are skipped (buried until tomorrow), because typing answers on e-ink is no fun.
 
+### Editing a card
+
+**Edit** shows the front on one screen and the back on the next. The text sits in a large box in the study screen's font, with a keyboard laid out like KOReader's along the bottom. Tap in the text to move the cursor.
+
+- **⇧** types one capital. Hold it to lock capitals. **⌥** switches to numbers and symbols, and ⇧ there gives a second page of symbols.
+- Swipe up on a key for its capital, or for the small character in its corner. Hold a key for accents (é, ü, ñ and more), then tap the one you want.
+- **⌫** deletes a character. Swipe left on it to delete a word, or hold it to delete to the start of the line. **←** and **→** move the cursor; hold them to jump to the start or end of the line.
+- The cursor doesn't blink, so the screen only refreshes when you type.
+
 <table>
   <tr>
-    <td><img src="docs/screenshots/edit_front.png" width="240" alt="Edit card: the front on its own screen"></td>
-    <td><img src="docs/screenshots/edit_back.png" width="240" alt="Edit card: the back on its own screen, with Save"></td>
+    <td><img src="docs/screenshots/edit_front.png" width="240" alt="Edit card: the front in a large box above the keyboard"></td>
+    <td><img src="docs/screenshots/keyboard_popup.png" width="240" alt="Holding e shows accented letters around it"></td>
+    <td><img src="docs/screenshots/keyboard_symbols.png" width="240" alt="The symbols page of the keyboard"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/edit_back.png" width="240" alt="Edit card: the back, with Save"></td>
     <td><img src="docs/screenshots/edited.png" width="240" alt="The study screen showing the edited question"></td>
+    <td><img src="docs/screenshots/edit_dark.png" width="240" alt="The edit screen and keyboard in dark mode"></td>
   </tr>
 </table>
 
@@ -279,7 +293,7 @@ The deck list and the study screen show the time in the top-right corner, update
 ### Under the hood
 
 - One Cargo workspace with a single lock file. The Anki dependency is pinned to an exact commit.
-- 73 Rust tests, covering card layout, config, the KOReader inbox and the study flow against real Anki collections, plus specs for the plugin's card prompts and prompt folders. The original had none.
+- 80 Rust tests, covering card layout, config, the KOReader inbox and the study flow against real Anki collections, plus specs for the plugin's card prompts and prompt folders. The original had none.
 - CI checks formatting, runs Clippy and the tests, and cross-builds for the PocketBook on every push.
 - Fixes to the original: sync could never log in with the default config (an empty token counted as a real one), settings were always saved to the device path, the sync status got stuck after a failure, and a page size of 0 crashed the app.
 - The launcher works around firmware 6.11 refusing to load `libinkview.so`.
@@ -356,7 +370,7 @@ For a sample collection with a few cards of each kind: `cargo run -p common --ex
 
 ### Emulator
 
-`cargo run -p dev --bin emulator -- <app dir> <output dir> <steps...>` runs the real UI headlessly as it appears on a PocketBook Verse and saves PNG screenshots. Steps are `shot:<name>`, `tap:<x>,<y>`, `swipe:<x1>,<y1>,<x2>,<y2>`, `key:<left|right|up|down|pageup|pagedown|menu|return>`, `type:<text>` (what the next keyboard prompt returns) and `wait:<ms>`. The clock always reads 09:41 so screenshots don't change between runs; set `PBANKI_EMULATOR_12H=1` to see it as 9:41 AM.
+`cargo run -p dev --bin emulator -- <app dir> <output dir> <steps...>` runs the real UI headlessly as it appears on a PocketBook Verse and saves PNG screenshots. Steps are `shot:<name>`, `tap:<x>,<y>`, `hold:<x>,<y>` (press for a second), `swipe:<x1>,<y1>,<x2>,<y2>`, `key:<left|right|up|down|pageup|pagedown|menu|return>`, `type:<text>` (what the next keyboard prompt returns) and `wait:<ms>`. The clock always reads 09:41 so screenshots don't change between runs; set `PBANKI_EMULATOR_12H=1` to see it as 9:41 AM.
 
 `docs/screenshots/render.sh` regenerates every screenshot in this README. The "before" images in `docs/screenshots/before/` were rendered from the original code and are kept as they are.
 
@@ -387,6 +401,7 @@ docs/        README screenshots and the script that renders them
 ## Credits and license
 
 - Original pbAnki by [Ananya Timalsina](https://github.com/ananyatimalsina/pbanki).
+- The edit screen's keyboard follows the layout of [KOReader](https://koreader.rocks)'s English keyboard.
 - Built on [Anki](https://apps.ankiweb.net)'s Rust backend, [Slint](https://slint.dev) and [inkview-rs](https://github.com/ananyatimalsina/inkview-rs).
 - [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) is bundled under the SIL Open Font License (`ui/fonts/OFL.txt`).
 

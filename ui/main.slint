@@ -6,11 +6,12 @@ import "fonts/JetBrainsMono-BoldItalic.ttf";
 import { Constants } from "constants.slint";
 
 export { Constants }
-import { DeckNode, DeckTree, CardNode, LoginState, EditSide } from "types.slint";
+import { DeckNode, DeckTree, CardNode, LoginState, EditSide, KeyCap } from "types.slint";
 import { LearnScreen } from "screens/learn.slint";
 import { DeckSelectScreen } from "screens/deck_select.slint";
 import { SettingsScreen } from "screens/settings.slint";
 import { EditScreen } from "screens/edit.slint";
+import { Keyboard } from "components/keyboard.slint";
 
 export component MainWindow inherits Window {
     // PocketBook Verse screen in logical pixels (758x1024 at 3x)
@@ -32,6 +33,10 @@ export component MainWindow inherits Window {
     in-out property <int> edit_side;
     in property <[EditSide]> edit_sides;
     in property <string> edit_error;
+    // On-screen keyboard for the edit screen
+    in property <[KeyCap]> keyboard_keys;
+    in property <[string]> keyboard_popup;
+    in property <int> keyboard_popup_key;
 
     // Settings screen; values are filled in by open_settings
     in property <bool> native_keyboard;
@@ -71,7 +76,10 @@ export component MainWindow inherits Window {
     callback undo(deck: DeckNode, columns: int, rows: int) -> bool;
     callback suspend(deck: DeckNode, columns: int, rows: int);
     callback edit_card();
-    callback edit_text(side: int);
+    callback keyboard_reset();
+    callback key_released(index: int, dx: float, dy: float);
+    callback key_held(index: int);
+    callback keyboard_popup_picked(cell: int);
     callback edit_typed(side: int, text: string);
     callback save_edit(deck: DeckNode, columns: int, rows: int);
     callback open_settings();
@@ -205,14 +213,10 @@ export component MainWindow inherits Window {
             x: Constants.padding;
             y: Constants.padding;
             width: parent.width - 2 * Constants.padding;
-            height: parent.height - 2 * Constants.padding;
-            native_keyboard: native_keyboard;
+            height: parent.height - 2 * Constants.padding - Constants.keyboard_height;
             sides: edit_sides;
             error: edit_error;
             side <=> edit_side;
-            edit_text(side) => {
-                edit_text(side);
-            }
             typed(side, text) => {
                 edit_typed(side, text);
             }
@@ -221,6 +225,26 @@ export component MainWindow inherits Window {
             }
             cancel => {
                 editing = false;
+            }
+        }
+
+        Keyboard {
+            width: parent.width;
+            height: parent.height;
+            keys: keyboard_keys;
+            popup: keyboard_popup;
+            popup_key: keyboard_popup_key;
+            reset => {
+                keyboard_reset();
+            }
+            key_released(index, dx, dy) => {
+                key_released(index, dx, dy);
+            }
+            key_held(index) => {
+                key_held(index);
+            }
+            popup_picked(cell) => {
+                keyboard_popup_picked(cell);
             }
         }
     }

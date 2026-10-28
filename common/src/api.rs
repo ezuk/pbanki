@@ -81,7 +81,7 @@ pub fn init_session(config: &Config) -> Result<Rc<LearnSession>, String> {
     }))
 }
 
-/// Text the settings and edit screens ask the platform keyboard for.
+/// Text the settings screen asks the platform keyboard for.
 pub struct TextRequest {
     pub title: String,
     pub current: String,
@@ -133,6 +133,7 @@ pub fn setup_ui(ui: &MainWindow, config: &Config, hooks: PlatformHooks) {
     constants.set_max_font_size(*crate::config::FONT_SIZES.end() as i32);
     constants.set_font_size_px(config.display.font_size() as i32);
     constants.set_dark_mode(config.display.dark_mode);
+    crate::keyboard::setup_keyboard(ui);
     crate::clock::setup_clock(ui, hooks.clock.clone(), hooks.twelve_hour_clock);
 
     let shared_config = Rc::new(RefCell::new(config.clone()));
@@ -154,7 +155,7 @@ pub fn setup_ui(ui: &MainWindow, config: &Config, hooks: PlatformHooks) {
     };
 
     crate::sync_ui::setup_sync(ui, &session, &shared_config, &hooks);
-    crate::edit::setup_edit(ui, &session, &hooks);
+    crate::edit::setup_edit(ui, &session);
 
     let session_for_deck_tree = session.clone();
     let ui_weak = ui.as_weak();

@@ -8,7 +8,7 @@ use anki::error::{OrNotFound, Result as AnkiResult};
 use anki::notes::NoteId;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
-use crate::api::{Grid, LearnSession, PlatformHooks, TextRequest, next_card};
+use crate::api::{Grid, LearnSession, next_card};
 use crate::{EditSide, MainWindow};
 
 /// Sides that can be edited: the note's first two fields.
@@ -124,7 +124,7 @@ fn save_sides(
 }
 
 /// Connects the Edit button on the study screen and the edit screen.
-pub fn setup_edit(ui: &MainWindow, session: &Rc<LearnSession>, hooks: &PlatformHooks) {
+pub fn setup_edit(ui: &MainWindow, session: &Rc<LearnSession>) {
     let draft: Rc<RefCell<Option<Draft>>> = Rc::default();
     let sides = Rc::new(VecModel::<EditSide>::default());
     ui.set_edit_sides(ModelRc::from(sides.clone()));
@@ -154,35 +154,6 @@ pub fn setup_edit(ui: &MainWindow, session: &Rc<LearnSession>, hooks: &PlatformH
     let sides_for_typed = sides.clone();
     ui.on_edit_typed(move |side, text| {
         set_text(&sides_for_typed, side, text.into());
-    });
-
-    let ui_weak = ui.as_weak();
-    let sides_for_prompt = sides.clone();
-    let text_prompt = hooks.text_prompt.clone();
-    ui.on_edit_text(move |side| {
-        let (Some(prompt), Some(current)) = (
-            text_prompt.as_ref(),
-            sides_for_prompt.row_data(side as usize),
-        ) else {
-            return;
-        };
-        let sides = sides_for_prompt.clone();
-        let ui_weak = ui_weak.clone();
-        prompt(
-            TextRequest {
-                title: current.title.to_string(),
-                current: current.text.to_string(),
-                password: false,
-            },
-            Box::new(move |text| {
-                if let Some(text) = text {
-                    set_text(&sides, side, text.trim().to_string());
-                }
-                if let Some(ui) = ui_weak.upgrade() {
-                    ui.window().request_redraw();
-                }
-            }),
-        );
     });
 
     let ui_weak = ui.as_weak();

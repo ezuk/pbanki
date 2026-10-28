@@ -1,0 +1,147 @@
+import { Constants } from "../constants.slint";
+import { KeyCap } from "../types.slint";
+
+// Shades while pressed; reports a hold, or the finger's movement on release
+component KeyView inherits Rectangle {
+    in property <KeyCap> cap;
+    callback released(dx: float, dy: float);
+    callback held();
+    property <bool> was_held;
+    // A swipe never turns into a hold
+    property <bool> moved;
+
+    background: (touch.pressed && !was_held) || cap.active ? Constants.shade : Constants.paper;
+    border-width: Constants.hairline;
+    border-color: Constants.key_border;
+
+    touch := TouchArea {
+        moved => {
+            if Math.abs(self.mouse-x - self.pressed-x) > 8px || Math.abs(self.mouse-y - self.pressed-y) > 8px {
+                root.moved = true;
+            }
+        }
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down {
+                root.was_held = false;
+                root.moved = false;
+            } else if event.kind == PointerEventKind.up && !root.was_held {
+                root.released((self.mouse-x - self.pressed-x) / 1px, (self.mouse-y - self.pressed-y) / 1px);
+            }
+        }
+    }
+
+    Timer {
+        interval: 500ms;
+        running: touch.pressed && !root.was_held && !root.moved;
+        triggered => {
+            root.was_held = true;
+            root.held();
+        }
+    }
+
+    Text {
+        text: cap.label;
+        font-family: Constants.font_family;
+        font-size: Constants.font_size_heading;
+        color: Constants.ink;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    if cap.corner != "": Text {
+        x: parent.width - self.width - 2px;
+        y: 1px;
+        text: cap.corner;
+        font-family: Constants.font_family;
+        font-size: Constants.font_size_small;
+        color: Constants.faded;
+    }
+}
+
+// Keys along the bottom; fills its parent so the hold popup can rise above them
+export component Keyboard {
+    in property <[KeyCap]> keys;
+    // Nine cells around the held key, empty when closed
+    in property <[string]> popup;
+    in property <int> popup_key;
+    callback key_released(index: int, dx: float, dy: float);
+    callback key_held(index: int);
+    // -1 closes the popup without typing
+    callback popup_picked(cell: int);
+    callback reset();
+
+    property <length> unit: root.width / 10;
+    property <length> top: root.height - Constants.keyboard_height;
+
+    init => {
+        reset();
+    }
+
+    Rectangle {
+        y: root.top;
+        height: Constants.keyboard_height;
+        background: Constants.paper;
+
+        Rectangle {
+            y: 0;
+            height: Constants.border;
+            background: Constants.ink;
+        }
+    }
+
+    for cap[i] in keys: KeyView {
+        x: cap.x * root.unit;
+        y: root.top + Constants.border + cap.row * Constants.key_height;
+        width: cap.width * root.unit;
+        height: Constants.key_height;
+        cap: cap;
+        released(dx, dy) => {
+            root.key_released(i, dx, dy);
+        }
+        held => {
+            root.key_held(i);
+        }
+    }
+
+    if popup.length > 0: TouchArea {
+        clicked => {
+            root.popup_picked(-1);
+        }
+    }
+
+    if popup.length > 0: Rectangle {
+        property <KeyCap> anchor: keys[popup_key];
+        width: 3 * root.unit + 2 * Constants.border;
+        height: 3 * Constants.key_height + 2 * Constants.border;
+        x: Math.clamp((anchor.x + anchor.width / 2) * root.unit - self.width / 2, 0, root.width - self.width);
+        y: Math.max(0, root.top + anchor.row * Constants.key_height - Constants.key_height);
+        background: Constants.paper;
+        border-width: Constants.border;
+        border-color: Constants.ink;
+
+        for cell[i] in popup: Rectangle {
+            x: Constants.border + Math.mod(i, 3) * root.unit;
+            y: Constants.border + Math.floor(i / 3) * Constants.key_height;
+            width: root.unit;
+            height: Constants.key_height;
+            background: i == 4 || cell-touch.pressed ? Constants.shade : Constants.paper;
+            border-width: Constants.hairline;
+            border-color: Constants.key_border;
+
+            cell-touch := TouchArea {
+                clicked => {
+                    root.popup_picked(i);
+                }
+            }
+
+            Text {
+                text: cell;
+                font-family: Constants.font_family;
+                font-size: Constants.font_size_heading;
+                color: Constants.ink;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}

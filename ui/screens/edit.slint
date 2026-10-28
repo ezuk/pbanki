@@ -1,11 +1,9 @@
-import { TextEdit } from "std-widgets.slint";
 import { Constants } from "../constants.slint";
 import { EditSide } from "../types.slint";
 import { InkButton } from "../components/ink_button.slint";
 
-// One side of a card per screen: front, then back. Tapping the text opens the keyboard.
+// One side of a card per screen: front, then back, typed on the on-screen keyboard.
 export component EditScreen {
-    in property <bool> native_keyboard;
     in property <[EditSide]> sides;
     in property <string> error;
     in-out property <int> side;
@@ -14,10 +12,37 @@ export component EditScreen {
     // Anki needs a front
     property <bool> front_filled: sides.length > 0 && sides[0].text != "";
 
-    callback edit_text(side: int);
     callback typed(side: int, text: string);
     callback save();
     callback cancel();
+
+    property <length> line_height: lines.preferred-height / 100;
+
+    // Puts the side's text in the box with the cursor at the end
+    function load() {
+        input.text = current.text;
+        input.set-selection-offsets(current.text.character-count * 4, current.text.character-count * 4);
+        flick.viewport-y = 0;
+        input.focus();
+    }
+
+    init => {
+        load();
+    }
+
+    changed side => {
+        load();
+    }
+
+    // Measures 100 lines of the text below; one alone is rounded to a whole pixel
+    lines := Text {
+        visible: false;
+        width: 0;
+        height: 0;
+        text: "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n";
+        font-family: Constants.font_family;
+        font-size: Constants.font_size_content;
+    }
 
     VerticalLayout {
         spacing: Constants.spacing;
@@ -64,42 +89,46 @@ export component EditScreen {
             border-radius: Constants.radius;
             clip: true;
 
-            if native_keyboard: TouchArea {
-                clicked => {
-                    edit_text(side);
-                }
-            }
+            Rectangle {
+                x: Constants.spacing;
+                y: Constants.spacing;
+                width: parent.width - 2 * Constants.spacing;
+                height: parent.height - 2 * Constants.spacing;
+                clip: true;
 
-            if native_keyboard: VerticalLayout {
-                padding: Constants.spacing;
-                alignment: start;
+            flick := Flickable {
+                viewport-height: input.height;
 
-                Text {
-                    text: current.text == "" ? "Empty. Tap to write." : current.text;
+                input := TextInput {
+                    width: flick.width;
+                    // A spare line keeps letter tails in view and lets it scroll to a line boundary
+                    height: Math.max(flick.height, self.preferred-height + root.line_height);
                     font-family: Constants.font_family;
                     font-size: Constants.font_size_content;
-                    color: current.text == "" ? Constants.faded : Constants.ink;
+                    color: Constants.ink;
+                    selection-background-color: Constants.shade;
+                    selection-foreground-color: Constants.ink;
+                    text-cursor-width: Constants.hairline * 2;
+                    single-line: false;
                     wrap: word-wrap;
-                    overflow: elide;
+                    edited => {
+                        root.typed(root.side, self.text);
+                    }
+                    // Scrolls by whole lines to keep the cursor in view
+                    cursor-position-changed(pos) => {
+                        if pos.y + flick.viewport-y < 0 {
+                            flick.viewport-y = -pos.y;
+                        } else if pos.y + line_height + flick.viewport-y > flick.height {
+                            flick.viewport-y = Math.floor(flick.height / line_height) * line_height - pos.y - line_height;
+                        }
+                    }
                 }
             }
-
-            if !native_keyboard: TextEdit {
-                width: 100%;
-                height: 100%;
-                text: current.text;
-                font-size: Constants.font_size_content;
-                wrap: word-wrap;
-                edited(text) => {
-                    typed(side, text);
-                }
             }
         }
 
-        Text {
-            text: error != "" ? error
-                : current.formatted ? "Changing this side removes its formatting, such as bold or images."
-                : native_keyboard ? "Tap the text to change it." : "";
+        if error != "" || current.formatted: Text {
+            text: error != "" ? error : "Changing this side removes its formatting, such as bold or images.";
             font-family: Constants.font_family;
             font-size: Constants.font_size_small;
             font-weight: error != "" ? 700 : 400;

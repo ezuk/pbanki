@@ -75,3 +75,13 @@ export struct EditSide {
 	// The field had formatting that saving plain text removes
 	formatted: bool,
 }
+
+// One key on the on-screen keyboard; x and width are in key widths
+export struct KeyCap {
+	label: string,
+	corner: string,
+	row: int,
+	x: float,
+	width: float,
+	active: bool,
+}

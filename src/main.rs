@@ -32,6 +32,25 @@ fn connect_network(iv: &'static Inkview) -> Result<(), String> {
     }
 }
 
+/// Keeps the text cursor still; blinking would refresh the e-ink screen twice a second.
+struct SteadyCursor(inkview_slint::Backend);
+
+impl slint::platform::Platform for SteadyCursor {
+    fn create_window_adapter(
+        &self,
+    ) -> Result<Rc<dyn slint::platform::WindowAdapter>, slint::PlatformError> {
+        self.0.create_window_adapter()
+    }
+
+    fn run_event_loop(&self) -> Result<(), slint::PlatformError> {
+        self.0.run_event_loop()
+    }
+
+    fn cursor_flash_cycle(&self) -> Duration {
+        Duration::ZERO
+    }
+}
+
 /// Opens the PocketBook keyboard and polls for its result on the UI thread.
 fn keyboard_prompt(iv: &'static Inkview) -> TextPrompt {
     let timer = Rc::new(slint::Timer::default());
@@ -103,7 +122,7 @@ fn main() {
 
             let display = inkview_slint::Backend::new(screen, evt_rx);
 
-            slint::platform::set_platform(Box::new(display)).unwrap();
+            slint::platform::set_platform(Box::new(SteadyCursor(display))).unwrap();
 
             let config = Config::load_or_create("/mnt/ext1/applications/pbanki/config.toml")
                 .unwrap_or_else(|e| {
