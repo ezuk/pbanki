@@ -2,6 +2,7 @@ slint::include_modules!();
 
 pub mod api;
 pub mod background;
+pub mod clock;
 pub mod collection;
 pub mod config;
 pub mod edit;

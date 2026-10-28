@@ -252,7 +252,7 @@ If AnkiWeb can't merge the two collections (after a reset on another device, for
 
 ### Settings
 
-**Daily limits** set how many new cards and reviews you get each day, as in Anki's deck options. They're saved to your Anki presets and sync to your other devices, so making 100 cards from one book doesn't give you 100 new cards tomorrow. Text size has a live preview. You type your AnkiWeb login on the PocketBook keyboard, and **Validate** tries it against AnkiWeb before you can save. A wrong password shows up right there, not at your first sync.
+**Daily limits** set how many new cards and reviews you get each day, as in Anki's deck options. They're saved to your Anki presets and sync to your other devices, so making 100 cards from one book doesn't give you 100 new cards tomorrow. Text size and dark mode have a live preview on a sample card. You type your AnkiWeb login on the PocketBook keyboard, and **Validate** tries it against AnkiWeb before you can save. A wrong password shows up right there, not at your first sync.
 
 <table>
   <tr>
@@ -262,10 +262,24 @@ If AnkiWeb can't merge the two collections (after a reset on another device, for
   </tr>
 </table>
 
+### Clock and dark mode
+
+The deck list and the study screen show the time in the top-right corner, updated every minute, so you know when to stop. The PocketBook doesn't tell apps whether you picked a 12- or 24-hour clock, so pbAnki shows 24-hour time.
+
+**Dark** in Settings turns the app white on black. It's saved with your other settings and stays on after a restart.
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/decks.png" width="240" alt="The deck list with the time, 09:41, in the top-right corner"></td>
+    <td><img src="docs/screenshots/decks_dark.png" width="240" alt="The deck list in dark mode: white text on black"></td>
+    <td><img src="docs/screenshots/answer_dark.png" width="240" alt="An answer in dark mode, with the clock and the rating buttons"></td>
+  </tr>
+</table>
+
 ### Under the hood
 
 - One Cargo workspace with a single lock file. The Anki dependency is pinned to an exact commit.
-- 70 Rust tests, covering card layout, config, the KOReader inbox and the study flow against real Anki collections, plus specs for the plugin's card prompts and prompt folders. The original had none.
+- 73 Rust tests, covering card layout, config, the KOReader inbox and the study flow against real Anki collections, plus specs for the plugin's card prompts and prompt folders. The original had none.
 - CI checks formatting, runs Clippy and the tests, and cross-builds for the PocketBook on every push.
 - Fixes to the original: sync could never log in with the default config (an empty token counted as a real one), settings were always saved to the device path, the sync status got stuck after a failure, and a page size of 0 crashed the app.
 - The launcher works around firmware 6.11 refusing to load `libinkview.so`.
@@ -306,6 +320,8 @@ collection_path = "/mnt/ext1/applications/pbanki/collection"
 [display]
 # Card text size in screen pixels, 12 to 40
 font_size = 20
+# White text on a black background (Settings: Dark)
+dark_mode = false
 
 [ankiweb]
 username = ""
@@ -340,7 +356,7 @@ For a sample collection with a few cards of each kind: `cargo run -p common --ex
 
 ### Emulator
 
-`cargo run -p dev --bin emulator -- <app dir> <output dir> <steps...>` runs the real UI headlessly as it appears on a PocketBook Verse and saves PNG screenshots. Steps are `shot:<name>`, `tap:<x>,<y>`, `swipe:<x1>,<y1>,<x2>,<y2>`, `key:<left|right|up|down|pageup|pagedown|menu|return>`, `type:<text>` (what the next keyboard prompt returns) and `wait:<ms>`.
+`cargo run -p dev --bin emulator -- <app dir> <output dir> <steps...>` runs the real UI headlessly as it appears on a PocketBook Verse and saves PNG screenshots. Steps are `shot:<name>`, `tap:<x>,<y>`, `swipe:<x1>,<y1>,<x2>,<y2>`, `key:<left|right|up|down|pageup|pagedown|menu|return>`, `type:<text>` (what the next keyboard prompt returns) and `wait:<ms>`. The clock always reads 09:41 so screenshots don't change between runs; set `PBANKI_EMULATOR_12H=1` to see it as 9:41 AM.
 
 `docs/screenshots/render.sh` regenerates every screenshot in this README. The "before" images in `docs/screenshots/before/` were rendered from the original code and are kept as they are.
 

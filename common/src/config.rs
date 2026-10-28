@@ -27,11 +27,16 @@ pub struct GeneralConfig {
 pub struct DisplayConfig {
     /// Card text size in screen pixels.
     pub font_size: u32,
+    /// White text on a black background.
+    pub dark_mode: bool,
 }
 
 impl Default for DisplayConfig {
     fn default() -> Self {
-        Self { font_size: 20 }
+        Self {
+            font_size: 20,
+            dark_mode: false,
+        }
     }
 }
 
@@ -110,6 +115,8 @@ collection_path = "/mnt/ext1/applications/pbanki/collection"
 [display]
 # Card text size in screen pixels
 font_size = 20
+# White text on a black background
+dark_mode = false
 
 [ankiweb]
 # AnkiWeb synchronization settings
@@ -209,6 +216,7 @@ mod tests {
         assert!(!parsed.ankiweb.auto_sync);
         assert!(!parsed.ankiweb.sync_on_exit);
         assert_eq!(parsed.display.font_size, default.display.font_size);
+        assert!(!parsed.display.dark_mode);
         assert_eq!(parsed.ankiweb.token(), None);
     }
 
@@ -249,7 +257,10 @@ mod tests {
 
     #[test]
     fn font_size_is_clamped() {
-        let mut display = DisplayConfig { font_size: 2 };
+        let mut display = DisplayConfig {
+            font_size: 2,
+            ..DisplayConfig::default()
+        };
         assert_eq!(display.font_size(), 12);
         display.font_size = 99;
         assert_eq!(display.font_size(), 40);
@@ -277,6 +288,18 @@ mod tests {
     #[test]
     fn save_without_path_fails() {
         assert!(Config::default().save().is_err());
+    }
+
+    #[test]
+    fn dark_mode_is_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut config = Config::load_or_create(&path).unwrap();
+        assert!(!config.display.dark_mode);
+
+        config.display.dark_mode = true;
+        config.save().unwrap();
+        assert!(Config::load_or_create(&path).unwrap().display.dark_mode);
     }
 
     #[test]

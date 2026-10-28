@@ -1348,6 +1348,7 @@ version = "0.1.0"
 dependencies = [
  "anki",
  "anki_proto",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",

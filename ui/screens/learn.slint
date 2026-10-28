@@ -2,10 +2,12 @@ import { Constants } from "../constants.slint";
 import { DeckNode, CardNode, Page } from "../types.slint";
 import { Count } from "../components/deck.slint";
 import { InkButton } from "../components/ink_button.slint";
+import { Clock } from "../components/clock.slint";
 import { PageView } from "../components/page_view.slint";
 
 component TopBar {
     in property <CardNode> card;
+    in property <string> clock;
     callback home_clicked();
 
     height: Constants.top_bar_height;
@@ -21,6 +23,7 @@ component TopBar {
             Image {
                 width: Constants.top_bar_height * 0.7;
                 source: @image-url("../icons/home.svg");
+                colorize: Constants.ink;
             }
         }
 
@@ -30,6 +33,7 @@ component TopBar {
             font-family: Constants.font_family;
             font-size: Constants.font_size_content;
             font-weight: 700;
+            color: Constants.ink;
             overflow: elide;
             vertical-alignment: center;
         }
@@ -46,6 +50,10 @@ component TopBar {
             value: card.deck.due;
             bold: true;
         }
+
+        Clock {
+            time: clock;
+        }
     }
 }
 
@@ -55,6 +63,7 @@ export component LearnScreen {
     in-out property <bool> show_context;
     // Ignores the page keys while another screen covers this one
     in property <bool> paused;
+    in property <string> clock;
     property <bool> has_card: card.message == "";
     property <[Page]> pages: show_context ? card.context : show_answer ? card.answer : card.question;
     property <int> current-page: 0;
@@ -156,6 +165,7 @@ export component LearnScreen {
 
             TopBar {
                 card: card;
+                clock: clock;
                 home_clicked => {
                     home_clicked();
                 }
@@ -182,6 +192,7 @@ export component LearnScreen {
                     text: card.message;
                     font-family: Constants.font_family;
                     font-size: Constants.font_size_content;
+                    color: Constants.ink;
                     wrap: word-wrap;
                     horizontal-alignment: center;
                     vertical-alignment: center;
@@ -263,6 +274,7 @@ export component LearnScreen {
                     text: total-pages > 1 ? (current-page > 0 ? "‹ " : "  ") + (current-page + 1) + "/" + total-pages + (on_last_page ? "  " : " ›") : "";
                     font-family: Constants.font_family;
                     font-size: Constants.font_size_small;
+                    color: Constants.ink;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }

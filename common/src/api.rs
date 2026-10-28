@@ -105,6 +105,10 @@ pub struct PlatformHooks {
     pub sync: crate::SyncFn,
     /// Set when the app comes back to the foreground
     pub reopened: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// Current local time for the clock
+    pub clock: crate::clock::ClockFn,
+    /// Shows the clock as 2:05 PM instead of 14:05
+    pub twelve_hour_clock: bool,
 }
 
 impl Default for PlatformHooks {
@@ -115,6 +119,8 @@ impl Default for PlatformHooks {
             login: Arc::new(crate::sync::login_blocking),
             sync: Arc::new(crate::sync::sync_blocking),
             reopened: None,
+            clock: Rc::new(crate::clock::local_time),
+            twelve_hour_clock: false,
         }
     }
 }
@@ -126,6 +132,8 @@ pub fn setup_ui(ui: &MainWindow, config: &Config, hooks: PlatformHooks) {
     constants.set_min_font_size(*crate::config::FONT_SIZES.start() as i32);
     constants.set_max_font_size(*crate::config::FONT_SIZES.end() as i32);
     constants.set_font_size_px(config.display.font_size() as i32);
+    constants.set_dark_mode(config.display.dark_mode);
+    crate::clock::setup_clock(ui, hooks.clock.clone(), hooks.twelve_hour_clock);
 
     let shared_config = Rc::new(RefCell::new(config.clone()));
     let session = init_session(config);
@@ -309,6 +317,7 @@ fn setup_settings(
         ui.set_settings_username(config.ankiweb.username.as_str().into());
         ui.set_settings_password(config.ankiweb.password.as_str().into());
         ui.set_settings_font_size(config.display.font_size() as i32);
+        ui.set_settings_dark_mode(config.display.dark_mode);
         ui.set_settings_sync_on_startup(config.ankiweb.auto_sync);
         drop(config);
         let limits = session_for_open.as_ref().and_then(|session| {
@@ -446,8 +455,10 @@ fn setup_settings(
         }
         config.set_font_size(ui.get_settings_font_size().max(0) as u32);
         config.ankiweb.auto_sync = ui.get_settings_sync_on_startup();
-        ui.global::<Constants>()
-            .set_font_size_px(config.display.font_size as i32);
+        config.display.dark_mode = ui.get_settings_dark_mode();
+        let constants = ui.global::<Constants>();
+        constants.set_font_size_px(config.display.font_size as i32);
+        constants.set_dark_mode(config.display.dark_mode);
         if let Err(e) = config.save() {
             eprintln!("Failed to save settings: {e}");
         }

@@ -32,7 +32,9 @@ export global Constants {
     // Count columns in the deck list
     out property <length> count_width: Math.max(20px, font_size_content * 2.6);
 
-    out property <color> ink: #000000;
+    // White text on black; set from the config's display.dark_mode
+    in-out property <bool> dark_mode: false;
+    out property <color> ink: dark_mode ? #ffffff : #000000;
     out property <color> faded: #808080;
-    out property <color> paper: #ffffff;
+    out property <color> paper: dark_mode ? #000000 : #ffffff;
 }

@@ -30,10 +30,12 @@ context=678,850
 edit=295,850
 edit_text=379,400
 edit_next=564,946
-settings=640,50
+settings=555,50
 username=490,183
 password=490,252
 validate=627,320
+dark=626,705
+settings_save=564,944
 
 emulate shot:decks tap:$expand shot:decks_expanded
 emulate tap:$everything shot:everything
@@ -53,9 +55,12 @@ emulate tap:$settings shot:settings \
     type:reader@example.com tap:$username type:wrong tap:$password shot:login_edited \
     tap:$validate wait:300 shot:login_failed \
     type:correct-password tap:$password tap:$validate wait:300 shot:login_passed
+emulate tap:$settings tap:$dark shot:settings_dark tap:$settings_save shot:decks_dark \
+    tap:$expand tap:$basics tap:$show shot:answer_dark
+PBANKI_EMULATOR_12H=1 target/debug/emulator "$tmp/app" "$out" tap:$everything shot:clock_12h >/dev/null
 
 # AnkiWeb sync, against the emulator's stand-in for AnkiWeb
-sync=462,50
+sync=378,50
 toggle=626,388
 save=564,944
 keep_ankiweb=194,256

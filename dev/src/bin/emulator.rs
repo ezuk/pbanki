@@ -15,6 +15,8 @@
 //!   wait:<ms>       let timers and background work run
 //!   reopen:<file>   queue <file> as the KOReader inbox, then bring the app
 //!                   back to the foreground
+//!
+//! The clock always reads 09:41; set `PBANKI_EMULATOR_12H` to show it as 9:41 AM.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -97,6 +99,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }),
         sync: std::sync::Arc::new(fake_sync),
         reopened: Some(reopened.clone()),
+        // A fixed time keeps screenshots repeatable
+        clock: Rc::new(|| common::clock::LocalTime {
+            hour: 9,
+            minute: 41,
+            second: 0,
+        }),
+        twelve_hour_clock: std::env::var_os("PBANKI_EMULATOR_12H").is_some(),
     };
     setup_ui(&ui, &config, hooks);
     ui.show()?;

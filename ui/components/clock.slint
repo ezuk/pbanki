@@ -1,0 +1,20 @@
+import { Constants } from "../constants.slint";
+
+// Current time in the top-right corner, set by the app every minute
+export component Clock {
+    in property <string> time;
+
+    HorizontalLayout {
+        padding-left: Constants.spacing;
+
+        Text {
+            text: time;
+            font-family: Constants.font_family;
+            font-size: Constants.font_size_small;
+            font-weight: 700;
+            color: Constants.ink;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+    }
+}

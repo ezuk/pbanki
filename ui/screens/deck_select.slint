@@ -1,5 +1,6 @@
 import { Count, Deck } from "../components/deck.slint";
 import { InkButton } from "../components/ink_button.slint";
+import { Clock } from "../components/clock.slint";
 import { Constants } from "../constants.slint";
 import { DeckNode } from "../types.slint";
 
@@ -8,6 +9,7 @@ component Header {
     in property <int> learn_total;
     in property <int> due_total;
     in property <bool> syncing;
+    in property <string> clock;
     callback sync_clicked();
     callback settings_clicked();
 
@@ -21,6 +23,7 @@ component Header {
                 font-family: Constants.font_family;
                 font-size: Constants.font_size_heading;
                 font-weight: 800;
+                color: Constants.ink;
                 vertical-alignment: center;
             }
 
@@ -48,6 +51,10 @@ component Header {
                         settings_clicked();
                     }
                 }
+
+                Clock {
+                    time: clock;
+                }
             }
         }
 
@@ -57,6 +64,7 @@ component Header {
                 text: new_total + learn_total + due_total == 0 ? "No cards are due yet." : "";
                 font-family: Constants.font_family;
                 font-size: Constants.font_size_small;
+                color: Constants.ink;
                 vertical-alignment: bottom;
             }
 
@@ -114,6 +122,7 @@ component SyncBar {
                 font-family: Constants.font_family;
                 font-size: Constants.font_size_small;
                 font-weight: busy || failed || choice ? 700 : 400;
+                color: Constants.ink;
                 wrap: word-wrap;
             }
 
@@ -176,6 +185,7 @@ export component DeckSelectScreen {
     in property <bool> sync_upload_ok;
     in property <bool> sync_download_ok;
     in-out property <string> sync_confirm;
+    in property <string> clock;
 
     callback sync_clicked();
     callback full_sync(upload: bool);
@@ -193,6 +203,7 @@ export component DeckSelectScreen {
             learn_total: learn_total;
             due_total: due_total;
             syncing: syncing;
+            clock: clock;
             sync_clicked => {
                 sync_clicked();
             }

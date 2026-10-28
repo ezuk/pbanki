@@ -46,6 +46,7 @@ export component Deck {
                 Image {
                     width: Constants.indent;
                     source: deck.collapsed ? @image-url("../icons/angle_right.svg") : @image-url("../icons/angle_down.svg");
+                    colorize: Constants.ink;
                 }
             }
         }
@@ -56,6 +57,7 @@ export component Deck {
             font-family: Constants.font_family;
             font-size: Constants.font_size_content;
             font-weight: deck.level == 1 ? 700 : 400;
+            color: Constants.ink;
             overflow: elide;
             vertical-alignment: center;
         }

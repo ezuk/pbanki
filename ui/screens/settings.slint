@@ -62,6 +62,7 @@ component Field {
             text: label;
             font-family: Constants.font_family;
             font-size: Constants.font_size_small;
+            color: Constants.ink;
             vertical-alignment: center;
         }
 
@@ -103,6 +104,7 @@ component Stepper {
             text: label;
             font-family: Constants.font_family;
             font-size: Constants.font_size_small;
+            color: Constants.ink;
             vertical-alignment: center;
         }
 
@@ -121,6 +123,7 @@ component Stepper {
             font-family: Constants.font_family;
             font-size: Constants.font_size_content;
             font-weight: 700;
+            color: Constants.ink;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
@@ -142,6 +145,7 @@ export component SettingsScreen {
     in-out property <string> password;
     // Card text size in device pixels
     in-out property <int> font_size;
+    in-out property <bool> dark_mode;
     in-out property <bool> sync_on_startup;
     // Anki's daily limits, shown when the collection is open
     in property <bool> limits_available;
@@ -149,6 +153,7 @@ export component SettingsScreen {
     in-out property <int> reviews_per_day;
     in property <LoginState> login_state;
     in property <string> login_message;
+    property <color> sample_ink: dark_mode ? #ffffff : #000000;
     property <bool> can_save: login_state == LoginState.unchanged || login_state == LoginState.cleared || login_state == LoginState.passed;
 
     callback request_text(field: string);
@@ -169,6 +174,7 @@ export component SettingsScreen {
                 font-family: Constants.font_family;
                 font-size: Constants.font_size_heading;
                 font-weight: 800;
+                color: Constants.ink;
             }
 
             Rectangle {
@@ -245,6 +251,7 @@ export component SettingsScreen {
                     text: "Sync on startup";
                     font-family: Constants.font_family;
                     font-size: Constants.font_size_small;
+                    color: Constants.ink;
                     vertical-alignment: center;
                 }
 
@@ -289,7 +296,7 @@ export component SettingsScreen {
             spacing: Constants.spacing;
 
             SectionTitle {
-                text: "TEXT SIZE";
+                text: "DISPLAY";
             }
 
             HorizontalLayout {
@@ -311,6 +318,7 @@ export component SettingsScreen {
                     font-family: Constants.font_family;
                     font-size: Constants.font_size_content;
                     font-weight: 700;
+                    color: Constants.ink;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
@@ -323,11 +331,22 @@ export component SettingsScreen {
                         font_size = Math.min(Constants.max_font_size, font_size + 2);
                     }
                 }
+
+                InkButton {
+                    width: 30%;
+                    text: dark_mode ? "Dark: On" : "Dark: Off";
+                    font-size: Constants.font_size_small;
+                    clicked => {
+                        dark_mode = !dark_mode;
+                    }
+                }
             }
 
-            // Sample card at the chosen size
+            // Sample card at the chosen size and colors
             Rectangle {
                 vertical-stretch: 1;
+                min-height: 0;
+                background: dark_mode ? #000000 : #ffffff;
                 border-width: Constants.border;
                 border-color: Constants.faded;
                 border-radius: Constants.radius;
@@ -342,19 +361,21 @@ export component SettingsScreen {
                         text: "What is the capital of France?";
                         font-family: Constants.font_family;
                         font-size: font_size * 1px / Constants.device_scale;
+                        color: sample_ink;
                         wrap: word-wrap;
                         horizontal-alignment: center;
                     }
 
                     Rectangle {
                         height: Constants.border;
-                        background: Constants.ink;
+                        background: sample_ink;
                     }
 
                     Text {
-                        text: "Paris, on the Seine. It has been the capital since the 10th century.";
+                        text: "Paris, on the Seine.";
                         font-family: Constants.font_family;
                         font-size: font_size * 1px / Constants.device_scale;
+                        color: sample_ink;
                         wrap: word-wrap;
                         horizontal-alignment: center;
                     }

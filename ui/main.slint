@@ -20,6 +20,8 @@ export component MainWindow inherits Window {
     background: Constants.paper;
 
     in property <string> error_message;
+    // Current time for the top bars, e.g. 14:05 or 2:05 PM
+    in property <string> clock;
 
     in-out property <bool> learning;
     in-out property <CardNode> current_card;
@@ -37,6 +39,7 @@ export component MainWindow inherits Window {
     in-out property <string> settings_username;
     in-out property <string> settings_password;
     in-out property <int> settings_font_size;
+    in-out property <bool> settings_dark_mode;
     in property <LoginState> settings_login_state;
     in property <string> settings_login_message;
     in-out property <bool> settings_sync_on_startup;
@@ -90,11 +93,13 @@ export component MainWindow inherits Window {
                 text: "pbAnki";
                 font-size: Constants.font_size_heading;
                 font-weight: 800;
+                color: Constants.ink;
                 horizontal-alignment: center;
             }
             Text {
                 text: error_message;
                 font-size: Constants.font_size_content;
+                color: Constants.ink;
                 wrap: word-wrap;
                 horizontal-alignment: center;
             }
@@ -105,6 +110,7 @@ export component MainWindow inherits Window {
             username <=> settings_username;
             password <=> settings_password;
             font_size <=> settings_font_size;
+            dark_mode <=> settings_dark_mode;
             sync_on_startup <=> settings_sync_on_startup;
             limits_available: settings_limits_available;
             new_per_day <=> settings_new_per_day;
@@ -140,6 +146,7 @@ export component MainWindow inherits Window {
             sync_upload_ok: sync_upload_ok;
             sync_download_ok: sync_download_ok;
             sync_confirm <=> sync_confirm;
+            clock: clock;
             sync_clicked => {
                 sync();
             }
@@ -165,6 +172,7 @@ export component MainWindow inherits Window {
         if error_message == "" && !showing_settings && learning: LearnScreen {
             card: current_card;
             paused: editing;
+            clock: clock;
             home_clicked => {
                 update_deck_tree();
                 learning = false;
