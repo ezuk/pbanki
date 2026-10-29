@@ -99,6 +99,21 @@ Writing the answer yourself helps you remember it. Tick **Questions only** when 
   </tr>
 </table>
 
+While you write either side of a card, the highlight is off screen so you think rather than copy. Tap **Highlight** to look at it again, full screen and scrollable when it's long. **Close** takes you back to your half-written text, with the keyboard where it was.
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/koreader/53_back_highlight_button.png" width="240" alt="Writing an answer, with a Highlight button next to the Save button"></td>
+    <td><img src="docs/screenshots/koreader/50_highlight_shown.png" width="240" alt="The highlight shown full screen with a scroll bar and a Close button"></td>
+    <td><img src="docs/screenshots/koreader/54_back_after.png" width="240" alt="Back on the answer after closing the highlight, text and keyboard as before"></td>
+  </tr>
+  <tr>
+    <td>Mid-answer, tap Highlight.</td>
+    <td>Read or scroll the highlight.</td>
+    <td>Close: back where you were.</td>
+  </tr>
+</table>
+
 ### Definition cards
 
 Select a term of one to three words and the highlight menu offers **Suggest definition flashcards**. The AI defines the term the way the book uses it and makes a pair of cards: the term on the front with the definition on the back, and the definition on the front with the term on the back.

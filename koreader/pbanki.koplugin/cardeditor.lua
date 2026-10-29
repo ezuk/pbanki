@@ -23,6 +23,7 @@ local LineWidget = require("ui/widget/linewidget")
 local ScrollTextWidget = require("ui/widget/scrolltextwidget")
 local Size = require("ui/size")
 local TextBoxWidget = require("ui/widget/textboxwidget")
+local TextViewer = require("ui/widget/textviewer")
 local TextWidget = require("ui/widget/textwidget")
 local TitleBar = require("ui/widget/titlebar")
 local UIManager = require("ui/uimanager")
@@ -546,6 +547,10 @@ function CardEditor:sideDialog(opts)
         })
     end
     table.insert(row, {
+        text = _("Highlight"),
+        callback = function() self:showHighlight(dialog) end,
+    })
+    table.insert(row, {
         text = opts.right.text,
         id = "done",
         is_enter_default = true,
@@ -565,6 +570,31 @@ function CardEditor:sideDialog(opts)
     UIManager:show(dialog)
     dialog:onShowKeyboard()
     return dialog
+end
+
+--- Shows the highlight full screen over `dialog`, scrollable when long.
+-- The keyboard is hidden meanwhile; the dialog keeps its text and cursor.
+function CardEditor:showHighlight(dialog)
+    local keyboard = dialog:isKeyboardVisible()
+    if keyboard then dialog:onCloseKeyboard() end
+    local viewer
+    viewer = TextViewer:new{
+        title = _("Highlight"),
+        text = self.highlight.text,
+        width = Screen:getWidth(),
+        height = Screen:getHeight(),
+        show_menu = false,
+        buttons_table = { {
+            {
+                text = _("Close"),
+                callback = function() viewer:onClose() end,
+            },
+        } },
+        close_callback = function()
+            if keyboard then dialog:onShowKeyboard() end
+        end,
+    }
+    UIManager:show(viewer)
 end
 
 function CardEditor:onClose()
