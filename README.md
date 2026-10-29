@@ -6,7 +6,7 @@ pbAnki is two pieces that work together on a PocketBook e-reader. A KOReader plu
 
 <p align="center"><img src="docs/screenshots/hero.png" alt="Four screens: highlight a passage in KOReader, the AI suggests two cards, study one in pbAnki, then see the passage it came from"></p>
 
-Most people who read seriously have the same problem. You highlight a passage because it matters, and a month later you can't remember what it said. Spaced repetition fixes that, but writing cards is slow, and doing it on a phone or laptop means leaving the book. With pbAnki you never leave the reader. Highlight, tap **Create flashcard**, keep the cards you like, and keep reading. Next time you open pbAnki, they're waiting in a deck named after the book, and each one can show you the passage it came from.
+You highlight a passage because it matters, and a month later you can't remember what it said. Spaced repetition fixes that, but writing cards is slow, and doing it on a phone or laptop means leaving the book. With pbAnki you never leave the reader. Highlight, tap **Create flashcard**, keep the cards you like, and keep reading. Next time you open pbAnki, they're waiting in a deck named after the book, and each one can show you the passage it came from.
 
 Built and tested on a **PocketBook Verse (PB629)**, firmware 6.11. Every screenshot here is a real render at that screen's resolution (758 × 1024, 16 shades of grey): the app's from the emulator in this repo, and the plugin's from KOReader itself running headless.
 
@@ -40,9 +40,9 @@ Select a passage in [KOReader](https://koreader.rocks) and tap **Create flashcar
 
 ### An AI that writes cards the way you do
 
-Suggestions come from the [AI Assistant](https://github.com/omer-faruq/assistant.koplugin) plugin, using whichever model you choose. The prompt is tuned for good flashcards. Questions are short and specific, answers are a few words, each card asks about something different, and a list in the text becomes one card that asks for the list.
+Suggestions come from the [AI Assistant](https://github.com/omer-faruq/assistant.koplugin) plugin, using whichever model you choose. Its prompt asks for short, specific questions with answers of a few words, a different idea on each card, and one card that asks for a list when the text has one.
 
-The AI reads more than the highlight. It sees the book, the chapter, about 150 words on each side of the passage, and the note you left on the highlight, which steers what it asks about. It also sees the last cards you saved from the same book, including how you rewrote its earlier suggestions, and copies your style. Tap **Suggest more** to add up to 10 more cards below the ones you have. It avoids repeating what you kept and learns from the ones you removed. Before it asks, you can type a short hint, like "ask about the numbers", or leave it empty.
+Besides the highlight, the AI sees the book, the chapter, about 150 words on each side of the passage, and the note you left on the highlight, which steers what it asks about. It also sees the last cards you saved from the same book, including how you rewrote its earlier suggestions, and copies your style. Tap **Suggest more** to add up to 10 more cards below the ones you have. It avoids repeating what you kept and learns from the ones you removed. Before it asks, you can type a short hint, like "ask about the numbers", or leave it empty.
 
 ### A whole book's highlights in one sitting
 
@@ -300,7 +300,7 @@ If AnkiWeb can't merge the two collections (after a reset on another device, for
 
 ### Settings
 
-**Daily limits** set how many new cards and reviews you get each day, as in Anki's deck options. They're saved to your Anki presets and sync to your other devices, so making 100 cards from one book doesn't give you 100 new cards tomorrow. Text size and dark mode have a live preview on a sample card. You type your AnkiWeb login on the PocketBook keyboard, and **Validate** tries it against AnkiWeb before you can save. A wrong password shows up right there, not at your first sync.
+**Daily limits** set how many new cards and reviews you get each day, as in Anki's deck options. They're saved to your Anki presets and sync to your other devices, so making 100 cards from one book doesn't give you 100 new cards tomorrow. Text size and dark mode have a live preview on a sample card. You type your AnkiWeb login on the PocketBook keyboard, and **Validate** tries it against AnkiWeb before you can save, so a wrong password shows up before your first sync.
 
 <table>
   <tr>
@@ -353,7 +353,7 @@ Not ready yet. Firmware 6.x lists apps from `system/config/desktop/view.json`, a
 
 Copy `koreader/pbanki.koplugin` to `applications/koreader/plugins/` and restart KOReader. Highlight text, then tap **Create flashcard**, or open **Tools → pbAnki flashcards → Flashcards from highlights**. The same menu turns AI suggestions, cloze suggestions and questions-only suggestions on and off, sets the most cards the AI may write per highlight in batch mode (1 to 10, default 3), picks the AI model and AI prompt, and can make all of a book's highlights new again. Batch mode can also be put on a gesture.
 
-Cards are queued in `applications/pbanki/inbox.jsonl` and imported when pbAnki starts or when you return to the deck list. If a line can't be imported, it is kept in `inbox.failed.jsonl` rather than dropped.
+Cards are queued in `applications/pbanki/inbox.jsonl` and imported when pbAnki starts or when you return to the deck list. A line that can't be imported is saved to `inbox.failed.jsonl`.
 
 AI suggestions need the AI Assistant plugin with a version that has the flashcards API (`queryFlashcards`). The AI model menu opens Assistant's own provider and model picker; until you pick one, Assistant's main provider is used. When a suggestion is needed and the reader is offline, Wi-Fi is turned on.
 
