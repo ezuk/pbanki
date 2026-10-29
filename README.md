@@ -99,7 +99,9 @@ Writing the answer yourself helps you remember it. Tick **Questions only** when 
   </tr>
 </table>
 
-While you write either side of a card, the highlight is off screen so you think rather than copy. Tap **Highlight** to look at it again, full screen and scrollable when it's long. **Close** takes you back to your half-written text, with the keyboard where it was.
+### Seeing the highlight while you write
+
+The highlight isn't on screen while you write a card, so the answer has to come from memory. When you need it, tap **Highlight** on either side of the card to see it full screen; a long one scrolls. **Close** returns you to your half-written text with the keyboard still open.
 
 <table>
   <tr>
