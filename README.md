@@ -349,7 +349,7 @@ Not ready yet. Firmware 6.x lists apps from `system/config/desktop/view.json`, a
 
 ### KOReader plugin
 
-Copy `koreader/pbanki.koplugin` to `applications/koreader/plugins/` and restart KOReader. Highlight text, then tap **Create flashcard**, or open **Tools → pbAnki flashcards → Flashcards from highlights**. The same menu turns AI suggestions and cloze suggestions on and off, sets the most cards the AI may write per highlight in batch mode (1 to 10, default 3), picks the AI model and AI prompt, and can make all of a book's highlights new again. Batch mode can also be put on a gesture.
+Copy `koreader/pbanki.koplugin` to `applications/koreader/plugins/` and restart KOReader. Highlight text, then tap **Create flashcard**, or open **Tools → pbAnki flashcards → Flashcards from highlights**. The same menu turns AI suggestions, cloze suggestions and questions-only suggestions on and off, sets the most cards the AI may write per highlight in batch mode (1 to 10, default 3), picks the AI model and AI prompt, and can make all of a book's highlights new again. Batch mode can also be put on a gesture.
 
 Cards are queued in `applications/pbanki/inbox.jsonl` and imported when pbAnki starts or when you return to the deck list. If a line can't be imported, it is kept in `inbox.failed.jsonl` rather than dropped.
 
