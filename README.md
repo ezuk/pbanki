@@ -82,6 +82,23 @@ You can make them by hand too. On the card's front, the **{{…}} Cloze** button
   </tr>
 </table>
 
+### Questions only
+
+Writing the answer yourself helps you remember it. Tick **Questions only** when you ask for suggestions and the AI writes questions with no answers. Remove the ones that don't matter to you. When you tap **Save**, the plugin opens each remaining question in turn so you can type its answer, and saves once every card has one. For batch mode, turn on **Suggest questions only** in the menu. Cloze and Questions only can't both be on: ticking one turns the other off.
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/koreader/44_questions_only_on.png" width="240" alt="The Cards to suggest dialog with Questions only ticked"></td>
+    <td><img src="docs/screenshots/koreader/46_question_removed.png" width="240" alt="Suggested questions without answers in the card editor"></td>
+    <td><img src="docs/screenshots/koreader/48_answer_second.png" width="240" alt="Typing the answer to a suggested question before saving"></td>
+  </tr>
+  <tr>
+    <td>Tick Questions only before you ask.</td>
+    <td>Keep the questions you care about.</td>
+    <td>Save asks you to answer each one.</td>
+  </tr>
+</table>
+
 ### Definition cards
 
 Select a term of one to three words and the highlight menu offers **Suggest definition flashcards**. The AI defines the term the way the book uses it and makes a pair of cards: the term on the front with the definition on the back, and the definition on the front with the term on the back.

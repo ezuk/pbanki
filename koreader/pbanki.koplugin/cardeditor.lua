@@ -335,9 +335,13 @@ function CardEditor:onSwipe(_arg, ges)
     end
 end
 
+local function saveText(count)
+    return count > 1 and T(_("Save %1 cards"), count) or _("Save card")
+end
+
 function CardEditor:buttonRows()
     local count = #self.cards
-    local save_text = count > 1 and T(_("Save %1 cards"), count) or _("Save card")
+    local save_text = saveText(count)
     local tools = {
         {
             text = count > 0 and _("Suggest more") or _("Suggest"),
@@ -368,7 +372,7 @@ function CardEditor:buttonRows()
             {
                 text = count > 0 and save_text .. " ›" or _("Save"),
                 enabled = count > 0,
-                callback = function() self.on_save(self, self.cards) end,
+                callback = function() self:save() end,
             },
         }
     else
@@ -380,11 +384,30 @@ function CardEditor:buttonRows()
             {
                 text = count > 0 and save_text or _("Save"),
                 enabled = count > 0,
-                callback = function() self.on_save(self, self.cards) end,
+                callback = function() self:save() end,
             },
         }
     end
     return { tools, actions }
+end
+
+--- Index of the first question card without an answer, or nil.
+function CardEditor:firstUnanswered(skip)
+    for i, card in ipairs(self.cards) do
+        if i ~= skip and card.back == "" and not cardgen.isCloze(card.front) then return i end
+    end
+end
+
+--- Saves the cards, after asking for the answer of each question that has none.
+function CardEditor:save()
+    local index = self:firstUnanswered()
+    if index then
+        self.focus_card = index
+        self:refresh()
+        self:editCard(index, true)
+        return
+    end
+    self.on_save(self, self.cards)
 end
 
 --- Replaces the cards shown.
@@ -436,7 +459,8 @@ function CardEditor:refresh()
 end
 
 --- Edits card `index`, or adds a new card when `index` is nil, front then
--- back on two full screens. With `save`, finishing saves the cards right away.
+-- back on two full screens. A question without an answer opens on the back.
+-- With `save`, finishing saves the cards right away.
 function CardEditor:editCard(index, save)
     local card = index and self.cards[index] or { front = "", back = "" }
     local front, back = card.front, card.back
@@ -448,9 +472,7 @@ function CardEditor:editCard(index, save)
             self.focus_card = #self.cards
         end
         self:refresh()
-        if save then
-            self.on_save(self, self.cards)
-        end
+        if save then self:save() end
     end
     local askFront, askBack
     askFront = function()
@@ -476,7 +498,9 @@ function CardEditor:editCard(index, save)
             input = back,
             hint = cardgen.isCloze(front) and _("Extra shown with the answer (optional)") or _("Answer"),
             left = { text = "‹ " .. _("Front") },
-            right = { text = save and _("Save card") or _("Done") },
+            right = { text = not save and _("Done")
+                or (self:firstUnanswered(index) and _("Next") .. " ›")
+                or saveText(#self.cards + (index and 0 or 1)) },
             on_left = function(text)
                 back = text
                 askFront()
@@ -487,7 +511,11 @@ function CardEditor:editCard(index, save)
             end,
         }
     end
-    askFront()
+    if card.back == "" and card.front ~= "" and not cardgen.isCloze(card.front) then
+        askBack()
+    else
+        askFront()
+    end
 end
 
 --- Shows one side of a card in a full-screen input with large text.

@@ -232,4 +232,20 @@ assert(guided:find("Write 2 cards", 1, true), "count still asked with guidance")
 assert(not cardgen.buildMessages({ text = "x" }, { count = 1 })[2].content:find("reader asked", 1, true),
     "no guidance section without guidance")
 
+-- Questions only
+local qoMessages = cardgen.buildMessages({ text = "x" }, { count = 3, questions_only = true })
+eq(qoMessages[1].content, cardgen.SYSTEM_PROMPT, "questions only uses the questions prompt")
+assert(qoMessages[2].content:find("Write only the questions", 1, true), "asks for questions only")
+assert(not cardgen.buildMessages({ text = "x" }, { count = 1, questions_only = true, cloze = true })[2]
+    .content:find("Write only the questions", 1, true), "cloze wins over questions only")
+local unanswered = cardgen.parseReply(two, { count = 2, questions_only = true }, { text = "x" }, decode)
+eq(unanswered[1].front, "Q1", "question kept")
+eq(unanswered[1].back, "", "answer dropped")
+assert(not cardgen.wasEdited({ front = "Q", back = "Mine", suggested = { front = "Q", back = "" } }),
+    "answering a question is not an edit")
+assert(cardgen.wasEdited({ front = "Q2", back = "Mine", suggested = { front = "Q", back = "" } }),
+    "rewording a question is an edit")
+assert(cardgen.wasEdited({ front = "A {{c1::b}}", back = "x", suggested = { front = "A {{c1::b}}", back = "" } }),
+    "adding a cloze extra is an edit")
+
 print("cardgen_spec: OK")

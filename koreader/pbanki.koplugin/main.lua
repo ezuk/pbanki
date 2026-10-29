@@ -13,12 +13,14 @@ imports into its "KOReader" deck.
 @module koplugin.pbanki
 --]]--
 
+local ButtonTable = require("ui/widget/buttontable")
 local CardEditor = require("cardeditor")
 local Dispatcher = require("dispatcher")
 local InputDialog = require("ui/widget/inputdialog")
 local InfoMessage = require("ui/widget/infomessage")
 local NetworkMgr = require("ui/network/manager")
 local Notification = require("ui/widget/notification")
+local Size = require("ui/size")
 local SpinWidget = require("ui/widget/spinwidget")
 local Trapper = require("ui/trapper")
 local UIManager = require("ui/uimanager")
@@ -60,6 +62,8 @@ function PbAnki:init()
     })
     -- The AI writes cloze cards instead of questions
     self.settings.cloze = self.settings.cloze or false
+    -- The AI writes questions only and the reader answers them
+    self.settings.questions_only = self.settings.questions_only or false
     -- Prompt folder books use unless they pick another
     self.settings.default_prompt = self.settings.default_prompt or prompts.STANDARD
     self:writeStandardPrompt()
@@ -127,11 +131,15 @@ function PbAnki:addToMainMenu(menu_items)
                 text = _("Suggest cloze cards"),
                 checked_func = function() return self.settings.cloze end,
                 enabled_func = function() return self:assistant() ~= nil end,
-                callback = function()
-                    self.settings.cloze = not self.settings.cloze
-                    self:saveSettings()
-                end,
+                callback = function() self:toggleCardKind("cloze") end,
                 help_text = _("The AI writes sentences with the answer hidden, like \"Self-control needs the [pause-and-plan] response\", instead of questions. Also set by the Cloze button when asking for suggestions."),
+            },
+            {
+                text = _("Suggest questions only"),
+                checked_func = function() return self.settings.questions_only end,
+                enabled_func = function() return self:assistant() ~= nil end,
+                callback = function() self:toggleCardKind("questions_only") end,
+                help_text = _("The AI writes questions without answers. Keep the ones that matter to you and type the answers yourself before saving. Also set by the Questions only button when asking for suggestions."),
             },
             {
                 text_func = function()
@@ -449,10 +457,32 @@ end
 
 -- AI suggestions
 
---- Asks how many cards to suggest and whether they are cloze cards, then
--- calls `fn(count)`. `on_write_own` adds a button to skip the AI.
+--- Turns setting `key` ("cloze" or "questions_only") on or off. Only one
+-- of them is on at a time.
+function PbAnki:toggleCardKind(key)
+    local on = not self.settings[key]
+    self.settings.cloze = false
+    self.settings.questions_only = false
+    self.settings[key] = on
+    self:saveSettings()
+end
+
+--- Asks how many cards to suggest and what kind, then calls `fn(count)`.
+-- `on_write_own` adds a button to skip the AI.
 function PbAnki:askCardCount(value, fn, on_write_own)
-    UIManager:show(SpinWidget:new{
+    local spin
+    -- Checkboxes: the dialog closes on tap, so it opens again with the new state
+    local function option(key, text)
+        return {
+            text = (self.settings[key] and "✓ " or "▢ ") .. text,
+            callback = function()
+                self:toggleCardKind(key)
+                UIManager:close(spin)
+                self:askCardCount(spin.value_widget:getValue(), fn, on_write_own)
+            end,
+        }
+    end
+    spin = SpinWidget:new{
         title_text = _("Cards to suggest"),
         value = value,
         value_min = 1,
@@ -463,15 +493,15 @@ function PbAnki:askCardCount(value, fn, on_write_own)
         cancel_text = _("Cancel"),
         extra_text = on_write_own and _("Write my own") or nil,
         extra_callback = on_write_own,
-        -- A checkbox: the dialog closes on tap, so it opens again with the new state
-        option_text = (self.settings.cloze and "✓ " or "▢ ") .. _("Cloze"),
-        option_callback = function(spin)
-            self.settings.cloze = not self.settings.cloze
-            self:saveSettings()
-            self:askCardCount(spin.value, fn, on_write_own)
-        end,
-        callback = function(spin) fn(spin.value) end,
+        callback = function(s) fn(s.value) end,
+    }
+    spin:addWidget(ButtonTable:new{
+        width = spin.width - 2 * Size.padding.default,
+        buttons = { { option("cloze", _("Cloze")), option("questions_only", _("Questions only")) } },
+        zero_sep = true,
+        show_parent = spin,
     })
+    UIManager:show(spin)
 end
 
 --- Asks for optional guidance for the AI, kept on `editor`, then calls `fn`.
@@ -506,7 +536,7 @@ function PbAnki:askGuidance(editor, fn)
     dialog:onShowKeyboard()
 end
 
---- `request` with the book's prompt, card history and the cloze setting added.
+--- `request` with the book's prompt, card history and the kind of card added.
 function PbAnki:fullRequest(request)
     local full = {}
     for key, value in pairs(request) do full[key] = value end
@@ -514,6 +544,7 @@ function PbAnki:fullRequest(request)
     if not request.definition then
         full.recent = cardgen.pickRecent(self:cardHistory(), HISTORY_SHOWN)
         full.cloze = self.settings.cloze
+        full.questions_only = self.settings.questions_only
     end
     return full
 end

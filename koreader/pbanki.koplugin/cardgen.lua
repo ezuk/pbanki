@@ -50,7 +50,7 @@ local function line(label, value)
 end
 
 local function cardLine(card)
-    if M.isCloze(card.front) and card.back == "" then return card.front end
+    if card.back == "" then return card.front end
     return card.front .. " → " .. card.back
 end
 
@@ -84,9 +84,12 @@ function M.clozeMark(before, all)
 end
 
 --- Whether the reader changed an AI card, which keeps its original text in `suggested`.
+-- Answering a question the AI left unanswered is not a change.
 function M.wasEdited(card)
     local s = card.suggested
-    return s ~= nil and (s.front ~= card.front or s.back ~= card.back)
+    if s == nil then return false end
+    if s.front ~= card.front then return true end
+    return s.back ~= card.back and (s.back ~= "" or M.isCloze(s.front))
 end
 
 --- `body` inside <tag> … </tag>, after an optional `intro` line.
@@ -94,6 +97,14 @@ local function tagged(tag, body, intro)
     local block = "<" .. tag .. ">\n" .. body .. "\n</" .. tag .. ">"
     if intro then return intro .. "\n" .. block end
     return block
+end
+
+local QUESTIONS_ONLY_INSTRUCTION = "Write only the questions and leave every back empty (\"\"). "
+    .. "The reader picks the questions that matter to them and answers them in their own words."
+
+--- Whether `request` asks for questions without answers.
+function M.questionsOnly(request)
+    return request.questions_only == true and M.requestKind(request) == "questions"
 end
 
 --- Messages for Assistant's querier: the Book Companion first, then the
@@ -105,6 +116,7 @@ end
 -- optional `rejected`, a list of {front, back} suggestions the reader removed;
 -- optional `recent`, entries from the book's card history (see M.historyEntry);
 -- optional `cloze`, true for cloze cards;
+-- optional `questions_only`, true for questions the reader answers themselves;
 -- optional `definition`, true for a term and definition pair (see M.parseDefinition);
 -- optional `guidance`, the reader's own instructions for these cards
 -- optional `prompt`, instructions by kind of card (see M.systemPrompt)
@@ -184,6 +196,9 @@ function M.buildMessages(h, request, companion, position_note)
     if request.guidance and request.guidance ~= "" then
         table.insert(parts, tagged("reader_request", request.guidance, "The reader asked for these cards:")
             .. "\nFollow it, within the rules above.")
+    end
+    if M.questionsOnly(request) then
+        table.insert(parts, QUESTIONS_ONLY_INSTRUCTION)
     end
     if not request.definition then
         table.insert(parts, M.countInstruction(request))
@@ -409,7 +424,7 @@ end
 
 --- Cards from a reply to `request` (see M.buildMessages) for highlight `h`.
 -- Cloze cards that do not quote the book are dropped; the rest cover the
--- whole highlight.
+-- whole highlight. Questions-only cards come without answers.
 -- @return cards, or nil and an error message
 function M.parseReply(text, request, h, decode)
     if request.definition then
@@ -417,7 +432,11 @@ function M.parseReply(text, request, h, decode)
     end
     local limit = M.cardLimit(request)
     if not request.cloze then
-        return M.parseCards(text, limit, decode)
+        local cards, err = M.parseCards(text, limit, decode)
+        if cards and M.questionsOnly(request) then
+            for _idx, card in ipairs(cards) do card.back = "" end
+        end
+        return cards, err
     end
     local cards, err = M.parseCards(text, nil, decode)
     if not cards then return nil, err end
