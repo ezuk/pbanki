@@ -99,5 +99,64 @@ class DeviceTests(unittest.TestCase):
                 device.remount("/Volumes/PB629")
 
 
+class InPlaceWriteTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / "file.jsonl"
+
+    def writes_from(self, data):
+        """Writes `data` through _flush_to_disk and returns where in the file it started writing."""
+        seeks = []
+        real = device.os.fdopen
+
+        def fdopen(fd, mode):
+            f = real(fd, mode)
+
+            class Spy:
+                def __getattr__(self, name):
+                    return getattr(f, name)
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_args):
+                    f.close()
+
+                def seek(self, at):
+                    seeks.append(at)
+                    return f.seek(at)
+
+            return Spy()
+
+        with mock.patch.object(device.os, "fdopen", fdopen):
+            device._flush_to_disk(self.path, data)
+        return seeks[0]
+
+    def test_a_new_file_is_written_whole(self):
+        self.assertEqual(self.writes_from(b"abc\n"), 0)
+        self.assertEqual(self.path.read_bytes(), b"abc\n")
+
+    def test_appending_leaves_what_is_there_alone(self):
+        self.path.write_bytes(b"old\n")
+        self.assertEqual(self.writes_from(b"old\nnew\n"), 4)
+        self.assertEqual(self.path.read_bytes(), b"old\nnew\n")
+
+    def test_a_cut_off_end_is_replaced_from_where_it_differs(self):
+        self.path.write_bytes(b'old\n{"fr')
+        self.assertEqual(self.writes_from(b'old\n{"x":1}\n'), 6)
+        self.assertEqual(self.path.read_bytes(), b'old\n{"x":1}\n')
+
+    def test_shorter_contents_shrink_the_file(self):
+        self.path.write_bytes(b"old\nlonger and longer\n")
+        self.writes_from(b"old\n")
+        self.assertEqual(self.path.read_bytes(), b"old\n")
+
+    def test_nothing_new_writes_nothing(self):
+        self.path.write_bytes(b"same\n")
+        self.assertEqual(self.writes_from(b"same\n"), 5)
+        self.assertEqual(self.path.read_bytes(), b"same\n")
+
+
 if __name__ == "__main__":
     unittest.main()

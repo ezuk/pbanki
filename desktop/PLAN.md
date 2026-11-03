@@ -94,7 +94,7 @@ Text extraction yields ordered blocks (paragraphs, headings, list items, blockqu
 
 `ai_context(loc, mode)` returns `(before, after)` text for `600 words each side` (default), `The chapter` or `The whole book`. Chapter boundaries come from the table of contents, falling back to the spine document.
 
-Chapters: each highlight's chapter is its annotation `chapter` (or the table-of-contents entry for its location). The chapter number is its 1-based position among top-level table-of-contents entries. Display name: the title as written when it already starts with a number or "Chapter"; otherwise `N · Title` in lists and `Chapter N: Title` on cards. Connections always name both number and title.
+Chapters: each highlight's chapter is its annotation `chapter` (or the table-of-contents entry for its location). A table-of-contents entry that only holds chapters, like a part or the book's title in Standard Ebooks and collections, is not itself a chapter: its sub-entries are, to any depth. An entry is such a part when its sub-entries start in more than one spine document or in a different one from it, or, within one document, when it has under 150 words of its own and its sub-entries average 1000 words or more; a title starting with a number or "Chapter" is always a chapter, with its sub-entries as sections. The chapter number is its 1-based position among chapters, and a part has none. Chapter context and passages end at the next chapter or part. Display name: the title as written when it already starts with a number, a Roman numeral or "Chapter"; otherwise `N · Title` in lists and `Chapter N: Title` on cards. Connections always name both number and title.
 
 ## 5. Prompts (`prompts.py`)
 
@@ -125,9 +125,14 @@ Companion text sent per highlight follows the setting: `Overview + chapter` (def
 claude -p --model <id> --setting-sources "" --strict-mcp-config --disable-slash-commands
        --tools "" --no-session-persistence --output-format json --system-prompt <system>
        (user message on stdin)
-codex exec -m <id> --skip-git-repo-check --sandbox read-only --ephemeral -o <file> -
+codex exec -m <id> --skip-git-repo-check --sandbox read-only --ephemeral
+       --ignore-user-config --ignore-rules --disable <each feature in ai.py's _CODEX_OFF>
+       -c mcp_servers={} -c web_search="disabled" -c project_doc_max_bytes=0
+       -c skills.include_instructions=false -o <file> -
        (system and user joined on stdin, answer read from <file>)
 ```
+
+Plain `codex exec --sandbox read-only` leaves the model a working shell that can read any file on the Mac, and loads the user's hooks and MCP servers. Codex 0.160.1 has no switch that sends an empty tool list, so the features are turned off one by one. What remains (its `exec` tool, which fails closed with `code_mode_host` off, and sub-agents, which fail under `--ephemeral`) can't run commands, read files or reach the network, checked with a real run. `test_ai.py` checks the list against what the installed Codex really sends to a local stand-in for the API, so a Codex update that adds a tool fails a test.
 
 `--bare` must not be used: it ignores the signed-in account and fails with "Not logged in". For Claude, `is_error` true in the JSON is a failure and `result` is the answer. Both run with the working directory set to an empty temporary folder, without a shell, with a timeout (default 300 s) and can be cancelled. Failures become plain sentences stored on the highlight and shown there, never a raw stack trace.
 
@@ -160,7 +165,7 @@ Assistant detection reports path and version from `--version`. Models: Claude Co
 - `runs(book_id, status, options_json, progress_json, updated_at)`.
 - `settings(key, value_json)`.
 
-Editing a card marks AI-written ones `AI, edited`, except that answering a question the AI left blank isn't an edit, same as `wasEdited`. Reviewed status for display is the sidecar's `pbanki_reviewed`, plus keys in the reader's `reviewed.jsonl`, plus keys in batches not yet verified on the reader. Local saved cards do not count on their own, so "Review this book's highlights again" on the reader makes them pending here too.
+Editing a card marks AI-written ones `AI, edited`, except that answering a question the AI left blank isn't an edit, same as `wasEdited`. Reviewed status for display is the sidecar's `pbanki_reviewed`, plus keys in the reader's `reviewed.jsonl`, plus keys in batches not yet verified on the reader. With the reader unplugged that file can't be read, so `reader_reviewed(book_id, key)` keeps its keys as last seen, plus those of batches verified since. Local saved cards do not count on their own, so "Review this book's highlights again" on the reader makes them pending here too, the next time the reader is plugged in.
 
 ## 9. Save (`save.py`)
 
@@ -184,7 +189,7 @@ Pipeline for one batch, each step recorded so a crash resumes safely:
 
 1. Write the batch to SQLite: `backed_up`. Drafts become `saved` here so they can't be saved twice.
 2. If the reader is unplugged, stop and show the mock's waiting state. A background watcher continues when the mount appears, and also on app start.
-3. Re-read `inbox.jsonl` and `reviewed.jsonl`, and work out the new contents, appending only lines whose batch isn't already there: `written` once `device.write_files` has been handed both files together.
+3. Re-read `inbox.jsonl` and `reviewed.jsonl`, and work out the new contents, appending only lines whose batch isn't already there: `written` once `device.write_files` has been handed both files together. Bytes before the first difference are never rewritten, so a write cut off part way can't damage older lines. A retry of a `written` batch also leaves out lines pbAnki has already imported, found by comparing against the notes in a copy of `applications/pbanki/collection/collection.anki2`, since an import removes the inbox and a failed check doesn't stop the user opening pbAnki. A last line that is cut off and isn't valid JSON is dropped. `save` finishes every book's older batches first.
 4. `device.write_files` does the remount and read-back: `verified`. Failure reports its plain sentence, with the batch kept safe and a Try again button. The mount watcher holds `device.remount_lock`, so this brief absence isn't shown as unplugged.
 5. Refresh the book's status. Report the counts shown on the Saved screen.
 

@@ -59,9 +59,14 @@ def _full_sync(fd):
 
 
 def _flush_to_disk(path, data):
+    """Writes only from where `data` differs from the file, so a write cut off part way
+    can't touch the lines already there."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "wb") as f:
-        f.write(data)
+    keep = len(os.path.commonprefix([_on_disk(path) or b"", data]))
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT, 0o666), "wb") as f:
+        f.seek(keep)
+        f.write(data[keep:])
+        f.truncate(len(data))
         f.flush()
         _full_sync(f.fileno())
     dir_fd = os.open(path.parent, os.O_RDONLY)
