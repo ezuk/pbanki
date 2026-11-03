@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shlex
+import signal
 import stat
 import subprocess
 import sys
@@ -498,9 +499,11 @@ class CreateTest(Folders):
         self.assertEqual(checked.returncode, 0, checked.stderr)
         lines = Path(made["script"]).read_text(encoding="utf-8").split("\n")
         self.assertEqual(lines[0], "#!/bin/bash")
-        parsed_cd = shlex.split(lines[1])
+        self.assertEqual(shlex.split(lines[1]), ["script=" + made["script"]])
+        self.assertEqual(lines[2], "trap 'rm -f \"$script\"' EXIT")
+        parsed_cd = shlex.split(lines[3])
         self.assertEqual(parsed_cd[:2], ["cd", str(self.assistant)])
-        parsed = shlex.split(lines[2])
+        parsed = shlex.split(lines[4])
         self.assertEqual(parsed[0], str(FAKE_AI / "claude"))
         self.assertEqual(len(parsed), 2)
         # Really run it, against the fake claude
@@ -698,6 +701,105 @@ class OddTitleTest(unittest.TestCase):
     def test_the_numbered_heading_still_matches_a_bare_roman_i(self):
         text = "## 3. Chapters\n### I Love You\nnotes one\n### Chapter 1: One\nnotes two\n"
         self.assertEqual(companion.chapter_block(text, "I")["body"], "notes two")
+
+
+class CutOffCopyTest(Folders):
+    def finished(self):
+        device_path = self.book()
+        companion.create(device_path, self.mount)
+        output = companion._work_output(device_path)
+        output.write_text("# Notes\n\n" + "### Chapter\n\n- Point.\n\n" * 50, encoding="utf-8")
+        return device_path, output
+
+    def cut_off(self, device_path):
+        real_flush = device._flush_to_disk
+
+        def flush(path, data):
+            real_flush(path, data[:20])
+            raise OSError(5, "Input/output error")
+
+        with mock.patch.object(device, "_flush_to_disk", flush):
+            with self.assertRaises(device.DeviceWriteError):
+                companion.copy_to_reader(device_path, self.mount)
+
+    def test_a_cut_off_copy_does_not_count_as_the_companion(self):
+        device_path, _ = self.finished()
+        self.cut_off(device_path)
+        self.assertEqual((self.mount / "English" / "Book.companion.md").stat().st_size, 20)
+        self.assertFalse(companion.find(device_path, self.mount)["found"])
+        self.assertTrue(companion.copy_cut_off(device_path))
+        self.assertEqual(companion.creation_status(device_path)["stage"], "found")
+
+    def test_a_copy_killed_part_way_does_not_count_either(self):
+        device_path, _ = self.finished()
+        real_flush = device._flush_to_disk
+
+        def flush(path, data):
+            real_flush(path, data[:20])
+            raise KeyboardInterrupt
+
+        with mock.patch.object(device, "_flush_to_disk", flush):
+            with self.assertRaises(KeyboardInterrupt):
+                companion.copy_to_reader(device_path, self.mount)
+        self.assertFalse(companion.find(device_path, self.mount)["found"])
+
+    def test_copying_again_repairs_it(self):
+        device_path, output = self.finished()
+        self.cut_off(device_path)
+        companion.copy_to_reader(device_path, self.mount)
+        found = companion.find(device_path, self.mount)
+        self.assertEqual(found["where"], "reader")
+        self.assertEqual(companion.read_text(found), output.read_text("utf-8"))
+        self.assertFalse(companion.copy_cut_off(device_path))
+
+    def test_keeping_it_after_a_cut_off_copy_uses_the_whole_file(self):
+        device_path, output = self.finished()
+        self.cut_off(device_path)
+        companion.keep_local(device_path)
+        found = companion.find(device_path, self.mount)
+        self.assertEqual(found["where"], "computer")
+        self.assertEqual(companion.read_text(found), output.read_text("utf-8"))
+
+
+class ScriptEndsTest(Folders):
+    def started(self, body):
+        """The real .command script under bash, with a stand-in for claude."""
+        device_path = self.book()
+        companion.create(device_path, self.mount)
+        script = companion.work_dir(device_path) / companion._SCRIPT_NAME
+        claude = self.mount.parent / "stand-in"
+        claude.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+        claude.chmod(0o755)
+        epub = companion.work_dir(device_path) / "Book.epub"
+        script.write_text(companion.script_text(epub, claude=claude), encoding="utf-8")
+        proc = subprocess.Popen(["/bin/bash", str(script)], start_new_session=True)
+        self.addCleanup(proc.wait)
+        return device_path, script, proc
+
+    def test_a_finished_session_stops_counting_as_running(self):
+        device_path, script, proc = self.started("exit 0")
+        self.assertEqual(proc.wait(timeout=20), 0)
+        self.assertFalse(script.exists())
+        self.assertEqual(companion.creation_status(device_path)["stage"], "none")
+
+    def test_a_closed_terminal_window_stops_counting_as_running(self):
+        ready = self.mount.parent / "ready"
+        device_path, script, proc = self.started(f'touch "{ready}"\nexec sleep 60')
+        deadline = time.monotonic() + 20
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertTrue(ready.exists())
+        self.assertEqual(companion.creation_status(device_path)["stage"], "running")
+        os.killpg(proc.pid, signal.SIGHUP)
+        proc.wait(timeout=20)
+        self.assertFalse(script.exists())
+        self.assertEqual(companion.creation_status(device_path)["stage"], "none")
+
+    def test_the_finished_file_is_still_found_after_the_session_ends(self):
+        device_path, script, proc = self.started("exit 0")
+        proc.wait(timeout=20)
+        companion._work_output(device_path).write_text("notes", encoding="utf-8")
+        self.assertEqual(companion.creation_status(device_path)["stage"], "found")
 
 
 if __name__ == "__main__":

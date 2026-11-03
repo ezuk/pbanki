@@ -237,5 +237,41 @@ class WatcherTest(unittest.TestCase):
         self.assertEqual(seen, [[str(self.target)]])
 
 
+class OwnCopyTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        env = mock.patch.dict(os.environ, {"PBANKI_DESKTOP_HOME": self.temp.name})
+        env.start()
+        self.addCleanup(env.stop)
+        prompts.seed()
+        self.folder = paths.prompts_dir() / "Concise"
+        self.folder.mkdir()
+
+    def test_a_row_names_the_file_in_its_own_folder(self):
+        row = prompts.read_one("Concise", "cloze.md")
+        self.assertEqual(row["status"], "uses Standard")
+        self.assertEqual(row["own_path"], str(self.folder / "cloze.md"))
+        self.assertEqual(row["path"], str(paths.prompts_dir() / "Standard" / "cloze.md"))
+
+    def test_make_own_copies_standard_once(self):
+        row = prompts.make_own("Concise", "cloze.md")
+        self.assertEqual((row["status"], row["path"]), ("this prompt", str(self.folder / "cloze.md")))
+        (self.folder / "cloze.md").write_text("Edited\n", encoding="utf-8")
+        self.assertEqual(prompts.make_own("Concise", "cloze.md")["path"], str(self.folder / "cloze.md"))
+        self.assertEqual((self.folder / "cloze.md").read_text("utf-8"), "Edited\n")
+
+    def test_make_own_fills_a_blank_file_under_the_name_it_has(self):
+        (self.folder / "question.md").write_text("  \n", encoding="utf-8")
+        row = prompts.make_own("Concise", "questions.md")
+        self.assertEqual(row["status"], "this prompt")
+        self.assertEqual(Path(row["path"]).name, "questions.md")
+
+    def test_make_own_leaves_standard_as_it_is(self):
+        before = (paths.prompts_dir() / "Standard" / "cloze.md").read_bytes()
+        self.assertEqual(prompts.make_own("Standard", "cloze.md")["status"], "this prompt")
+        self.assertEqual((paths.prompts_dir() / "Standard" / "cloze.md").read_bytes(), before)
+
+
 if __name__ == "__main__":
     unittest.main()

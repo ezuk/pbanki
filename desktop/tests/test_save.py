@@ -429,7 +429,7 @@ class LineShapeTests(SaveCase):
         self.assertEqual(lines[1]["cards"], [])
         self.assertEqual(lines[2]["cards"], [])
         self.assertEqual(
-            result["summary"],
+            {key: value for key, value in result["summary"].items() if key != "groups"},
             {
                 "cards": 3,
                 "highlight_cards": 2,
@@ -1574,6 +1574,84 @@ class CutOffWriteTests(SaveCase):
         self.assertEqual(lines[:2], self.older.splitlines())
         self.assertEqual(len(lines), 4)
         self.assertEqual(len(set(lines)), 4)
+
+
+class FindingsTests(SaveCase):
+    def test_cards_on_skipped_highlights_are_named_and_retired_by_the_save(self):
+        a = self.add_highlight("k1", cards=(("qa", "Typed", ""), ("qa", "  ", "")))
+        self.store.set_skipped(self.book_id, a["hid"])
+        b = self.add_highlight("k2")
+        preview = save.preview(self.store, self.book, [a, b])
+        self.assertEqual(preview["count"], 1)
+        self.assertIn("1 card on a skipped highlight will not be saved. Undo the skip to keep it.", preview["left_text"])
+        c = self.add_highlight("k3", cards=(("qa", "One", ""), ("qa", "Two", "")))
+        self.store.set_skipped(self.book_id, c["hid"])
+        preview = save.preview(self.store, self.book, [a, b, c])
+        self.assertIn("3 cards on skipped highlights will not be saved. Undo the skip to keep them.", preview["left_text"])
+        self.assertEqual(save.save(self.store, self.book, [a, b, c], self.mount)["status"], save.VERIFIED)
+        self.assertEqual(self.store.list_cards(self.book_id), [])
+        self.assertEqual(self.store.draft_counts(), {})
+        removed = self.store.list_cards(self.book_id, states=("removed",))
+        self.assertEqual(sorted(card["front"] for card in removed), ["  ", "One", "Two", "Typed"])
+        self.assertNotIn(b"Typed", self.inbox.read_bytes())
+
+    def test_a_batch_remembers_what_the_preview_showed(self):
+        highlights = self.work()
+        preview = save.preview(self.store, self.book, highlights)
+        result = save.save(self.store, self.book, highlights, self.mount)
+        self.assertEqual(result["summary"]["groups"], preview["groups"])
+
+    def test_with_held_adds_batches_to_a_preview(self):
+        a = self.add_highlight("k1", cards=(("qa", "Q1", "A1"),))
+        held = save.batch_result(self.store.get_batch(save.back_up(self.store, self.book, [a])))
+        b = self.add_highlight("k2", cards=(("qa", "Q2", "A2"),))
+        fresh = save.preview(self.store, self.book, [a, b])
+        self.assertEqual((fresh["count"], fresh["mark_count"]), (1, 1))
+        both = save.with_held(fresh, [held])
+        self.assertEqual((both["count"], both["noun"], both["mark_count"]), (2, "cards ready", 2))
+        self.assertEqual(both["mark_text"], "Mark 2 highlights as reviewed")
+        self.assertEqual([g["head"] for g in both["groups"]], [g["head"] for g in held["summary"]["groups"] + fresh["groups"]])
+        self.assertEqual(save.with_held(fresh, []), fresh)
+
+    def test_an_older_batch_without_groups_still_counts(self):
+        a = self.add_highlight("k1", cards=())
+        fresh = save.preview(self.store, self.book, [a])
+        both = save.with_held(fresh, [{"summary": {"cards": 2, "marked": 1}}])
+        self.assertEqual((both["count"], both["mark_count"], both["groups"]), (2, 1, []))
+
+    def test_an_unreadable_reviewed_file_keeps_the_last_seen_keys(self):
+        self.reviewed.write_text(json.dumps({"v": 1, "file": FILE, "key": "k1", "cards": []}) + "\n", encoding="utf-8")
+        self.assertEqual(save.reviewed_keys(self.store, self.book, (), self.mount), {"k1"})
+        os.chmod(self.reviewed, 0)
+        self.addCleanup(os.chmod, self.reviewed, 0o644)
+        self.assertEqual(save.reviewed_keys(self.store, self.book, (), self.mount), {"k1"})
+        self.assertEqual(self.store.reader_reviewed(self.book_id), {"k1"})
+
+    def test_a_missing_reviewed_file_still_counts_as_none(self):
+        self.reviewed.write_text(json.dumps({"v": 1, "file": FILE, "key": "k1", "cards": []}) + "\n", encoding="utf-8")
+        save.reviewed_keys(self.store, self.book, (), self.mount)
+        self.reviewed.unlink()
+        self.assertEqual(save.reviewed_keys(self.store, self.book, (), self.mount), set())
+
+    def test_the_plugin_update_mark_lasts_until_an_update_is_proven(self):
+        self.assertFalse(save.plugin_update_cut_off())
+        with mock.patch.object(device, "write_files", side_effect=device.DeviceWriteError("It failed.")):
+            with self.assertRaises(device.DeviceWriteError):
+                save.plugin_update(self.mount)
+        self.assertTrue(save.plugin_update_cut_off())
+        save.plugin_update(self.mount)
+        self.assertFalse(save.plugin_update_cut_off())
+
+    def test_an_update_with_nothing_to_copy_clears_the_mark(self):
+        save.plugin_update(self.mount)
+        with mock.patch.object(device, "write_files", side_effect=KeyboardInterrupt):
+            (self.mount / paths.PLUGIN_DIR / "main.lua").write_bytes(b"cut")
+            with self.assertRaises(KeyboardInterrupt):
+                save.plugin_update(self.mount)
+        self.assertTrue(save.plugin_update_cut_off())
+        (self.mount / paths.PLUGIN_DIR / "main.lua").write_bytes((REPO / "koreader/pbanki.koplugin/main.lua").read_bytes())
+        self.assertEqual(save.plugin_update(self.mount)["copied"], [])
+        self.assertFalse(save.plugin_update_cut_off())
 
 
 if __name__ == "__main__":

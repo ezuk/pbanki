@@ -229,6 +229,32 @@ class TimeoutAndCancelTest(FakeAITest):
         self.assertIsInstance(results[0], ai.AICancelled)
         self.assert_gone(pids)
 
+    def test_kill_running_ends_commands_and_removes_their_folders(self):
+        pids_file = Path(self.temp.name) / "pids-kill"
+        results = []
+        folders = Path(self.temp.name) / "temps"
+        folders.mkdir()
+
+        def work():
+            try:
+                results.append(ai.query("claude-sonnet-5-5", MESSAGES))
+            except ai.AIError as e:
+                results.append(e)
+
+        with mock.patch.dict(os.environ, {"FAKE_AI_MODE": "slow", "FAKE_AI_PIDS": str(pids_file)}), \
+                mock.patch.object(tempfile, "tempdir", str(folders)):
+            thread = threading.Thread(target=work)
+            thread.start()
+            pids = self.wait_for_pids(pids_file)
+            self.assertEqual(len(list(folders.glob("pbanki-ai-*"))), 1)
+            ai.kill_running()
+            self.assert_gone(pids)
+            self.assertEqual(list(folders.glob("pbanki-ai-*")), [])
+            thread.join(timeout=15)
+        self.assertFalse(thread.is_alive())
+        self.assertIsInstance(results[0], ai.AIError)
+        self.assertEqual(ai._running, {})
+
     def test_cancel_kills_the_process_group_claude(self):
         self.run_cancelled("claude-sonnet-5-5")
 

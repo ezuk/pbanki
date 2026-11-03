@@ -199,6 +199,7 @@ def _file_row(name, kind):
         "file": file_name,
         "status": "this prompt" if own else "uses Standard",
         "path": str(path),
+        "own_path": str(folder / file_name),
     }
 
 
@@ -234,13 +235,23 @@ def read_one(name, file_name):
     return {**row, "name": name, "text": _read_file(row["path"]) or ""}
 
 
+def make_own(name, file_name):
+    """Gives a folder its own copy of a file it takes from Standard, so edits to it stay.
+    Returns the file's row."""
+    row = _resolve(name, file_name)
+    if row["status"] == "uses Standard" and name != STANDARD:
+        Path(row["own_path"]).write_bytes(Path(row["path"]).read_bytes())
+        row = _resolve(name, file_name)
+    return row
+
+
 def _launch(args):
     subprocess.run(args, check=False, capture_output=True, timeout=30)
 
 
 def open_in_editor(name, file_name):
     """Opens a prompt file in the default text editor."""
-    row = _resolve(name, file_name)
+    row = make_own(name, file_name)
     _launch(["open", "-t", row["path"]])
     return row
 

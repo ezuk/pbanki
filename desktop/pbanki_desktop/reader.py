@@ -25,6 +25,7 @@ SIDECAR_UNREADABLE = "This book's settings file couldn't be read."
 NOT_CONNECTED = "The reader isn't plugged in."
 OLD_FORMAT = "This book was last opened in an older KOReader. Open it once on the reader to see its highlights here."
 NO_SETTINGS_HASH = "This book's settings can't be found, because its file isn't on the reader."
+PLUGIN_CUT_OFF = "The last plugin update didn't finish, so the plugin on the reader may not work. Update it again."
 
 _SUFFIX = re.compile(r".*\.(.+)", re.DOTALL)
 _STEM = re.compile(r"\.[^./\\]+$")
@@ -223,12 +224,13 @@ def _desktop_save(line):
     return data
 
 
-def reviewed_keys(mount):
-    """{device path: set of highlight keys} from lines in reviewed.jsonl the plugin would apply."""
+def read_reviewed_keys(mount):
+    """{device path: set of highlight keys} from lines in reviewed.jsonl the plugin would apply.
+    A missing file means none. Any other failure to read it raises OSError."""
     out = {}
     try:
         raw = (Path(mount) / paths.REVIEWED_FILE).read_bytes()
-    except OSError:
+    except FileNotFoundError:
         return out
     for line in raw.decode("utf-8", "replace").split("\n"):
         if line.strip():
@@ -236,6 +238,14 @@ def reviewed_keys(mount):
             if save:
                 out.setdefault(save["file"], set()).add(save["key"])
     return out
+
+
+def reviewed_keys(mount):
+    """read_reviewed_keys, with an unreadable file giving none."""
+    try:
+        return read_reviewed_keys(mount)
+    except OSError:
+        return {}
 
 
 # Highlights
@@ -595,11 +605,12 @@ def _plugin_reads_desktop_saves(mount):
         return False
 
 
-def reader_status(mount):
+def reader_status(mount, plugin_cut_off=False):
     """The Reader check screen: {connected, ready, ..., rows} with rows {title, path, ok, level}.
 
     `level` is "ok", "error", which blocks the app, or "warning", which doesn't. The plugin
     row has `action` "update_plugin" and a `detail` sentence when it needs the update.
+    `plugin_cut_off` says an update of the plugin started and was never proven.
     """
     mount_path = Path(mount)
     name = mount_path.name or str(mount)
@@ -617,7 +628,7 @@ def reader_status(mount):
             history_ok = True
         except (OSError, lua.LuaError):
             history_ok = False
-    plugin_ok = connected and _plugin_reads_desktop_saves(mount)
+    plugin_ok = connected and not plugin_cut_off and _plugin_reads_desktop_saves(mount)
 
     def row(title, path, ok, level=None):
         return {"title": title, "path": path, "ok": ok, "level": level or ("ok" if ok else "error")}
@@ -648,7 +659,9 @@ def reader_status(mount):
     )
     if not plugin_ok:
         plugin_row["action"] = "update_plugin"
-        plugin_row["detail"] = "Without the update, saved highlights keep coming up as new on the reader."
+        plugin_row["detail"] = (
+            PLUGIN_CUT_OFF if plugin_cut_off else "Without the update, saved highlights keep coming up as new on the reader."
+        )
     rows.append(plugin_row)
 
     return {

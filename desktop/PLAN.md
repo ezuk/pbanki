@@ -22,7 +22,7 @@ A local web app, served by a small Python program on the Mac, for making flashca
 ```
 desktop/
   PLAN.md
-  run.py                     entry point: parses --port/--no-open, starts the server, opens the browser
+  run.py                     entry point: parses --port/--no-open, holds the data folder, starts the server, opens the browser
   design/                    approved mock, reference only, never served
   pbanki_desktop/
     __init__.py
@@ -75,7 +75,7 @@ Facts checked against `assistant.koplugin/backups/*/koreader` and the plugin sou
 
 ### Reader check screen
 
-Rows, in order, each `{title, path, ok, level}`: connected, KOReader found, pbAnki found, KOReader history read (with count), and one extra row: "pbAnki plugin can read desktop saves". This last row reads the plugin's `main.lua` on the reader and looks for `reviewed.jsonl`. If absent, the row is a warning with an **Update plugin** button, because without it saved highlights keep coming up as new on the reader. It does not block the rest of the app.
+Rows, in order, each `{title, path, ok, level}`: connected, KOReader found, pbAnki found, KOReader history read (with count), and one extra row: "pbAnki plugin can read desktop saves". This last row reads the plugin's `main.lua` on the reader and looks for `reviewed.jsonl`. If absent, the row is a warning with an **Update plugin** button, because without it saved highlights keep coming up as new on the reader. It does not block the rest of the app. The row is also a warning when an update started and was never proven, since the file can then hold the text and still be cut off, or later files can be old. A mark in `<home>` records this: it is made before the first write and removed once the update is proven.
 
 ## 4. Passages (`epub.py`)
 
@@ -102,7 +102,7 @@ Folder: `<home>/prompts/<Name>/`, with the same file rules as `prompts.lua` (`qu
 
 On start, Standard is rewritten from the repo: `koreader/pbanki.koplugin/prompts/Standard/*` and `desktop/prompts/Standard/*`, with a README explaining that edits to Standard are undone. `prompts/*` folders from the repo other than Standard (today `Self Help`) are copied once if not already present, and never overwritten. Prompt files are re-read for every AI call, so edits apply at once; a watcher records each file's mtime to report "reloaded N s ago" and notifies the page. Default prompt for a book: its `pbanki_prompt` from the sidecar when that folder exists here, else the last prompt used, else Standard.
 
-Actions: list folders and their files, each marked "this prompt" or "uses Standard"; read one; open it in the default text editor (`open -t`); reveal it in Finder (`open -R`). Folder names from requests are checked against the listing, so they cannot escape the prompts folder.
+Actions: list folders and their files, each marked "this prompt" or "uses Standard", with the path shown always the one in the chosen folder; read one; open it in the default text editor (`open -t`); reveal it in Finder (`open -R`). Opening a "uses Standard" file in another folder first copies Standard's text to that folder's file, because edits to Standard are undone. Revealing one copies nothing, and shows the folder if the file isn't there. Folder names from requests are checked against the listing, so they cannot escape the prompts folder.
 
 ## 6. AI (`cardgen.py`, `ai.py`, `runs.py`)
 
@@ -138,7 +138,9 @@ Plain `codex exec --sandbox read-only` leaves the model a working shell that can
 
 Assistant detection reports path and version from `--version`. Models: Claude Code `claude-haiku-5-5` Haiku 5.5, `claude-sonnet-5-5` Sonnet 5.5, `claude-opus-5-5` Opus 5.5, `claude-fable-5-1` Fable 5.1; Codex `gpt-6.1-sol` GPT-6.1 Sol (Codex). Menus list only enabled assistants; at least one stays on. Defaults: highlights Sonnet 5.5, connections Opus 5.5.
 
-`runs.py` keeps one run per book, in order: highlight cards, connections, key ideas (when a Companion exists and the box is on). Highlight work runs up to 3 AI calls at a time. Requests carry the plugin's `max` semantics (the AI chooses 1 to n) for bulk runs and `count` for "Suggest N". Runs can pause, resume and stop; finished work is kept. A highlight that already has cards, or is reviewed or skipped, is not requested again. A run interrupted by quitting does not resume by itself; reopening the book offers it again. Picking a book starts a run automatically when the setting is on and nothing has run for this book yet. Each result updates SQLite and pushes an event.
+`runs.py` keeps one run per book, in order: highlight cards, connections, key ideas (when a Companion exists and the box is on). Highlight work runs up to 3 AI calls at a time. Requests carry the plugin's `max` semantics (the AI chooses 1 to n) for bulk runs and `count` for "Suggest N". Runs can pause, resume and stop; finished work is kept. A highlight that already has cards, or is reviewed or skipped, is not requested again. A run interrupted by quitting does not resume by itself; reopening the book offers it again. Picking a book starts a run automatically when the setting is on and nothing has run for this book yet. Each result updates SQLite and pushes an event. Cards that arrive for a highlight that has since been reviewed, skipped or removed from the reader are dropped, for runs, Suggest N and Definition alike. The first row of a run's progress says how many highlights failed, once it has gone through them all.
+
+Key idea chapters are stored in the book's `Chapter N: Title` form when the chapter matches one the book lists, whichever form the AI wrote, and as written otherwise.
 
 ## 7. Book Companion (`companion.py`)
 
@@ -147,16 +149,17 @@ Assistant detection reports path and version from `--version`. Models: Claude Co
 - `chapter_block(text, chapter)` matches `###` headings to the chapter by normalised title, ignoring `<!-- pos: -->` markers. An unmatched chapter gets `found: false` and no notes panel.
 - Notes panel: before key ideas have run, `big` is the block's first sentence and `points` its bullet lines, untagged. After they run, the AI's `chapters` data replaces it, adding ✓ and ○ and links to key ideas.
 - Later research warning comes only from the AI's `later_research` field. It is never inferred from word matching.
-- Create: copy the ePub to `<home>/companion-work/<book stem>/<book file name>`, so the skill's beside-the-book copy lands on the Mac and not on the reader. Write a `.command` script there that runs `cd <assistant dir>; claude "/book-companion '<local epub path>'"`, using `shlex.quote` throughout, and start it with `open -a Terminal`. Watch that folder for `<book stem>.companion.md`. Never start it automatically. Show the assistant folder in Settings; if the folder or skill is missing, say so and disable the button.
+- Create: copy the ePub to `<home>/companion-work/<book stem>/<book file name>`, so the skill's beside-the-book copy lands on the Mac and not on the reader. Write a `.command` script there that runs `cd <assistant dir>; claude "/book-companion '<local epub path>'"`, using `shlex.quote` throughout, and start it with `open -a Terminal`. Watch that folder for `<book stem>.companion.md`. Never start it automatically. Create is refused while one is running or a finished file awaits the choice below, so a second click can't open another Terminal or move the finished file aside. The script removes itself when its session ends, which is what ends "running". Show the assistant folder in Settings; if the folder or skill is missing, say so and disable the button.
 - When the file appears, ask: **Copy to reader** (proven write, beside the book) or **Keep it on this computer** (copy to `<home>/companions/`).
+- Until a Copy to reader is proven, a mark in the book's work folder says the file beside the book can't be trusted, and `find` ignores it. Copy can run again to repair it, even after Keep.
 
 ## 8. SQLite (`store.py`)
 
 `<home>/pbanki.db`, WAL mode, one connection per thread, schema version in `PRAGMA user_version`.
 
-- `books(id, device_path, title, author, stem, ext, data_json, last_seen)`: `id` is the first 16 hex digits of SHA-1 of the device path. `data_json` caches chapters and highlights with passages, so the screens work unplugged.
+- `books(id, device_path, title, author, stem, ext, data_json, last_seen)`: `id` is the first 16 hex digits of SHA-1 of the device path. `data_json` caches chapters and highlights with passages, so the screens work unplugged. A highlight that leaves the reader stays cached while it has draft cards or a draft connection cites it. A settings file that can't be read keeps the cached title and author, so cards stay in the same deck.
 - `highlight_state(book_id, hid, key, opened, skipped, error, later_research, chapter_notes_seen)`: `hid` is the first 16 hex digits of SHA-1 of the key, used in URLs.
-- `cards(id, book_id, hid, kind, source, front, back, suggested_front, suggested_back, position, state, created_at, updated_at)`. `kind` is `qa|cloze|qonly|def`. `state` is `draft|removed|saved`. Removed cards feed the `rejected` list and restore on Undo.
+- `cards(id, book_id, hid, kind, source, front, back, suggested_front, suggested_back, position, state, created_at, updated_at)`. `kind` is `qa|cloze|qonly|def`. `state` is `draft|removed|saved`. Removed cards feed the `rejected` list and restore on Undo, unless their highlight has left the reader.
 - `connections(id, book_id, title, front, back, source, sources_json, opened, state)` with `state` as above.
 - `ideas(id, book_id, chapter, title, note, quote, front, back, source, opened, state)`.
 - `chapter_notes(book_id, chapter, big, points_json)` from key ideas.
@@ -165,11 +168,13 @@ Assistant detection reports path and version from `--version`. Models: Claude Co
 - `runs(book_id, status, options_json, progress_json, updated_at)`.
 - `settings(key, value_json)`.
 
-Editing a card marks AI-written ones `AI, edited`, except that answering a question the AI left blank isn't an edit, same as `wasEdited`. Reviewed status for display is the sidecar's `pbanki_reviewed`, plus keys in the reader's `reviewed.jsonl`, plus keys in batches not yet verified on the reader. With the reader unplugged that file can't be read, so `reader_reviewed(book_id, key)` keeps its keys as last seen, plus those of batches verified since. Local saved cards do not count on their own, so "Review this book's highlights again" on the reader makes them pending here too, the next time the reader is plugged in.
+Editing a card marks AI-written ones `AI, edited`, except that answering a question the AI left blank isn't an edit, same as `wasEdited`. Reviewed status for display is the sidecar's `pbanki_reviewed`, plus keys in the reader's `reviewed.jsonl`, plus keys in batches not yet verified on the reader. With the reader unplugged, or the file failing to read for any reason other than not being there, `reader_reviewed(book_id, key)` keeps its keys as last seen, plus those of batches verified since. Local saved cards do not count on their own, so "Review this book's highlights again" on the reader makes them pending here too, the next time the reader is plugged in.
 
 ## 9. Save (`save.py`)
 
-The preview groups exactly what the mock shows: only cards from highlights the user opened, connections opened, and key ideas opened. Blocked while any `qonly` card has no answer. A blank front is not saved.
+The preview groups exactly what the mock shows: only cards from highlights the user opened, connections opened, and key ideas opened. Blocked while any `qonly` card has no answer. A blank front is not saved. A batch waiting for the reader or failed stays on this screen, as in the mock: its cards and marks are added to whatever is new.
+
+Skipping excludes a highlight's cards. The preview says how many that is, and the save turns them `removed`, since marking the highlight reviewed means no later save could include them.
 
 Inbox lines match `InboxCard` exactly: `front, back, quote, book, author, chapter, page, file, position`, plus `batch`, which pbAnki's parser ignores (check with a Rust test) and which lets a retry detect lines already written.
 
@@ -252,6 +257,8 @@ POST /api/books/<id>/companion/keep
 ```
 
 The server watches the mount every 2 s in one background thread and pushes `reader` events.
+
+One copy of the program uses a data folder at a time, held with a lock the system releases however the program ends. A second copy says where the first one is, opens it in the browser and exits. Closing the Terminal window quits like Ctrl-C. A second Ctrl-C quits at once, ending any AI commands and removing their temporary folders.
 
 ## 12. Browser app (`web/`)
 

@@ -236,6 +236,7 @@ def _select(store, book, highlights, mark_connection_sources):
             continue
         (skipped if states.get(hid, {}).get("skipped") else pending).append(hid)
     pending_set = set(pending)
+    skipped_cards = sum(1 for hid in skipped for card in drafts.get(hid, []) if _filled(card))
 
     with_cards = []
     for hid in pending:
@@ -275,6 +276,7 @@ def _select(store, book, highlights, mark_connection_sources):
         "connection_only": connection_only,
         "marked_sources": marked_sources,
         "skipped": skipped,
+        "skipped_cards": skipped_cards,
         "pending": pending,
         "unopened": unopened,
         "connections": connections,
@@ -310,6 +312,11 @@ def _left_text(selection):
         if n:
             verb = "stays" if n == 1 else "stay"
             parts.append(f"{_plural(n, word)} you haven't opened also {verb} here.")
+    n = selection["skipped_cards"]
+    if n == 1:
+        parts.append("1 card on a skipped highlight will not be saved. Undo the skip to keep it.")
+    elif n:
+        parts.append(f"{n} cards on skipped highlights will not be saved. Undo the skip to keep them.")
     return " ".join(parts)
 
 
@@ -328,9 +335,7 @@ def _preview_row(card):
     return {"front": card["front"], "back": card["back"], "need": need}
 
 
-def preview(store, book, highlights, mark_connection_sources=True):
-    """The Save cards screen: what goes to the reader, what gets marked and what stays."""
-    selection = _select(store, book, highlights, mark_connection_sources)
+def _groups(selection):
     by_hid = selection["by_hid"]
     groups = []
     for hid in selection["with_cards"]:
@@ -357,17 +362,31 @@ def preview(store, book, highlights, mark_connection_sources=True):
                 "rows": [{"front": i["front"], "back": i["back"], "need": False}],
             }
         )
+    return groups
+
+
+def _noun(count):
+    return "card ready" if count == 1 else "cards ready"
+
+
+def _mark_text(count):
+    return f"Mark {_plural(count, 'highlight')} as reviewed"
+
+
+def preview(store, book, highlights, mark_connection_sources=True):
+    """The Save cards screen: what goes to the reader, what gets marked and what stays."""
+    selection = _select(store, book, highlights, mark_connection_sources)
     count = selection["count"]
     needs = selection["needs"]
     return {
-        "groups": groups,
+        "groups": _groups(selection),
         "count": count,
-        "noun": "card ready" if count == 1 else "cards ready",
+        "noun": _noun(count),
         "needs": needs,
         "need_text": _need_text(needs) if needs else "",
         "blocked": bool(needs) or count == 0,
         "mark_count": selection["mark_count"],
-        "mark_text": f"Mark {_plural(selection['mark_count'], 'highlight')} as reviewed",
+        "mark_text": _mark_text(selection["mark_count"]),
         "marked": {
             "with_cards": selection["with_cards"],
             "connection_only": selection["marked_sources"],
@@ -376,6 +395,24 @@ def preview(store, book, highlights, mark_connection_sources=True):
         "connection_only": selection["connection_only"],
         "left": selection["left"],
         "left_text": _left_text(selection),
+    }
+
+
+def with_held(preview_view, held):
+    """`preview_view` plus the cards of `held` batch results, which waited or failed and so are
+    no longer drafts. `blocked`, `needs` and `marked` still describe only what can be saved now."""
+    if not held:
+        return preview_view
+    count = preview_view["count"] + sum(result["summary"].get("cards", 0) for result in held)
+    mark_count = preview_view["mark_count"] + sum(result["summary"].get("marked", 0) for result in held)
+    groups = [group for result in held for group in result["summary"].get("groups", [])]
+    return {
+        **preview_view,
+        "groups": groups + preview_view["groups"],
+        "count": count,
+        "noun": _noun(count),
+        "mark_count": mark_count,
+        "mark_text": _mark_text(mark_count),
     }
 
 
@@ -408,6 +445,8 @@ def back_up(store, book, highlights, mark_connection_sources=True):
             reviewed_lines.append(reviewed_line(book, h, cards, batch_id))
         for hid in selection["skipped"] + selection["marked_sources"]:
             reviewed_lines.append(reviewed_line(book, by_hid[hid], [], batch_id))
+        for hid in selection["skipped"]:
+            blank_ids.extend(c["id"] for c in drafts.get(hid, []))
         for connection in selection["connections"]:
             inbox_lines.append(connection_line(book, connection, by_hid, batch_id))
         for idea in selection["ideas"]:
@@ -423,6 +462,7 @@ def back_up(store, book, highlights, mark_connection_sources=True):
             "title": _text(book.get("title")),
             "deck": deck_name(book.get("title")),
             "file": book["device_path"],
+            "groups": _groups(selection),
         }
         store.record_batch(
             batch_id,
@@ -665,9 +705,12 @@ def reviewed_keys(store, book, sidecar_reviewed, mount):
     book_id = _book_id(book)
     on_reader = None
     if mount and reader.is_connected(mount):
-        found = reader.reviewed_keys(mount).get(book["device_path"], set())
+        try:
+            found = reader.read_reviewed_keys(mount).get(book["device_path"], set())
+        except OSError:
+            found = None
         # A reader pulled out during that read looks like one with no file
-        if reader.is_connected(mount):
+        if found is not None and reader.is_connected(mount):
             store.set_reader_reviewed(book_id, found)
             on_reader = found
     if on_reader is None:
@@ -678,10 +721,21 @@ def reviewed_keys(store, book, sidecar_reviewed, mount):
 # Plugin update and eject
 
 
+def _plugin_update_mark():
+    return paths.home() / "plugin-update-under-way"
+
+
+def plugin_update_cut_off():
+    """Whether a plugin update started and was never proven, so the plugin on the reader may be
+    part old and part new, or cut off in the middle of a file."""
+    return _plugin_update_mark().exists()
+
+
 def plugin_update(mount, source=None):
     """Copies the plugin folder to the reader, skipping files that already match, all in one
     proven write. Only ever writes the plugin's own folder, so the prompts the plugin keeps in
-    applications/pbanki/prompts stay its own business. Returns {copied, unchanged}."""
+    applications/pbanki/prompts stay its own business. A mark on this Mac lasts from the first
+    write until the update is proven. Returns {copied, unchanged}."""
     source = Path(source) if source is not None else paths.repo_root() / "koreader" / "pbanki.koplugin"
     with _write_lock:
         if not reader_connected(mount):
@@ -708,7 +762,10 @@ def plugin_update(mount, source=None):
             files[target] = data
             copied.append(rel.as_posix())
         if files:
+            _plugin_update_mark().parent.mkdir(parents=True, exist_ok=True)
+            _plugin_update_mark().touch()
             device.write_files(mount, files)
+        _plugin_update_mark().unlink(missing_ok=True)
     return {"copied": sorted(copied), "unchanged": unchanged}
 
 

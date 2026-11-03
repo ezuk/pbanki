@@ -29,6 +29,7 @@ SUFFIX = ".companion.md"
 _SKILL_FILE = Path(".claude") / "skills" / "book-companion" / "SKILL.md"
 _SCRIPT_NAME = "create-companion.command"
 _FINISHED_MARK = "finished"
+_COPYING_MARK = "copying"
 # The skill's write isn't atomic, so a new file must sit this long before it counts
 _SETTLE_SECONDS = 2
 
@@ -89,7 +90,7 @@ def find(device_path, mount):
     name = file_name(device_path)
     missing = {"found": False, "path": None, "where": None, "label": None, "cached": False, "file_name": name}
     beside = _beside_book(device_path, mount)
-    if beside is not None and _non_empty(beside):
+    if beside is not None and _non_empty(beside) and not copy_cut_off(device_path):
         _refresh_cache(beside, device_path)
         return {**missing, "found": True, "path": str(beside), "where": "reader", "label": ON_READER}
     if not Path(mount).is_dir() and _non_empty(_cache_path(device_path)):
@@ -99,6 +100,14 @@ def find(device_path, mount):
     if _non_empty(local):
         return {**missing, "found": True, "path": str(local), "where": "computer", "label": ON_COMPUTER}
     return missing
+
+
+def copy_cut_off(device_path):
+    """Whether Copy to reader started and was never proven, so the file beside the book can't be trusted."""
+    try:
+        return (work_dir(device_path) / _COPYING_MARK).exists()
+    except CompanionError:
+        return False
 
 
 def read_text(found):
@@ -607,10 +616,14 @@ def _double_quoted(text):
 
 
 def script_text(epub_path, assistant_dir=None, claude=None):
-    """The .command script: cd to the assistant folder and run the skill on the local copy."""
+    """The .command script: cd to the assistant folder and run the skill on the local copy.
+    It removes itself when the session ends, which is what stops the Create counting as running."""
     folder = assistant_dir or paths.assistant_dir()
     binary = claude or ai.find_binary("claude") or "claude"
+    script = Path(epub_path).with_name(_SCRIPT_NAME)
     return ("#!/bin/bash\n"
+            f"script={shlex.quote(str(script))}\n"
+            "trap 'rm -f \"$script\"' EXIT\n"
             f"cd {shlex.quote(str(folder))} || exit 1\n"
             f"{shlex.quote(str(binary))} {shlex.quote(skill_prompt(epub_path))}\n")
 
@@ -713,7 +726,10 @@ def copy_to_reader(device_path, mount):
     target = _beside_book(device_path, mount)
     if target is None:
         raise CompanionError("This book isn't on the reader's main storage.")
+    mark = work_dir(device_path) / _COPYING_MARK
+    mark.touch()
     device.write_file(mount, target, output.read_bytes())
+    mark.unlink(missing_ok=True)
     (work_dir(device_path) / _FINISHED_MARK).write_text("reader\n", encoding="utf-8")
     return str(target)
 

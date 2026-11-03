@@ -20,6 +20,10 @@ DEFAULT_TIMEOUT = 300
 _KILL_GRACE_SECONDS = 2
 _POLL_SECONDS = 0.05
 _VERSION_TIMEOUT = 15
+_TEMP_PREFIX = "pbanki-ai-"
+
+# Commands under way, process group to working folder
+_running = {}
 
 ASSISTANTS = {
     "claude": {"name": "Claude Code", "env": "PBANKI_CLAUDE_BIN", "command": "claude"},
@@ -188,6 +192,19 @@ def _kill_group(proc):
         pass
 
 
+def kill_running():
+    """For quitting at once: ends every AI command still going and removes its temporary folder.
+    Safe to call from a signal handler."""
+    for pid, cwd in list(_running.items()):
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        base = Path(cwd).parent
+        if base.name.startswith(_TEMP_PREFIX):
+            shutil.rmtree(base, ignore_errors=True)
+
+
 def _run(argv, stdin_text, cwd, timeout, cancel, name):
     """(exit code, stdout, stderr) of a command. Raises AIError on timeout or a failed start."""
     try:
@@ -195,7 +212,14 @@ def _run(argv, stdin_text, cwd, timeout, cancel, name):
                                 cwd=cwd, env=child_env(), start_new_session=True)
     except (OSError, ValueError) as e:
         raise AIError(f"{name} could not be started: {getattr(e, 'strerror', None) or e}.") from e
+    _running[proc.pid] = cwd
+    try:
+        return _finish(proc, stdin_text, timeout, cancel, name)
+    finally:
+        _running.pop(proc.pid, None)
 
+
+def _finish(proc, stdin_text, timeout, cancel, name):
     out, err = [], []
 
     def feed():
@@ -353,7 +377,7 @@ def query(model_id, messages, timeout=DEFAULT_TIMEOUT, cancel=None):
         raise AICancelled()
     system, user = split_messages(messages)
     ask = _ask_claude if assistant == "claude" else _ask_codex
-    with tempfile.TemporaryDirectory(prefix="pbanki-ai-") as base:
+    with tempfile.TemporaryDirectory(prefix=_TEMP_PREFIX, ignore_cleanup_errors=True) as base:
         folder = Path(base) / "work"
         folder.mkdir()
         return ask(binary, model_id, system, user, str(folder), timeout, cancel)
