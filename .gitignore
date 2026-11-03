@@ -62,3 +62,8 @@ pbanki
 
 # Added by cargo
 target
+
+# Desktop companion
+__pycache__/
+*.pyc
+.playwright-mcp/

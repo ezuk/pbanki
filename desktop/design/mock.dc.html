@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>pbAnki Desktop Companion</title>
+    <script src="./mock-data.js"></script>
+    <script src="./support.js"></script>
+  </head>
+  <body>
+    <x-dc>
+      <helmet data-dc-atomics>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,500;1,7..72,400&display=swap" />
+        <link rel="stylesheet" href="./companion.css" />
+      </helmet>
+
+      <div class="mockbar" data-screen-label="Mock controls">
+        <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="8"><button class="{{ t.cls }}" onClick="{{ t.go }}">{{ t.label }}</button></sc-for>
+        <span class="mockr">
+          <button class="{{ plugCls }}" onClick="{{ togglePlug }}">{{ plugLabel }}</button>
+          <button class="{{ compTogCls }}" onClick="{{ toggleCompMock }}">{{ compTogLabel }}</button>
+          <button class="{{ addsCls }}" onClick="{{ toggleAdds }}">Mark additions</button>
+          <button class="{{ setCls }}" onClick="{{ goSettings }}" title="Settings" aria-label="Settings" style="font-size:14px;line-height:1;padding-left:8px;padding-right:8px">⚙&#xFE0E;</button>
+        </span>
+      </div>
+
+      <div class="app">
+
+        <sc-if value="{{ isWait }}">
+          <div class="center" data-screen-label="1 Plug in"><div class="narrow">
+            <h1 class="h1">Plug in your PocketBook</h1>
+            <p class="lede">pbAnki gets your book and highlights from the reader, so it has to be connected before you start. This page moves on by itself as soon as it appears.</p>
+            <div class="watch"><span class="dot pulse"></span><span>Looking for {{ mount }}</span><span style="color:var(--ink3)">checked {{ checkAgo }} s ago</span></div>
+            <div class="fl"><div class="lab">Where the reader mounts</div><div class="rowg"><input class="in" style="flex:1 1 260px;width:auto" value="{{ mount }}" onChange="{{ onMount }}" /><button class="btn" onClick="{{ noop }}">Choose folder</button></div></div>
+            <div class="resume"><div><div style="font-weight:500" class="rowg"><sc-if value="{{ showAdds }}"><span class="ad">2</span></sc-if>{{ resumeText }}</div><div style="font-size:13.5px;color:var(--ink2)">How to Live on 24 Hours a Day. You can keep working now and plug in when you save.</div></div><button class="btn" onClick="{{ goWorkOffline }}">Keep working</button></div>
+          </div></div>
+        </sc-if>
+
+        <sc-if value="{{ isCheck }}">
+          <div class="center" data-screen-label="2 Reader check"><div class="narrow" style="gap:10px">
+            <h1 class="h1">{{ checkTitle }}</h1>
+            <div style="border-top:3px solid var(--ink);margin-top:12px">
+              <sc-for list="{{ checks }}" as="c" hint-placeholder-count="4"><div class="{{ c.cls }}"><span class="chkg">{{ c.glyph }}</span><span class="chkt">{{ c.title }}</span><span class="chkp">{{ c.path }}</span></div></sc-for>
+            </div>
+            <div class="rowg" style="margin-top:12px">
+              <sc-if value="{{ checkOk }}"><button class="btn pri" onClick="{{ goBooks }}">Show my books</button></sc-if>
+              <sc-if value="{{ checkBad }}"><button class="btn pri" onClick="{{ toggleFail }}">Check again</button></sc-if>
+              <button class="lnk" onClick="{{ toggleFail }}">{{ failLabel }}</button>
+            </div>
+          </div></div>
+        </sc-if>
+
+        <sc-if value="{{ isBooks }}">
+          <div class="top"><span class="brand">pbAnki</span><div class="topr"><span class="chip"><span class="{{ dotCls }}"></span>{{ readerLabel }}</span><button class="lnk" onClick="{{ openSettings }}">Settings</button></div></div>
+          <div class="center centertop" data-screen-label="3 Pick a book"><div class="wide">
+            <div><h1 class="h1">Pick a book</h1><p class="lede" style="margin-top:6px">From your KOReader history, most recent first.</p></div>
+            <div>
+              <div class="bkh"><span>Book</span><span>Last read</span><span>Read</span><span>Highlights</span><span>Companion</span><span></span></div>
+              <sc-for list="{{ books }}" as="b" hint-placeholder-count="6">
+                <button class="{{ b.cls }}" onClick="{{ b.open }}" disabled="{{ b.none }}">
+                  <span><span class="bkt" style="display:block">{{ b.title }}</span><span class="bka" style="display:block">{{ b.author }}</span>
+                    <sc-if value="{{ b.draft }}"><span class="bkd">{{ b.draft }}</span></sc-if></span>
+                  <span class="bkm hd">{{ b.last }}</span><span class="bkm hd">{{ b.read }}</span>
+                  <span class="bkm">{{ b.hl }}</span><span class="bkm hd">{{ b.comp }}</span><span class="bkgo hd">{{ b.action }}</span>
+                </button>
+              </sc-for>
+            </div>
+          </div></div>
+        </sc-if>
+
+        <sc-if value="{{ isSuggest }}">
+          <div class="top"><span class="brand">pbAnki</span><button class="bookbtn" onClick="{{ goBooks }}" style="max-width:300px"><span class="bookt">How to Live on 24 Hours a Day</span><span class="booka">Arnold Bennett · change book</span></button><div class="topr"><span class="chip"><span class="{{ dotCls }}"></span>{{ readerLabel }}</span><button class="lnk" onClick="{{ openSettings }}">Settings</button></div></div>
+          <div class="center centertop" data-screen-label="4 Suggest cards"><div class="narrow" style="gap:18px">
+            <div><h1 class="h1">Suggest cards</h1><p class="lede" style="margin-top:6px">{{ sugLede }}</p></div>
+            <sc-if value="{{ compHave }}"><div class="banner"><span class="rowg" style="gap:6px"><sc-if value="{{ showAdds }}"><span class="ad">15</span></sc-if>Book Companion found. The AI reads it as background notes.</span></div></sc-if>
+            <sc-if value="{{ compNone }}"><div class="banner"><span><b style="font-weight:600">No Book Companion for this book.</b> Cards still work without one. One would give the AI a map of the whole book, and find key ideas you didn't highlight.</span><button class="btn" onClick="{{ openCreate }}"><sc-if value="{{ showAdds }}"><span class="ad">18</span></sc-if>Create one</button></div></sc-if>
+            <sc-if value="{{ compBusy }}"><div class="banner"><span class="rowg"><span class="dot pulse"></span>{{ compBusyText }}</span><button class="lnk" onClick="{{ openCreate }}">Details</button></div></sc-if>
+            <sc-if value="{{ sugIdle }}">
+              <section class="comp">
+                <div class="compt">Highlight cards</div>
+                <div class="opts">
+                  <div class="opt"><span class="lab">Per highlight</span><div class="step"><button class="stepb" onClick="{{ countDown }}">−</button><span class="stepv">{{ count }}</span><button class="stepb" onClick="{{ countUp }}">+</button></div></div>
+                  <div class="opt"><span class="lab">Kind</span><select class="sel" value="{{ kind }}" onChange="{{ onKind }}"><sc-for list="{{ kinds }}" as="o"><option value="{{ o.id }}">{{ o.label }}</option></sc-for></select></div>
+                  <div class="opt"><span class="lab">Model</span><select class="sel" value="{{ model }}" onChange="{{ onModel }}"><sc-for list="{{ models }}" as="o"><option value="{{ o.id }}">{{ o.label }}</option></sc-for></select></div>
+                  <div class="opt"><span class="lab">Prompt</span><select class="sel" value="{{ prompt }}" onChange="{{ onPrompt }}"><sc-for list="{{ prompts }}" as="o"><option value="{{ o }}">{{ o }}</option></sc-for></select></div>
+                  <sc-if value="{{ compHave }}"><div class="opt"><span class="lab">Companion</span><select class="sel" value="{{ compSend }}" onChange="{{ onCompSend }}"><sc-for list="{{ compOpts }}" as="o"><option value="{{ o }}">{{ o }}</option></sc-for></select></div></sc-if>
+                </div>
+              </section>
+              <section class="comp">
+                <label class="cbx"><input type="checkbox" checked="{{ sugMetaOn }}" onChange="{{ toggleSugMeta }}" /><span><span class="compt">Connections</span><br />Questions that take several highlights to answer</span></label>
+                <div class="opts">
+                  <div class="opt"><span class="lab">Model</span><select class="sel" value="{{ metaModel }}" onChange="{{ onMetaModel }}"><sc-for list="{{ models }}" as="o"><option value="{{ o.id }}">{{ o.label }}</option></sc-for></select></div>
+                </div>
+              </section>
+              <sc-if value="{{ compHave }}"><section class="comp">
+                <label class="cbx"><input type="checkbox" checked="{{ sugIdeasOn }}" onChange="{{ toggleSugIdeas }}" /><span><span class="compt">Key ideas you didn't highlight</span><br />Important points in the Book Companion that your highlights miss. Kept apart from your highlight cards.</span></label>
+              </section></sc-if>
+              <div class="rowg"><button class="btn pri" style="padding:11px 16px" onClick="{{ startSug }}">{{ sugBtn }}</button><button class="lnk" onClick="{{ goHl }}">Skip, write them myself</button></div>
+            </sc-if>
+            <sc-if value="{{ sugBusy }}">
+              <div style="border-top:3px solid var(--ink)"><sc-for list="{{ sugRows }}" as="c" hint-placeholder-count="2"><div class="{{ c.cls }}"><span class="chkg">{{ c.glyph }}</span><span class="chkt">{{ c.title }}</span><span class="chkp">{{ c.path }}</span></div></sc-for></div>
+              <div class="rowg"><span class="dot pulse"></span><span style="font-size:14px;color:var(--ink2)">You can start reviewing now. Cards appear as they're written.</span></div>
+              <div class="rowg"><button class="btn" onClick="{{ goHl }}">Review highlights</button><button class="lnk" onClick="{{ sugReset }}">Stop and change settings</button></div>
+            </sc-if>
+            <sc-if value="{{ sugDone }}">
+              <div style="border-top:3px solid var(--ink)"><sc-for list="{{ sugRows }}" as="c" hint-placeholder-count="2"><div class="{{ c.cls }}"><span class="chkg">{{ c.glyph }}</span><span class="chkt">{{ c.title }}</span><span class="chkp">{{ c.path }}</span></div></sc-for></div>
+              <div class="rowg"><button class="btn pri" onClick="{{ goHl }}">Review highlights</button><button class="btn" onClick="{{ goMeta }}">Review connections</button><sc-if value="{{ compHave }}"><button class="btn" onClick="{{ goIdeas }}">Key ideas</button></sc-if><button class="lnk" onClick="{{ sugReset }}">Suggest again</button></div>
+            </sc-if>
+          </div></div>
+        </sc-if>
+
+        <sc-if value="{{ isWork }}">
+          <div class="top">
+            <span class="brand">pbAnki</span>
+            <button class="bookbtn" onClick="{{ goBooks }}" style="max-width:300px"><span class="bookt">How to Live on 24 Hours a Day</span><span class="booka">Arnold Bennett · change book</span></button>
+            <div class="seg"><button class="{{ tabHlCls }}" onClick="{{ goHl }}">Highlights</button><button class="{{ tabMetaCls }}" onClick="{{ goMeta }}">Connections {{ metaCount }}</button><button class="{{ tabIdeasCls }}" onClick="{{ goIdeas }}">Key ideas {{ ideaCount }}</button></div>
+            <div class="topr"><span class="chip"><span class="{{ dotCls }}"></span>{{ readerLabel }}</span><button class="lnk" onClick="{{ openSettings }}">Settings</button><button class="btn pri" onClick="{{ goSave }}" disabled="{{ noCards }}">{{ saveLabel }}</button></div>
+          </div>
+          <sc-if value="{{ unplugged }}"><div class="unplug">Your reader is unplugged. Keep working. Your cards stay on this computer until you plug it in and save.</div></sc-if>
+
+          <sc-if value="{{ isHl }}">
+            <div class="work" data-screen-label="5 Highlights">
+              <aside class="nav">
+                <div class="navhd">
+                  <div class="seg"><sc-for list="{{ filters }}" as="f" hint-placeholder-count="3"><button class="{{ f.cls }}" onClick="{{ f.go }}">{{ f.label }}</button></sc-for></div>
+                  <sc-if value="{{ bgShow }}"><div class="bg"><div class="bgr"><span class="rowg" style="gap:6px"><sc-if value="{{ showAdds }}"><span class="ad">1</span></sc-if>{{ bgLabel }}</span><sc-if value="{{ bgActive }}"><button class="lnk" onClick="{{ bgToggle }}">{{ bgBtn }}</button></sc-if></div><div class="bgs"><sc-for list="{{ bgCells }}" as="s" hint-placeholder-count="6"><span class="{{ s.cls }}"></span></sc-for></div></div></sc-if>
+                </div>
+                <div class="navlist">
+                  <sc-for list="{{ groups }}" as="g" hint-placeholder-count="4">
+                    <div class="chap">{{ g.name }}</div>
+                    <sc-for list="{{ g.items }}" as="h" hint-placeholder-count="3">
+                      <button class="{{ h.cls }}" onClick="{{ h.go }}"><span class="hlg">{{ h.glyph }}</span><span class="hls">{{ h.mark }}</span><span class="hlm"><span>p. {{ h.page }}</span><span>{{ h.meta }}</span></span></button>
+                    </sc-for>
+                  </sc-for>
+                </div>
+                <div class="navft"><sc-if value="{{ showAdds }}"><span class="ad">14</span></sc-if>J K next and previous · ⌘↵ suggest · X skip</div>
+              </aside>
+
+              <main class="main" id="main"><div class="col">
+                <div class="crumb">
+                  <span class="crumbt">{{ cur.chapterFull }} · p. {{ cur.page }} · {{ curPos }}</span>
+                  <span class="rowg">
+                    <button class="btn" onClick="{{ goPrev }}" disabled="{{ noPrev }}">Previous</button>
+                    <button class="btn" onClick="{{ goNext }}" disabled="{{ noNext }}">Next</button>
+                    <sc-if value="{{ canSkip }}"><button class="btn" onClick="{{ doSkip }}"><sc-if value="{{ showAdds }}"><span class="ad">3</span></sc-if>Skip</button></sc-if>
+                  </span>
+                </div>
+
+                <sc-if value="{{ curBanner }}"><div class="banner"><span>{{ curBanner }}</span><sc-if value="{{ isSkipped }}"><button class="lnk" onClick="{{ doSkip }}">Undo skip</button></sc-if></div></sc-if>
+
+                <article class="pass">
+                  <sc-if value="{{ moreCtx }}"><p class="ctx">{{ cur.before2 }}</p></sc-if>
+                  <sc-if value="{{ cur.before }}"><p class="ctx">{{ cur.before }}</p></sc-if>
+                  <p><span>{{ cur.pre }}</span><mark class="mk" style="color:inherit">{{ cur.mark }}</mark><span>{{ cur.post }}</span></p>
+                  <sc-if value="{{ cur.after }}"><p class="ctx">{{ cur.after }}</p></sc-if>
+                  <sc-if value="{{ cur.endCh }}"><div class="endch">End of the chapter</div></sc-if>
+                  <div class="passft"><button class="lnk" onClick="{{ toggleCtx }}"><sc-if value="{{ showAdds }}"><span class="ad" style="margin-right:6px">5</span></sc-if>{{ ctxLabel }}</button><sc-if value="{{ canEdit }}"><button class="btn" onMouseDown="{{ doDefine }}" disabled="{{ defOff }}" style="font-family:var(--mono)">{{ defLabel }}</button></sc-if></div>
+                  <sc-if value="{{ cur.note }}"><div class="note"><span class="notel"><sc-if value="{{ showAdds }}"><span class="ad">6</span></sc-if>Your note</span><span style="font-family:var(--sans);font-size:15px">{{ cur.note }}</span></div></sc-if>
+                </article>
+
+                <sc-if value="{{ curLater }}"><div class="later"><span class="laterk"><sc-if value="{{ showAdds }}"><span class="ad">16</span></sc-if>Book Companion: later research</span><span>{{ curLater }}</span></div></sc-if>
+
+                <sc-if value="{{ compHave }}"><section class="cpn">
+                  <button class="cpnh" onClick="{{ toggleCompPanel }}"><span class="cpnk"><sc-if value="{{ showAdds }}"><span class="ad">15</span></sc-if>Book Companion</span><span class="cpnb">{{ curComp.big }}</span><span class="cpnt">{{ compPanelLabel }}</span></button>
+                  <sc-if value="{{ compPanelOpen }}"><div class="cpnl">
+                    <sc-for list="{{ curComp.pts }}" as="p" hint-placeholder-count="3"><div class="cpnr"><span class="cpng">{{ p.glyph }}</span><span>{{ p.t }}</span><span><sc-if value="{{ p.go }}"><button class="lnk" onClick="{{ p.go }}">Key idea</button></sc-if></span></div></sc-for>
+                    <div class="cpnf">✓ means one of your highlights covers it. The AI reads these notes as background and won't quiz you on them directly.</div>
+                  </div></sc-if>
+                </section></sc-if>
+
+                <section class="fl" style="gap:22px">
+                  <div class="sech"><span class="sect">{{ cardsTitle }}</span>
+                    <sc-if value="{{ canEdit }}"><span class="sechr"><button class="btn" onClick="{{ addQA }}">+ Question</button><button class="btn" onClick="{{ addCloze }}">+ Cloze</button></span></sc-if>
+                  </div>
+                  <div class="cards">
+                    <sc-if value="{{ curWriting }}"><div class="empty"><span class="dot pulse"></span>Writing suggestions for this highlight.</div></sc-if>
+                    <sc-if value="{{ curEmpty }}"><div class="empty">No cards yet. Ask the AI below, or write your own.</div></sc-if>
+                    <sc-for list="{{ curCards }}" as="c" hint-placeholder-count="3">
+                      <div class="{{ c.cls }}">
+                        <div class="chd"><span class="ckind">{{ c.kindLabel }}</span><span>{{ c.src }}</span>
+                          <sc-if value="{{ c.editable }}"><span class="chdr">
+                            <button class="lnk" onClick="{{ c.toggleRw }}"><sc-if value="{{ showAdds }}"><span class="ad" style="margin-right:5px">10</span></sc-if>Rewrite</button>
+                            <button class="lnk" onClick="{{ c.togglePrev }}"><sc-if value="{{ showAdds }}"><span class="ad" style="margin-right:5px">8</span></sc-if>On the reader</button>
+                            <button class="x" onClick="{{ c.remove }}" aria-label="Remove card">✕</button>
+                          </span></sc-if>
+                        </div>
+                        <sc-if value="{{ c.isCloze }}">
+                          <textarea class="ta c" id="{{ c.fid }}" rows="1" value="{{ c.front }}" onChange="{{ c.onFront }}" placeholder="Paste or type a sentence, select the words to hide"></textarea>
+                          <div class="clbar"><button class="btn" onMouseDown="{{ c.hide }}">Hide selected words</button><span style="font-size:13px;color:var(--ink3)">Select words above, then press this.</span></div>
+                          <div class="clprev"><sc-for list="{{ c.parts }}" as="p" hint-placeholder-count="3"><sc-if value="{{ p.gap }}"><span class="gap">[...]</span></sc-if><sc-if value="{{ p.text }}"><span>{{ p.text }}</span></sc-if></sc-for></div>
+                        </sc-if>
+                        <sc-if value="{{ c.isPlain }}">
+                          <textarea class="ta f" id="{{ c.fid }}" rows="1" value="{{ c.front }}" onChange="{{ c.onFront }}" placeholder="Question" readOnly="{{ c.ro }}"></textarea>
+                          <textarea class="{{ c.backCls }}" rows="1" value="{{ c.back }}" onChange="{{ c.onBack }}" placeholder="{{ c.backPh }}" readOnly="{{ c.ro }}"></textarea>
+                        </sc-if>
+                        <sc-if value="{{ c.warn }}"><div class="warn"><sc-if value="{{ showAdds }}"><span class="ad">9</span></sc-if><span>{{ c.warn }}</span></div></sc-if>
+                        <sc-if value="{{ c.rwOpen }}"><div class="rw"><input class="in" value="{{ c.rwText }}" onChange="{{ c.onRwText }}" placeholder="Say what to change, or leave empty" /><button class="btn" onClick="{{ c.doRw }}">{{ c.rwBtn }}</button></div></sc-if>
+                        <sc-if value="{{ c.prevOpen }}"><div class="prevs">
+                          <div class="pf"><span class="lab">Question</span><div class="eink"><div class="einkb"><span>KOReader</span><span>09:41</span></div><div class="einkm">{{ c.frontPlain }}</div></div></div>
+                          <div class="pf"><span class="lab">Answer</span><div class="eink"><div class="einkb"><span>KOReader</span><span>09:41</span></div><div class="einkm" style="flex-direction:column"><span>{{ c.frontPlain }}</span><span class="einkrule" style="width:100%"></span><span>{{ c.backPlain }}</span></div></div></div>
+                          <div class="pf"><span class="lab">Context</span><div class="eink"><div class="einkb"><span>KOReader</span><span>09:41</span></div><div class="einkq">“{{ cur.mark }}”</div><div class="einkd"><span class="einkbk">How to Live on 24 Hours a Day</span><span>Arnold Bennett</span><br /><span>{{ cur.chapterShort }} · p. {{ cur.page }}</span></div></div></div>
+                        </div></sc-if>
+                      </div>
+                    </sc-for>
+                    <sc-if value="{{ lastRemoved }}"><div class="undo">Card removed. The AI won't suggest it again.<button class="lnk" onClick="{{ undoRemove }}">Undo</button></div></sc-if>
+                  </div>
+                </section>
+
+                <sc-if value="{{ canEdit }}">
+                  <section class="comp">
+                    <div class="compt">Ask the AI for more</div>
+                    <textarea class="hint" rows="1" value="{{ hint }}" onChange="{{ onHint }}" placeholder="Steer it if you like: ask what I can do this week, or use the swimming-bath image"></textarea>
+                    <div class="opts">
+                      <div class="opt"><span class="lab">How many</span><div class="step"><button class="stepb" onClick="{{ countDown }}">−</button><span class="stepv">{{ count }}</span><button class="stepb" onClick="{{ countUp }}">+</button></div></div>
+                      <div class="opt"><span class="lab"><sc-if value="{{ showAdds }}"><span class="ad">4</span></sc-if>Kind</span><select class="sel" value="{{ kind }}" onChange="{{ onKind }}"><sc-for list="{{ kinds }}" as="o"><option value="{{ o.id }}">{{ o.label }}</option></sc-for></select></div>
+                      <div class="opt"><span class="lab">Model</span><select class="sel" value="{{ model }}" onChange="{{ onModel }}"><sc-for list="{{ models }}" as="o"><option value="{{ o.id }}">{{ o.label }}</option></sc-for></select></div>
+                      <div class="opt"><span class="lab">Prompt</span><select class="sel" value="{{ prompt }}" onChange="{{ onPrompt }}"><sc-for list="{{ prompts }}" as="o"><option value="{{ o }}">{{ o }}</option></sc-for></select></div>
+                      <div class="opt"><span class="lab"><sc-if value="{{ showAdds }}"><span class="ad">7</span></sc-if>AI reads</span><select class="sel" value="{{ sees }}" onChange="{{ onSees }}"><sc-for list="{{ seesOpts }}" as="o"><option value="{{ o }}">{{ o }}</option></sc-for></select></div>
+                      <sc-if value="{{ compHave }}"><div class="opt"><span class="lab">Companion</span><select class="sel" value="{{ compSend }}" onChange="{{ onCompSend }}"><sc-for list="{{ compOpts }}" as="o"><option value="{{ o }}">{{ o }}</option></sc-for></select></div></sc-if>
+                      <button class="btn pri go" onClick="{{ suggest }}" disabled="{{ busy }}">{{ suggestLabel }}</button>
+                    </div>
+                    <sc-if value="{{ busy }}"><div class="running"><span class="dot pulse"></span>Running {{ busyCmd }}</div></sc-if>
+                    <sc-if value="{{ poolEmpty }}"><div class="running">This mock has run out of sample cards for this highlight. The real app would keep going.</div></sc-if>
+                    <div class="pline"><span>Prompt file</span><span class="path">{{ promptPath }}</span><button class="lnk" onClick="{{ openPrompt }}">Open prompt</button><span>reloaded {{ reloadAgo }} s ago</span></div>
+                  </section>
+                </sc-if>
+              </div></main>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ isMeta }}">
+            <div class="work" data-screen-label="6 Connections">
+              <aside class="nav">
+                <div class="navhd">
+                  <div style="font-size:14px;color:var(--ink2)">Questions that take several highlights to answer. Each one becomes one card.</div>
+                </div>
+                <div class="navlist" style="padding:0">
+                  <button class="{{ findCls }}" onClick="{{ goFind }}"><span class="mlt">+ Find connections</span><span class="mlm">{{ findNavMeta }}</span></button>
+                  <sc-for list="{{ metas }}" as="m" hint-placeholder-count="3">
+                    <button class="{{ m.cls }}" onClick="{{ m.go }}"><span class="mlt">{{ m.title }}</span><span class="mlm">{{ m.meta }}</span></button>
+                  </sc-for>
+                  <sc-if value="{{ metaEmpty }}"><div class="empty" style="margin:14px">No connection cards yet. Use Find connections above.</div></sc-if>
+                </div>
+              </aside>
+              <main class="main" id="main"><div class="col">
+                <sc-if value="{{ curMeta }}">
+                  <div class="rowg" style="justify-content:space-between"><span class="crumbt">Connection · {{ curMeta.chapters }} · {{ curMeta.srcCount }}</span><button class="lnk" onClick="{{ removeMeta }}">Remove</button></div>
+                  <h2 class="mtitle">{{ curMeta.title }}</h2>
+                  <div class="two">
+                    <div class="fl" style="gap:22px;min-width:0">
+                      <div class="card" style="background:var(--sheet)">
+                        <div class="chd"><span class="ckind">Connection card</span><span>{{ curMeta.src }}</span></div>
+                        <textarea class="ta f" rows="1" value="{{ curMeta.front }}" onChange="{{ onMetaFront }}" placeholder="Question"></textarea>
+                        <textarea class="ta b" rows="1" value="{{ curMeta.back }}" onChange="{{ onMetaBack }}" placeholder="Answer"></textarea>
+                      </div>
+                      <div class="fl" style="gap:0">
+                        <div class="sech"><span class="sect">Drawn from these highlights</span></div>
+                        <div class="srcs"><sc-for list="{{ curMeta.sources }}" as="s" hint-placeholder-count="3"><button class="src" onClick="{{ s.go }}"><span class="srct"><span class="mkl">{{ s.mark }}</span></span><span class="srcm">{{ s.where }}</span></button></sc-for></div>
+                      </div>
+                    </div>
+                    <div class="pf"><span class="lab"><sc-if value="{{ showAdds }}"><span class="ad">8</span></sc-if>Context on the reader</span><div class="eink" style="overflow-y:auto"><div class="einkb" style="flex:none"><span>KOReader</span><span>09:41</span></div><div class="einkd" style="flex:none"><span class="einkbk">How to Live on 24 Hours a Day</span><span>Arnold Bennett</span></div><div class="einkrule" style="flex:none"></div><div style="display:flex;flex-direction:column;gap:9px;flex:none"><sc-for list="{{ curMeta.sources }}" as="s" hint-placeholder-count="3"><div style="display:flex;flex-direction:column;gap:2px"><span style="font-size:8px;font-weight:700;letter-spacing:.02em">{{ s.whereLong }}</span><span style="font-style:italic">“{{ s.mark }}”</span></div></sc-for></div></div></div>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ isFind }}">
+                <div><h2 class="mtitle">Find connections</h2><p style="font-size:14px;color:var(--ink2);margin:6px 0 0">The AI reads the highlights in the chapters you pick together and looks for questions that need more than one of them.</p></div>
+                <div class="fl" style="gap:0">
+                  <div class="sech"><span class="sect">Chapters</span><span class="rowg" style="gap:12px"><button class="lnk" onClick="{{ chAll }}">All</button><button class="lnk" onClick="{{ chNone }}">None</button></span></div>
+                  <div style="display:flex;flex-direction:column;gap:2px;padding-top:6px">
+                    <sc-for list="{{ chapterPicks }}" as="c" hint-placeholder-count="8"><label class="cbx" style="padding:6px 0;border-bottom:1px solid var(--hair)"><input type="checkbox" checked="{{ c.on }}" onChange="{{ c.toggle }}" /><span style="flex:1">{{ c.name }}</span><span style="font:400 12px var(--mono);color:var(--ink3)">{{ c.meta }}</span></label></sc-for>
+                  </div>
+                </div>
+                <div class="opt"><span class="lab"><sc-if value="{{ showAdds }}"><span class="ad">11</span></sc-if>Highlights to read</span><div class="seg" style="align-self:flex-start"><button class="{{ scopePend }}" onClick="{{ setScopePend }}">Pending</button><button class="{{ scopeAll }}" onClick="{{ setScopeAll }}">All, including reviewed</button></div></div>
+                <section class="comp">
+                  <div class="compt">{{ chSummary }}</div>
+                  <sc-if value="{{ compHave }}"><div style="font-size:13.5px;color:var(--ink2)">Also reads the Book Companion's chapter-by-chapter notes, so it knows how the book's argument fits together.</div></sc-if>
+                  <textarea class="hint" rows="1" value="{{ metaHint }}" onChange="{{ onMetaHint }}" placeholder="Steer it if you like: look for where the book contradicts itself"></textarea>
+                  <div class="opts">
+                    <div class="opt"><span class="lab">How many</span><div class="step"><button class="stepb" onClick="{{ countDown }}">−</button><span class="stepv">{{ count }}</span><button class="stepb" onClick="{{ countUp }}">+</button></div></div>
+                    <div class="opt"><span class="lab">Model</span><select class="sel" value="{{ metaModel }}" onChange="{{ onMetaModel }}"><sc-for list="{{ models }}" as="o"><option value="{{ o.id }}">{{ o.label }}</option></sc-for></select></div>
+                    <div class="opt"><span class="lab">Prompt</span><select class="sel" value="{{ prompt }}" onChange="{{ onPrompt }}"><sc-for list="{{ prompts }}" as="o"><option value="{{ o }}">{{ o }}</option></sc-for></select></div>
+                    <button class="btn pri go" onClick="{{ findMeta }}" disabled="{{ findOff }}">{{ findLabel }}</button>
+                  </div>
+                  <sc-if value="{{ busy }}"><div class="running"><span class="dot pulse"></span>Running {{ busyCmd }}</div></sc-if>
+                  <sc-if value="{{ metaPoolEmpty }}"><div class="running">This mock has no more sample connections. The real app would keep looking.</div></sc-if>
+                  <div class="pline"><span>Prompt file</span><span class="path">{{ metaPromptPath }}</span><button class="lnk" onClick="{{ openPrompt }}">Open prompt</button><span>reloaded {{ reloadAgo }} s ago</span></div>
+                </section>
+                </sc-if>
+              </div></main>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ isIdeas }}">
+            <div class="work" data-screen-label="7 Key ideas">
+              <aside class="nav">
+                <div class="navhd"><div style="font-size:14px;color:var(--ink2)" class="rowg"><span><sc-if value="{{ showAdds }}"><span class="ad" style="margin-right:6px">17</span></sc-if>Important points in the Book Companion that none of your highlights cover, from chapters you've read. Only the ones you open get saved.</span></div></div>
+                <div class="navlist" style="padding:0">
+                  <sc-for list="{{ ideaNav }}" as="m" hint-placeholder-count="4"><button class="{{ m.cls }}" onClick="{{ m.go }}"><span class="mlt">{{ m.title }}</span><span class="mlm">{{ m.meta }}</span></button></sc-for>
+                  <sc-if value="{{ ideaListEmpty }}"><div class="empty" style="margin:14px">{{ ideaEmptyText }}</div></sc-if>
+                </div>
+              </aside>
+              <main class="main" id="main"><div class="col">
+                <sc-if value="{{ curIdea }}">
+                  <div class="rowg" style="justify-content:space-between"><span class="crumbt">Key idea · {{ curIdea.chapter }} · Not in your highlights</span><button class="lnk" onClick="{{ removeIdea }}">Not for me</button></div>
+                  <h2 class="mtitle">{{ curIdea.title }}</h2>
+                  <div><div class="ideal">The Book Companion says</div><div style="font-size:15.5px;text-wrap:pretty">{{ curIdea.note }}</div></div>
+                  <div><div class="ideal">In the book</div><p class="ideaq">{{ curIdea.quote }}</p></div>
+                  <div class="two">
+                    <div class="card" style="background:var(--sheet);min-width:0">
+                      <div class="chd"><span class="ckind">Key idea card</span><span>{{ curIdea.src }}</span></div>
+                      <textarea class="ta f" rows="1" value="{{ curIdea.front }}" onChange="{{ onIdeaFront }}" placeholder="Question"></textarea>
+                      <textarea class="ta b" rows="1" value="{{ curIdea.back }}" onChange="{{ onIdeaBack }}" placeholder="Answer"></textarea>
+                    </div>
+                    <div class="pf"><span class="lab">Context on the reader</span><div class="eink"><div class="einkb"><span>KOReader</span><span>09:41</span></div><div class="einkm"><div class="einkd"><span class="einkbk">How to Live on 24 Hours a Day</span><span>Arnold Bennett</span><br /><span>{{ curIdea.chapter }}</span></div></div></div></div>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ ideasNeedComp }}">
+                  <div><h2 class="mtitle">This needs a Book Companion</h2><p class="lede" style="margin-top:8px">pbAnki finds what you missed by comparing your highlights with the Companion's list of each chapter's key points. This book doesn't have one yet.</p></div>
+                  <sc-if value="{{ compNone }}"><div class="rowg"><button class="btn pri" onClick="{{ openCreate }}">Create a Book Companion</button></div></sc-if>
+                  <sc-if value="{{ compBusy }}"><div class="running"><span class="dot pulse"></span>{{ compBusyText }}<button class="lnk" onClick="{{ openCreate }}">Details</button></div></sc-if>
+                </sc-if>
+              </div></main>
+            </div>
+          </sc-if>
+        </sc-if>
+
+        <sc-if value="{{ isSave }}">
+          <div class="top"><span class="brand">pbAnki</span><span class="bookt">Save cards</span><div class="topr"><span class="chip"><span class="{{ dotCls }}"></span>{{ readerLabel }}</span><button class="btn" onClick="{{ goHl }}">Back to editing</button></div></div>
+          <div class="savew" data-screen-label="8 Save cards">
+            <div class="savel"><div class="saveg">
+              <sc-for list="{{ saveGroups }}" as="g" hint-placeholder-count="4">
+                <div>
+                  <div class="sgh"><span>{{ g.head }}</span><span class="sgm">{{ g.where }}</span></div>
+                  <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="2"><div class="sr"><span class="srq">{{ r.front }}</span><span><sc-if value="{{ r.need }}"><span class="srneed">No answer yet</span></sc-if><span>{{ r.back }}</span></span></div></sc-for>
+                </div>
+              </sc-for>
+            </div></div>
+            <aside class="saver">
+              <div class="rowg" style="align-items:baseline"><span class="bignum">{{ saveCount }}</span><span>{{ saveNoun }}</span></div>
+              <sc-if value="{{ needCount }}"><div class="errb"><span>{{ needText }}</span><button class="lnk" style="color:var(--ink)" onClick="{{ goNeed }}">Go to it</button></div></sc-if>
+              <div class="fl" style="gap:12px">
+                <div class="lab"><sc-if value="{{ showAdds }}"><span class="ad">12</span></sc-if>What happens when you save</div>
+                <div class="step2"><span class="stepn">1</span><span>Copied to the backup on this computer</span><span class="stepd">~/Library/Application Support/pbAnki/pbanki.db</span></div>
+                <div class="step2"><span class="stepn">2</span><span>Added to pbAnki's inbox on the reader</span><span class="stepd">applications/pbanki/inbox.jsonl</span></div>
+                <div class="step2"><span class="stepn">3</span><span>{{ markText }}</span><span class="stepd">applications/pbanki/reviewed.jsonl. The plugin reads this when you next open the book in KOReader. It stops offering these highlights, and adds the cards to the history it learns your style from.</span></div>
+                <div class="step2"><span class="stepn">4</span><span class="rowg" style="gap:6px"><sc-if value="{{ showAdds }}"><span class="ad">19</span></sc-if>Read back from the reader to check</span><span class="stepd">This reader has lost newly copied files before, so pbAnki confirms they landed.</span></div>
+              </div>
+              <label class="cbx"><input type="checkbox" checked="{{ markMeta }}" onChange="{{ toggleMarkMeta }}" /><span>Also mark highlights used only by connection cards</span></label>
+              <div style="font-size:13.5px;color:var(--ink2)">{{ leftText }}</div>
+              <sc-if value="{{ saveWaiting }}"><div class="waitb"><div class="rowg"><span class="dot pulse"></span><b style="font-weight:600">Plug in your PocketBook to finish</b></div><div style="font-size:13.5px">Step 1 is done. The rest happens by itself when {{ mount }} appears.</div></div></sc-if>
+              <sc-if value="{{ saveNotWaiting }}"><button class="btn pri" style="padding:11px" onClick="{{ doSave }}" disabled="{{ saveBlocked }}">{{ saveBtn }}</button></sc-if>
+              <sc-if value="{{ saveUnplugNote }}"><div style="font-size:13.5px;color:var(--ink2)">Your reader is unplugged. Saving will back up your cards, then ask you to plug it in.</div></sc-if>
+            </aside>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isDone }}">
+          <div class="top"><span class="brand">pbAnki</span><div class="topr"><span class="chip"><span class="{{ dotCls }}"></span>{{ readerLabel }}</span></div></div>
+          <div class="center" data-screen-label="9 Saved"><div class="narrow">
+            <h1 class="h1">{{ doneTitle }}</h1>
+            <p class="lede">Open pbAnki on the reader. They'll be waiting in the deck KOReader::How to Live on 24 Hours a Day.</p>
+            <div style="border-top:3px solid var(--ink)">
+              <sc-for list="{{ doneRows }}" as="r" hint-placeholder-count="3"><div class="chk"><span class="chkg">✓</span><span class="chkt">{{ r.t }}</span><span class="chkp">{{ r.p }}</span></div></sc-for>
+            </div>
+            <div class="rowg"><button class="btn pri" onClick="{{ doEject }}" disabled="{{ ejected }}"><sc-if value="{{ showAdds }}"><span class="ad">13</span></sc-if>{{ ejectLabel }}</button><button class="btn" onClick="{{ goBooks }}">Another book</button><button class="btn" onClick="{{ goHl }}">Keep working on this one</button></div>
+          </div></div>
+        </sc-if>
+
+        <sc-if value="{{ isAdds }}">
+          <div class="center centertop" data-screen-label="10 Additions"><div class="narrow" style="max-width:720px;gap:10px">
+            <h1 class="h1">What I added to your brief</h1>
+            <p class="lede" style="margin-bottom:12px">Everything else in the mock is what you asked for. Turn on "Mark additions" above to see these numbers on the screens. Any of them can go.</p>
+            <sc-for list="{{ additions }}" as="a" hint-placeholder-count="14"><div class="adl"><span class="ad" style="margin-top:2px">{{ a.n }}</span><span class="adt">{{ a.t }}</span><span class="add">{{ a.d }}</span></div></sc-for>
+          </div></div>
+        </sc-if>
+      </div>
+
+      <sc-if value="{{ drawerPrompt }}">
+        <div class="scrim" onClick="{{ closeDrawer }}"><div class="drawer" onClick="{{ stop }}" data-screen-label="Prompt file">
+          <div class="drh"><h2 class="drt">Prompt: {{ prompt }}</h2><button class="x" onClick="{{ closeDrawer }}" aria-label="Close">✕</button></div>
+          <div class="fl"><div class="lab">Edit this file in any editor</div><div class="path" style="font-size:13px">{{ promptPathNow }}</div><div class="rowg" style="margin-top:4px"><button class="btn" onClick="{{ copyPath }}">{{ copyLabel }}</button><button class="btn" onClick="{{ noop }}">Open in editor</button><button class="btn" onClick="{{ noop }}">Show in Finder</button></div></div>
+          <div class="running"><span class="dot pulse"></span>Watching for changes. Reloaded {{ reloadAgo }} s ago.</div>
+          <div class="fl" style="gap:0"><div class="lab" style="padding-bottom:6px">Files in this prompt</div><sc-for list="{{ promptFiles }}" as="f" hint-placeholder-count="3"><div class="{{ f.cls }}"><span>{{ f.name }}</span><span class="pf-rn">{{ f.note }}</span></div></sc-for></div>
+          <div class="pfile">{{ promptBody }}</div>
+        </div></div>
+      </sc-if>
+
+      <sc-if value="{{ drawerSettings }}">
+        <div class="scrim" onClick="{{ closeDrawer }}"><div class="drawer" onClick="{{ stop }}" data-screen-label="Settings">
+          <div class="drh"><h2 class="drt">Settings</h2><button class="x" onClick="{{ closeDrawer }}" aria-label="Close">✕</button></div>
+          <div class="setg"><div class="setgt">Reader</div>
+            <div class="fl"><div class="lab">Where it mounts</div><input class="in" value="{{ mount }}" onChange="{{ onMount }}" /></div>
+            <div class="setrow"><span>Current status</span><span class="chip"><span class="{{ dotCls }}"></span>{{ readerLabel }}</span></div>
+          </div>
+          <div class="setg"><div class="setgt">AI</div>
+            <sc-for list="{{ assistants }}" as="a" hint-placeholder-count="2"><label class="asst"><input type="checkbox" checked="{{ a.on }}" onChange="{{ a.toggle }}" /><span>{{ a.name }}</span><span class="assts">Found</span><span class="asstp">{{ a.path }}</span></label></sc-for>
+            <div class="setn">Turn on both and each model menu lists them together, so you can use a different one per job.</div>
+            <div class="setrow"><span>Model for highlight cards</span><select class="sel" value="{{ model }}" onChange="{{ onModel }}"><sc-for list="{{ models }}" as="o"><option value="{{ o.id }}">{{ o.label }}</option></sc-for></select></div>
+            <div class="setrow"><span>Model for connections</span><select class="sel" value="{{ metaModel }}" onChange="{{ onMetaModel }}"><sc-for list="{{ models }}" as="o"><option value="{{ o.id }}">{{ o.label }}</option></sc-for></select></div>
+            <label class="setrow" style="cursor:pointer"><span class="rowg" style="gap:6px"><sc-if value="{{ showAdds }}"><span class="ad">1</span></sc-if>Start suggestions when a book opens</span><input type="checkbox" checked="{{ autoSuggest }}" onChange="{{ toggleAuto }}" style="accent-color:var(--ink)" /></label>
+          </div>
+          <div class="setg"><div class="setgt">Book Companion</div>
+            <div class="setrow"><span>This book</span><span class="assts">{{ compStatus }}</span></div>
+            <div class="setrow"><span>What the AI reads per highlight</span><select class="sel" value="{{ compSend }}" onChange="{{ onCompSend }}"><sc-for list="{{ compOpts }}" as="o"><option value="{{ o }}">{{ o }}</option></sc-for></select></div>
+            <div class="setn">Overview + chapter keeps each request small. Connections and key ideas always read the whole Companion.</div>
+            <div class="fl"><div class="lab">Folder with the Book Companion skill</div><input class="in" value="~/Documents/GitHub/assistant.koplugin" readOnly="{{ yes }}" /></div>
+            <div class="setn">Creating a Companion always uses Claude Code, because the skill runs there.</div>
+          </div>
+          <div class="setg"><div class="setgt">Files</div>
+            <div class="fl"><div class="lab">Prompts folder</div><div class="path">~/Library/Application Support/pbAnki/prompts</div></div>
+            <div class="fl"><div class="lab">Backup and drafts</div><div class="path">~/Library/Application Support/pbAnki/pbanki.db</div></div>
+          </div>
+        </div></div>
+      </sc-if>
+
+      <sc-if value="{{ drawerCreate }}">
+        <div class="scrim" onClick="{{ closeDrawer }}"><div class="drawer" onClick="{{ stop }}" data-screen-label="Create a Book Companion">
+          <div class="drh"><h2 class="drt">Create a Book Companion</h2><button class="x" onClick="{{ closeDrawer }}" aria-label="Close">✕</button></div>
+          <p style="margin:0;font-size:15px;text-wrap:pretty">Long notes on the whole book: each chapter's key points, the book's own vocabulary, and what later research says. pbAnki runs your existing Book Companion skill on this book.</p>
+          <div class="fl" style="gap:12px">
+            <div class="step2"><span class="stepn">1</span><span>It opens in Terminal</span><span class="stepd">The skill may ask what you want from the book. You can skip the questions.</span></div>
+            <div class="step2"><span class="stepn">2</span><span>It takes a while</span><span class="stepd">It reads the whole book using Opus. The Willpower Instinct took about 30 minutes. You can keep working here meanwhile.</span></div>
+            <div class="step2"><span class="stepn">3</span><span>pbAnki notices when it's done</span><span class="stepd">It asks before copying the file beside the book on your reader, named so KOReader finds it.</span></div>
+          </div>
+          <div class="fl"><div class="lab">What it runs</div><div class="pfile">cd ~/Documents/GitHub/assistant.koplugin
+claude "/book-companion 'How to Live on 24 Hours a Day.epub'"</div></div>
+          <sc-if value="{{ compNone }}"><div class="rowg"><button class="btn pri" onClick="{{ startCreate }}">Open in Terminal</button><button class="btn" onClick="{{ closeDrawer }}">Not now</button></div></sc-if>
+          <sc-if value="{{ compRunning }}"><div class="waitb"><div class="rowg"><span class="dot pulse"></span><b style="font-weight:600">Running in Terminal</b></div><div style="font-size:13.5px">Watching for How to Live on 24 Hours a Day.companion.md</div><div class="rowg"><button class="lnk" style="color:var(--ink)" onClick="{{ finishCreate }}">Mock: finish it now</button></div></div></sc-if>
+          <sc-if value="{{ compFound }}"><div class="waitb"><b style="font-weight:600">Your Book Companion is ready</b><div style="font-size:13.5px">Copy it beside the book on your reader? On-reader suggestions and the AI Assistant plugin will use it too.</div><div class="path">{{ compDest }}</div><div class="rowg"><button class="btn pri" onClick="{{ copyComp }}" disabled="{{ unplugged }}">Copy to reader</button><button class="btn" onClick="{{ keepCompLocal }}">Keep it on this computer</button></div><sc-if value="{{ unplugged }}"><div style="font-size:13.5px">Plug in your reader to copy it.</div></sc-if></div></sc-if>
+          <sc-if value="{{ compHave }}"><div class="banner"><span>{{ compStatus }}.</span><button class="btn" onClick="{{ closeDrawer }}">Done</button></div></sc-if>
+        </div></div>
+      </sc-if>
+    </x-dc>
+
+    <script type="text/x-dc" data-dc-script data-props="{}">
+      const {CH,chName,HL,SEED,AUTO,MORE,METAS,METAMORE,COMP,LATER,IDEAS,DEFS,BOOKS,ADDS,MODELS,ASSTS,cmdFor,COMP_OPTS,KINDS,PROMPT_DIR,PROMPT_BODY,META_BODY,TABS,GAP} = window.PB_DATA;
+      let NID = 100;
+      const clone = c => Object.assign({id:'c'+(NID++)},c);
+      const filled = c => c.front.trim()!=='';
+
+      class Component extends DCLogic {
+        constructor(props){
+          super(props);
+          const cards = {};
+          Object.keys(SEED).forEach(k=>{cards[k]=SEED[k].map(clone)});
+          this.state = {screen:'hl',sel:'h5',filter:'all',mounted:true,adds:false,fail:false,mount:'/Volumes/PB629',checkAgo:2,reloadAgo:12,cards,more:JSON.parse(JSON.stringify(MORE)),metas:METAS.map(m=>Object.assign({},m)),metaMore:METAMORE.slice(),metaSel:'m1',metaOff:{},opened:{h4:true,h5:true,h6:true},metaOpened:{m1:true},ideas:IDEAS.map(i=>Object.assign({src:'From the Book Companion'},i)),ideaSel:'i5',ideaOpened:{},compStage:'have',compPanel:false,compSend:'Overview + chapter',sugIdeas:true,selTerm:'',asst:{claude:true,codex:true},skipped:{},kind:'qa',count:3,hint:'',metaHint:'',model:'claude-sonnet-5-5',metaModel:'claude-opus-5-5',prompt:'Self Help',sees:'600 words each side',busy:false,poolEmpty:false,metaPoolEmpty:false,moreCtx:false,bgDone:0,bgPaused:false,auto:true,drawer:null,copied:false,scope:'pend',ui:{},removed:null,markMeta:true,sugRun:0,sugMeta:true,saveWaiting:false,saved:0,savedMark:0,ejected:false};
+        }
+        componentDidMount(){
+          this.t = setInterval(()=>this.tick(),1000); this.n = 0;
+          this.onSel = () => {
+            const sel = window.getSelection(), t = (sel&&sel.toString()||'').trim().replace(/\s+/g,' '), n = sel&&sel.anchorNode;
+            const el = n&&(n.nodeType===1?n:n.parentElement), inPass = el&&el.closest&&el.closest('.pass');
+            const wc = t?t.split(' ').length:0, term = inPass&&wc>=1&&wc<=3?t.replace(/^[^\w]+|[^\w]+$/g,''):'';
+            if(term!==this.state.selTerm) this.setState({selTerm:term});
+          };
+          document.addEventListener('selectionchange',this.onSel);
+        }
+        componentWillUnmount(){ clearInterval(this.t); document.removeEventListener('selectionchange',this.onSel); }
+        tick(){
+          this.n++;
+          const s = this.state, next = {checkAgo:(s.checkAgo+1)%4,reloadAgo:s.reloadAgo+1};
+          if(this.n%4===0 && s.auto && !s.bgPaused && s.bgDone<this.queue().length){
+            const hid = this.queue()[s.bgDone], h = HL.find(x=>x.id===hid);
+            next.bgDone = s.bgDone+1;
+            if(h.status!=='reviewed' && !(s.cards[hid]||[]).length) next.cards = Object.assign({},s.cards,{[hid]:AUTO[hid].map(clone)});
+          }
+          if(s.screen==='wait' && s.mounted) next.screen='check';
+          if(s.sugRun>0 && s.sugRun<this.sugTotal()){ next.sugRun=s.sugRun+1; if(next.sugRun>=this.sugTotal()){ const c=Object.assign({},s.cards); Object.keys(AUTO).forEach(k=>{const hh=HL.find(x=>x.id===k); if(hh.status!=='reviewed'&&!(c[k]||[]).length)c[k]=AUTO[k].map(clone);}); next.cards=c; next.bgDone=this.queue().length; } }
+          this.setState(next);
+          if(s.saveWaiting && s.mounted) this.finishSave();
+        }
+        queue(){ return Object.keys(AUTO); }
+        sugTotal(){ return this.pending().length+(this.state.sugMeta?3:0)+(this.state.sugIdeas&&this.state.compStage==='have'?2:0); }
+        pending(){ return HL.filter(h=>h.status!=='reviewed' && !this.state.skipped[h.id]); }
+        saveCount(){
+          const s=this.state; let n=s.metas.filter(m=>s.metaOpened[m.id]).length+this.openIdeas().length;
+          this.pending().filter(h=>s.opened[h.id]).forEach(h=>{n+=(s.cards[h.id]||[]).filter(filled).length});
+          return n;
+        }
+        openIdeas(){ const s=this.state; return s.compStage==='have'?s.ideas.filter(i=>s.ideaOpened[i.id]&&filled(i)):[]; }
+        markInfo(){
+          const s=this.state, pend=this.pending();
+          const withCards=pend.filter(h=>s.opened[h.id]&&(s.cards[h.id]||[]).filter(filled).length);
+          const metaOnly=new Set();
+          s.metas.filter(m=>s.metaOpened[m.id]).forEach(m=>m.sources.forEach(id=>{const h=HL.find(x=>x.id===id); if(h.status!=='reviewed'&&!s.skipped[id]&&!(s.cards[id]||[]).filter(filled).length)metaOnly.add(id);}));
+          const skipN=Object.keys(s.skipped).filter(k=>s.skipped[k]).length;
+          return {withCards,metaOnly,skipN,mark:withCards.length+skipN+(s.markMeta?metaOnly.size:0),left:pend.length-withCards.length-(s.markMeta?metaOnly.size:0)};
+        }
+        finishSave(){
+          const s=this.state, info=this.markInfo(), count=this.saveCount();
+          info.withCards.forEach(h=>{h.status='reviewed';h.saved=s.cards[h.id].filter(filled).map(c=>({front:c.front.replace(GAP,'[...]'),back:c.kind==='cloze'?'Cloze':c.back}));});
+          if(s.markMeta) info.metaOnly.forEach(id=>{const h=HL.find(x=>x.id===id);h.status='reviewed';h.saved=[];});
+          const keep={}; Object.keys(s.cards).forEach(k=>{ if(!info.withCards.some(h=>h.id===k)) keep[k]=s.cards[k]; });
+          const metasLeft=s.metas.filter(m=>!s.metaOpened[m.id]), ideasLeft=s.ideas.filter(i=>!s.ideaOpened[i.id]);
+          this.setState({screen:'done',saved:count,savedMark:info.mark,cards:keep,metas:metasLeft,metaSel:metasLeft[0]?metasLeft[0].id:'find',ideas:ideasLeft,ideaSel:ideasLeft[0]?ideasLeft[0].id:null,saveWaiting:false,ejected:false});
+        }
+        go(tab){
+          if(tab==='create'){ this.setState({drawer:'create',screen:'suggest',compStage:'none',sugRun:0,mounted:true}); return; }
+          const m={ideas:{screen:'ideas',ideaOpened:Object.assign({},this.state.ideaOpened,this.state.ideaSel?{[this.state.ideaSel]:true}:{})},wait:{screen:'wait',mounted:false},check:{screen:'check',mounted:true},books:{screen:'books',mounted:true},suggest:{screen:'suggest',mounted:true},hl:{screen:'hl',mounted:true},meta:{screen:'meta',mounted:true,metaOpened:Object.assign({},this.state.metaOpened,this.state.metaSel&&this.state.metaSel!=='find'?{[this.state.metaSel]:true}:{})},save:{screen:'save',saveWaiting:false,mounted:true},done:{screen:'done',mounted:true,saved:this.state.saved||this.saveCount(),savedMark:this.state.savedMark||this.markInfo().mark,ejected:false},adds:{screen:'adds'}};
+          if(tab==='settings'){ this.setState({drawer:'settings',screen:this.state.screen==='wait'||this.state.screen==='check'?'books':this.state.screen,mounted:true}); return; }
+          this.setState(Object.assign({drawer:null},m[tab]));
+        }
+        select(id){
+          this.setState({screen:'hl',sel:id,removed:null,poolEmpty:false,moreCtx:false,drawer:null,selTerm:'',compPanel:false,opened:Object.assign({},this.state.opened,{[id]:true})});
+          const el=document.getElementById('main'); if(el) el.scrollTop=0;
+        }
+        patchCard(hid,cid,fn){
+          const s=this.state, list=(s.cards[hid]||[]).map(c=>c.id===cid?fn(Object.assign({},c)):c);
+          this.setState({cards:Object.assign({},s.cards,{[hid]:list})});
+        }
+        setUi(cid,patch){ this.setState({ui:Object.assign({},this.state.ui,{[cid]:Object.assign({},this.state.ui[cid],patch)})}); }
+        addCard(c){
+          const s=this.state, card=clone(c), list=(s.cards[s.sel]||[]).concat([card]);
+          this.setState({cards:Object.assign({},s.cards,{[s.sel]:list}),removed:null});
+          setTimeout(()=>{const el=document.getElementById('f-'+card.id); if(el) el.focus();},60);
+        }
+        run(after,ms){
+          this.setState({busy:true,poolEmpty:false,metaPoolEmpty:false});
+          setTimeout(()=>{this.setState({busy:false}); after();},ms||1500);
+        }
+        doSuggest(){
+          const s=this.state, h=HL.find(x=>x.id===s.sel);
+          this.run(()=>{
+            const st=this.state, pool=(st.more[h.id]||[]).slice(), out=[];
+            if(st.kind==='cloze'){
+              const w=h.mark.split(' '), cut=Math.max(1,w.length-3);
+              out.push({kind:'cloze',src:'AI',front:w.slice(0,cut).join(' ')+' {{c1::'+w.slice(cut).join(' ')+'}}',back:''});
+            }else{
+              for(let i=0;i<st.count&&pool.length;i++){const p=pool.shift();out.push({kind:st.kind,src:'AI',front:p.front,back:st.kind==='qonly'?'':p.back});}
+            }
+            if(!out.length){this.setState({poolEmpty:true});return;}
+            const list=(st.cards[h.id]||[]).concat(out.map(clone));
+            this.setState({cards:Object.assign({},st.cards,{[h.id]:list}),more:Object.assign({},st.more,{[h.id]:pool}),hint:''});
+          });
+        }
+        cardVals(c,hid){
+          const ui=this.state.ui[c.id]||{}, isC=c.kind==='cloze', parts=[];
+          if(isC){
+            let last=0; const re=/\{\{c\d+::(.*?)\}\}/g; let m;
+            while((m=re.exec(c.front))){ if(m.index>last) parts.push({text:c.front.slice(last,m.index)}); parts.push({gap:true}); last=re.lastIndex; }
+            if(last<c.front.length) parts.push({text:c.front.slice(last)});
+          }
+          const plain=isC?c.front.replace(GAP,'[...]'):c.front;
+          const need=c.kind==='qonly'&&!c.back;
+          return Object.assign({},c,{
+            cls:'card',editable:true,ro:false,isCloze:isC,isPlain:!isC,fid:'f-'+c.id,parts,
+            kindLabel:{qa:'Question and answer',cloze:'Cloze',qonly:'Question only',def:'Definition'}[c.kind],
+            backCls:need?'ta b need':'ta b',backPh:need?'Write the answer yourself':'Answer',
+            frontPlain:plain,backPlain:isC?c.front.replace(GAP,'$1'):c.back,
+            rwOpen:!!ui.rw,prevOpen:!!ui.prev,rwText:ui.text||'',rwBtn:ui.busy?'Rewriting...':'Rewrite',
+            toggleRw:()=>this.setUi(c.id,{rw:!ui.rw}),togglePrev:()=>this.setUi(c.id,{prev:!ui.prev}),
+            onRwText:e=>this.setUi(c.id,{text:e.target.value}),
+            doRw:()=>{ this.setUi(c.id,{busy:true}); setTimeout(()=>{ this.patchCard(hid,c.id,x=>{ if(x.alt){x.front=x.alt;x.alt=null;x.warn=null;} x.src='AI, rewritten'; return x; }); this.setUi(c.id,{busy:false,rw:false,text:''}); },1100); },
+            remove:()=>{ const st=this.state, list=st.cards[hid].filter(x=>x.id!==c.id); this.setState({cards:Object.assign({},st.cards,{[hid]:list}),removed:{hid,c}}); },
+            onFront:e=>{const v=e.target.value; this.patchCard(hid,c.id,x=>{x.front=v; if(x.src==='AI')x.src='AI, edited'; return x;});},
+            onBack:e=>{const v=e.target.value; this.patchCard(hid,c.id,x=>{x.back=v; if(x.src==='AI'&&x.kind!=='qonly')x.src='AI, edited'; return x;});},
+            hide:e=>{ e.preventDefault(); const el=document.getElementById('f-'+c.id); if(!el) return; const a=el.selectionStart,b=el.selectionEnd; if(a===b) return; const n=(c.front.match(/\{\{c\d+::/g)||[]).length+1; const v=c.front.slice(0,a)+'{{c'+n+'::'+c.front.slice(a,b)+'}}'+c.front.slice(b); this.patchCard(hid,c.id,x=>{x.front=v;return x;}); }
+          });
+        }
+        renderVals(){
+          const s=this.state, showAdds=s.adds, noop=()=>{};
+          const isHl=s.screen==='hl', isMeta=s.screen==='meta', isIdeas=s.screen==='ideas', compHave=s.compStage==='have';
+          const pend=this.pending(), cur=Object.assign({},HL.find(h=>h.id===s.sel));
+          cur.chapterFull=chName(cur.ch); cur.chapterShort=chName(cur.ch);
+          const curIdx=HL.findIndex(h=>h.id===s.sel), rev=cur.status==='reviewed', skip=!!s.skipped[cur.id];
+          const q=this.queue(), bgActive=s.auto&&s.bgDone<q.length;
+          const writingHid=bgActive&&!s.bgPaused?q[s.bgDone]:null;
+          const stateOf=h=>h.status==='reviewed'?'rev':s.skipped[h.id]?'skip':(s.cards[h.id]||[]).length?(s.opened[h.id]?'cards':'sugg'):h.id===writingHid?'writing':'todo';
+          const counts={all:HL.length,todo:pend.length,rev:HL.length-pend.length};
+          const visible=HL.filter(h=>s.filter==='all'?true:s.filter==='todo'?(h.status!=='reviewed'&&!s.skipped[h.id]):(h.status==='reviewed'||s.skipped[h.id]));
+          const groups=[]; visible.forEach(h=>{
+            let g=groups.find(x=>x.ch===h.ch); if(!g){g={ch:h.ch,name:h.ch+' · '+CH[h.ch],items:[]};groups.push(g);}
+            const st=stateOf(h), n=(s.cards[h.id]||[]).length;
+            g.items.push({mark:h.mark,page:h.page,go:()=>this.select(h.id),glyph:{rev:'✓',skip:'–',cards:'●',sugg:'○',writing:'…',todo:'○'}[st],
+              meta:[st==='rev'?'Reviewed':st==='skip'?'Skipped':st==='writing'?'Writing':st==='sugg'?n+' suggested':n?n+(n===1?' card':' cards'):'',h.note?'Note':'',compHave&&LATER[h.id]?'Later research':''].filter(Boolean).join(' · '),
+              cls:'hl'+(h.id===s.sel&&isHl?' on':'')+(st==='rev'||st==='skip'?' rev':'')});
+          });
+          const curCards=rev?(cur.saved||[]).map((c,i)=>({id:'s'+i,cls:'card ro',kindLabel:'Saved on the reader',src:'',front:c.front,back:c.back,isPlain:true,isCloze:false,editable:false,ro:true,backCls:'ta b',backPh:'',fid:'s'+i,onFront:noop,onBack:noop})):(s.cards[cur.id]||[]).map(c=>this.cardVals(c,cur.id));
+          const banner=rev?((cur.saved||[]).length?'Reviewed. These are the cards you saved from it.':'Reviewed, with no cards on record. You skipped it, or its cards are older than the 40 the plugin remembers.'):skip?'Skipped. It will count as reviewed when you save.':'';
+          const kindFile=KINDS.find(k=>k.id===s.kind).file, promptPath=PROMPT_DIR+s.prompt+'/'+kindFile, metaPromptPath=PROMPT_DIR+s.prompt+'/connections.md';
+          const metas=s.metas.map(m=>({title:m.title,go:()=>this.selectMeta(m.id),cls:'ml'+(m.id===s.metaSel?' on':''),meta:this.chapterText(m)+' · '+m.sources.length+' highlights'+(s.metaOpened[m.id]?'':' · Not opened')}));
+          const isFind=s.metaSel==='find'||!s.metas.length;
+          let curMeta=isFind?null:(s.metas.find(m=>m.id===s.metaSel)||s.metas[0]||null);
+          const chIds=[...new Set(HL.map(h=>h.ch))], chOn=id=>!s.metaOff[id];
+          const chScope=id=>HL.filter(h=>h.ch===id&&(s.scope==='all'||(h.status!=='reviewed'&&!s.skipped[h.id]))).length;
+          const chPicked=chIds.filter(chOn), chHl=chPicked.reduce((a,id)=>a+chScope(id),0);
+          if(curMeta){curMeta=Object.assign({},curMeta,{chapters:this.chapterText(curMeta),srcCount:curMeta.sources.length+' highlights',sources:curMeta.sources.map(id=>{const h=HL.find(x=>x.id===id);return{mark:h.mark,where:'Ch. '+h.ch+' · p. '+h.page,whereLong:chName(h.ch)+' · p. '+h.page,go:()=>this.select(id)};})});}
+          const patchMeta=(k,v)=>this.setState({metas:s.metas.map(m=>m.id===curMeta.id?Object.assign({},m,{[k]:v,src:m.src==='AI'?'AI, edited':m.src}):m)});
+          const count=this.saveCount(), needs=[], saveGroups=[];
+          pend.filter(h=>s.opened[h.id]).forEach(h=>{const cs=(s.cards[h.id]||[]).filter(filled); if(!cs.length)return; saveGroups.push({head:h.mark,where:'Ch. '+h.ch+' · p. '+h.page,rows:cs.map(c=>{const need=c.kind==='qonly'&&!c.back; if(need)needs.push(h.id); return{front:c.kind==='cloze'?c.front.replace(GAP,'[...]'):c.front,back:c.kind==='cloze'?'Cloze':c.back,need};})});});
+          s.metas.filter(m=>s.metaOpened[m.id]).forEach(m=>saveGroups.push({head:'Connection: '+m.title,where:this.chapterText(m),rows:[{front:m.front,back:m.back,need:false}]}));
+          this.openIdeas().forEach(i=>saveGroups.push({head:'Key idea: '+i.title,where:chName(i.ch),rows:[{front:i.front,back:i.back,need:false}]}));
+          const info=this.markInfo();
+          const unopened=pend.filter(h=>!s.opened[h.id]&&(s.cards[h.id]||[]).length).length, metasWaiting=s.metas.filter(m=>!s.metaOpened[m.id]).length, ideasWaiting=compHave?s.ideas.filter(i=>!s.ideaOpened[i.id]).length:0;
+          const ideaList=compHave?s.ideas:[], curIdeaRaw=ideaList.find(i=>i.id===s.ideaSel)||null;
+          const patchIdea=(k,v)=>this.setState({ideas:s.ideas.map(i=>i.id===s.ideaSel?Object.assign({},i,{[k]:v,src:'From the Book Companion, edited'}):i)});
+          const compData=COMP[cur.ch]||{big:'',pts:[]};
+          const models=MODELS.filter(m=>s.asst[m.a]);
+          const plur=(n,w)=>n+' '+w+(n===1?'':'s');
+          const tabCur=s.drawer==='settings'?'settings':s.drawer==='create'?'create':s.screen;
+          return {
+            showAdds,noop,stop:e=>e.stopPropagation(),
+            tabs:TABS.map(t=>({label:t[0],cls:'mt'+(tabCur===t[1]?' on':''),go:()=>this.go(t[1])})),
+            plugCls:s.mounted?'mtog':'mtog on',plugLabel:s.mounted?'Reader: on':'Reader: off',togglePlug:()=>this.setState({mounted:!s.mounted}),
+            compTogCls:compHave?'mtog':'mtog on',compTogLabel:compHave?'Companion: yes':'Companion: none',toggleCompMock:()=>this.setState({compStage:compHave?'none':'have'}),
+            yes:true,compHave,compNone:s.compStage==='none',compRunning:s.compStage==='running',compFound:s.compStage==='found',compBusy:s.compStage==='running'||s.compStage==='found',compBusyText:s.compStage==='running'?'Creating the Book Companion in Terminal. You can keep working.':'Your Book Companion is ready to copy to the reader.',
+            compStatus:compHave?(s.compLocal?'Book Companion on this computer':'Book Companion on the reader'):s.compStage==='running'?'Being created':s.compStage==='found'?'Ready to copy':'None yet',compDest:'Beside the book: How to Live on 24 Hours a Day.companion.md',
+            openCreate:()=>this.setState({drawer:'create'}),startCreate:()=>this.setState({compStage:'running'}),finishCreate:()=>this.setState({compStage:'found'}),copyComp:()=>this.setState({compStage:'have',compLocal:false}),keepCompLocal:()=>this.setState({compStage:'have',compLocal:true}),
+            compOpts:COMP_OPTS,compSend:s.compSend,onCompSend:e=>this.setState({compSend:e.target.value}),
+            curComp:{big:compData.big,pts:compData.pts.map(p=>({t:p[0],glyph:p[1]?'✓':'○',go:p[2]?()=>this.selectIdea(p[2]):null}))},compPanelOpen:s.compPanel,toggleCompPanel:()=>this.setState({compPanel:!s.compPanel}),compPanelLabel:s.compPanel?'Hide':'Show notes',curLater:compHave?(LATER[cur.id]||''):'',
+            sugIdeasOn:s.sugIdeas,toggleSugIdeas:()=>this.setState({sugIdeas:!s.sugIdeas,sugRun:0}),
+            isIdeas,tabIdeasCls:isIdeas?'sg on':'sg',goIdeas:()=>this.go('ideas'),ideaCount:ideaList.length,
+            ideaNav:ideaList.map(i=>({title:i.title,cls:'ml'+(i.id===s.ideaSel?' on':''),go:()=>this.selectIdea(i.id),meta:chName(i.ch)+(s.ideaOpened[i.id]?'':' · Not opened')})),
+            ideaListEmpty:!ideaList.length,ideaEmptyText:compHave?'No key ideas left. Your highlights and cards cover the rest.':'Nothing to compare against yet.',ideasNeedComp:!compHave,
+            curIdea:curIdeaRaw?Object.assign({},curIdeaRaw,{chapter:chName(curIdeaRaw.ch)}):null,onIdeaFront:e=>patchIdea('front',e.target.value),onIdeaBack:e=>patchIdea('back',e.target.value),
+            removeIdea:()=>{const rest=s.ideas.filter(i=>i.id!==s.ideaSel); this.setState({ideas:rest}); if(rest[0]) this.selectIdea(rest[0].id); else this.setState({ideaSel:null});},
+            defOff:!s.selTerm||s.busy,defLabel:s.busy&&s.selTerm?'Writing definition...':s.selTerm?'Make definition cards for "'+s.selTerm+'"':'Select 1 to 3 words to define them',doDefine:e=>this.doDefine(e),drawerCreate:s.drawer==='create',
+            assistants:ASSTS.map(a=>({name:a.name,path:a.path,on:s.asst[a.id],toggle:()=>{const next=Object.assign({},s.asst,{[a.id]:!s.asst[a.id]}); if(!next.claude&&!next.codex) return; const ok=MODELS.filter(m=>next[m.a]), fix=id=>ok.some(m=>m.id===id)?id:ok[0].id; this.setState({asst:next,model:fix(s.model),metaModel:fix(s.metaModel)});}})),
+            addsCls:s.adds?'mtog on':'mtog',setCls:s.drawer==='settings'?'mtog on':'mtog',goSettings:()=>this.go('settings'),toggleAdds:()=>this.setState({adds:!s.adds}),
+            isWait:s.screen==='wait',isCheck:s.screen==='check',isBooks:s.screen==='books',isSuggest:s.screen==='suggest',
+            sugIdle:s.sugRun===0,sugBusy:s.sugRun>0&&s.sugRun<this.sugTotal(),sugDone:s.sugRun>0&&s.sugRun>=this.sugTotal(),
+            sugLede:s.sugRun>0?'Using your last choices. Only the cards you open get saved.':'The AI writes cards for each of your '+pend.length+' pending highlights, then reads them together to find connections across chapters.',
+            sugBtn:'Suggest cards for '+plur(pend.length,'highlight'),startSug:()=>this.setState({sugRun:1}),
+            sugMetaOn:s.sugMeta,toggleSugMeta:()=>this.setState({sugMeta:!s.sugMeta,sugRun:0}),
+            sugRows:(()=>{const n=pend.length,r=s.sugRun,tot=this.sugTotal(),hd=Math.min(r,n),mEnd=n+(s.sugMeta?3:0);const rows=[{t:'Highlight cards',p:hd>=n?'Done · '+n+' of '+n+' highlights':hd+' of '+n+' highlights',ok:hd>=n}];if(s.sugMeta)rows.push({t:'Connections',p:r>=mEnd?'Done · '+s.metas.length+' found':hd<n?'Waiting for highlight cards':'Reading all highlights together',ok:r>=mEnd});if(s.sugIdeas&&compHave)rows.push({t:'Key ideas you didn\'t highlight',p:r>=tot?'Done · '+s.ideas.length+' found':r<mEnd?'Waiting':'Comparing the Book Companion with your highlights',ok:r>=tot});return rows.map(x=>({title:x.t,path:x.p,glyph:x.ok?'✓':'…',cls:'chk'}));})(),
+            sugReset:()=>this.setState({sugRun:0}),isWork:isHl||isMeta||isIdeas,isHl,isMeta,isSave:s.screen==='save',isDone:s.screen==='done',isAdds:s.screen==='adds',
+            mount:s.mount,onMount:e=>this.setState({mount:e.target.value}),checkAgo:s.checkAgo,reloadAgo:s.reloadAgo,resumeText:plur(count,'unsaved card')+(count===1?' is':' are')+' safe on this computer',
+            goWorkOffline:()=>this.setState({screen:'hl',mounted:false}),goBooks:()=>this.setState({screen:'books'}),goHl:()=>this.setState({screen:'hl'}),goMeta:()=>this.setState({screen:'meta'}),goSave:()=>this.setState({screen:'save',saveWaiting:false}),
+            checkTitle:s.fail?'Something is missing on the reader':'Your reader is ready',checkOk:!s.fail,checkBad:s.fail,toggleFail:()=>this.setState({fail:!s.fail}),failLabel:s.fail?'Mock: show it all found':'Mock: show something missing',
+            checks:[{t:'PB629 is connected',p:s.mount,ok:true},{t:'KOReader found',p:'applications/koreader',ok:true},{t:s.fail?'pbAnki not found. Install it on the reader, then check again.':'pbAnki found',p:'applications/pbanki',ok:!s.fail},{t:'KOReader history read',p:'5 books',ok:true}].map(c=>({title:c.t,path:c.p,glyph:c.ok?'✓':'✕',cls:c.ok?'chk':'chk bad'})),
+            dotCls:s.mounted?'dot':'dot off',readerLabel:s.mounted?'PB629 connected':'Reader unplugged',unplugged:!s.mounted,
+            openSettings:()=>this.setState({drawer:'settings'}),closeDrawer:()=>this.setState({drawer:null,copied:false}),drawerPrompt:s.drawer==='prompt',drawerSettings:s.drawer==='settings',
+            books:BOOKS.map((b,i)=>Object.assign({},b,{cls:b.dim?'bk dim':'bk',none:!!b.none,draft:i===0&&count?plur(count,'unsaved card'):'',hl:i===0?pend.length+' to do of '+HL.length:b.hl,comp:i===0?(compHave?'Yes':s.compStage==='none'?'None':'Creating'):b.comp,open:()=>this.setState({screen:'suggest',sugRun:s.auto&&s.sugRun===0?1:s.sugRun})})),
+            tabHlCls:isHl?'sg on':'sg',tabMetaCls:isMeta?'sg on':'sg',metaCount:s.metas.length,saveLabel:'Save '+plur(count,'card'),noCards:count===0,
+            filters:[['all','All '+counts.all],['todo','To do '+counts.todo],['rev','Reviewed '+counts.rev]].map(f=>({label:f[1],cls:s.filter===f[0]?'sg on':'sg',go:()=>this.setState({filter:f[0]})})),
+            bgShow:s.auto&&s.bgDone<q.length,bgActive,bgLabel:s.bgPaused?'Suggestions paused':'Writing suggestions '+(s.bgDone+1)+' of '+q.length,bgBtn:s.bgPaused?'Resume':'Pause',bgToggle:()=>this.setState({bgPaused:!s.bgPaused}),bgCells:q.map((_,i)=>({cls:i<s.bgDone?'bgc on':'bgc'})),
+            groups,cur,curPos:(curIdx+1)+' of '+HL.length,noPrev:curIdx===0,noNext:curIdx===HL.length-1,goPrev:()=>curIdx>0&&this.select(HL[curIdx-1].id),goNext:()=>curIdx<HL.length-1&&this.select(HL[curIdx+1].id),
+            canSkip:!rev&&!skip,isSkipped:skip,doSkip:()=>this.setState({skipped:Object.assign({},s.skipped,{[cur.id]:!skip})}),curBanner:banner,
+            moreCtx:s.moreCtx,toggleCtx:()=>this.setState({moreCtx:!s.moreCtx}),ctxLabel:s.moreCtx?'Show less':'Show more of the book',
+            cardsTitle:rev?'Saved cards':'Cards for this highlight',canEdit:!rev&&!skip,curWriting:writingHid===cur.id&&!curCards.length,curEmpty:!curCards.length&&writingHid!==cur.id&&!rev,curCards,
+            addQA:()=>this.addCard({kind:'qa',src:'You',front:'',back:''}),addCloze:()=>this.addCard({kind:'cloze',src:'You',front:cur.mark,back:''}),
+            lastRemoved:s.removed&&s.removed.hid===cur.id,undoRemove:()=>{const r=s.removed; this.setState({cards:Object.assign({},s.cards,{[r.hid]:(s.cards[r.hid]||[]).concat([r.c])}),removed:null});},
+            hint:s.hint,onHint:e=>this.setState({hint:e.target.value}),count:s.count,countDown:()=>this.setState({count:Math.max(1,s.count-1)}),countUp:()=>this.setState({count:Math.min(10,s.count+1)}),
+            kind:s.kind,kinds:KINDS,onKind:e=>this.setState({kind:e.target.value}),model:s.model,models,onModel:e=>this.setState({model:e.target.value}),metaModel:s.metaModel,onMetaModel:e=>this.setState({metaModel:e.target.value}),
+            prompt:s.prompt,prompts:['Standard','Self Help','Concise'],onPrompt:e=>this.setState({prompt:e.target.value,reloadAgo:0}),sees:s.sees,seesOpts:['600 words each side','The chapter','The whole book'],onSees:e=>this.setState({sees:e.target.value}),
+            busy:s.busy,busyCmd:cmdFor(isMeta?s.metaModel:s.model),poolEmpty:s.poolEmpty,metaPoolEmpty:s.metaPoolEmpty,suggest:()=>this.doSuggest(),suggestLabel:s.busy?'Writing...':'Suggest '+plur(s.kind==='cloze'?1:s.count,'card'),
+            promptPath,metaPromptPath,openPrompt:()=>this.setState({drawer:'prompt'}),
+            promptPathNow:isMeta?metaPromptPath:promptPath,copyPath:()=>this.setState({copied:true}),copyLabel:s.copied?'Copied':'Copy path',promptBody:isMeta?META_BODY:PROMPT_BODY,
+            promptFiles:[['questions.md','this prompt'],['cloze.md','uses Standard'],['connections.md','this prompt']].map(f=>({name:f[0],note:f[1],cls:(isMeta?'connections.md':kindFile)===f[0]?'pf-r on':'pf-r'})),
+            scopePend:s.scope==='pend'?'sg on':'sg',scopeAll:s.scope==='all'?'sg on':'sg',setScopePend:()=>this.setState({scope:'pend'}),setScopeAll:()=>this.setState({scope:'all'}),
+            metas,metaEmpty:!metas.length,curMeta,isFind,
+            findCls:'ml'+(isFind?' on':''),goFind:()=>this.setState({metaSel:'find'}),findNavMeta:chPicked.length===chIds.length?'All chapters':plur(chPicked.length,'chapter'),
+            chapterPicks:chIds.map(id=>({name:id+' · '+CH[id],meta:plur(chScope(id),'highlight'),on:chOn(id),toggle:()=>this.setState({metaOff:Object.assign({},s.metaOff,{[id]:chOn(id)})})})),
+            chAll:()=>this.setState({metaOff:{}}),chNone:()=>this.setState({metaOff:Object.fromEntries(chIds.map(i=>[i,true]))}),
+            chSummary:chPicked.length?'Reading '+plur(chHl,'highlight')+' from '+plur(chPicked.length,'chapter'):'Pick at least one chapter',
+            findOff:s.busy||chHl<2,onMetaFront:e=>patchMeta('front',e.target.value),onMetaBack:e=>patchMeta('back',e.target.value),metaHint:s.metaHint,onMetaHint:e=>this.setState({metaHint:e.target.value}),
+            removeMeta:()=>{const rest=s.metas.filter(m=>m.id!==curMeta.id); this.setState({metas:rest,metaSel:rest[0]?rest[0].id:null,metaOpened:rest[0]?Object.assign({},s.metaOpened,{[rest[0].id]:true}):s.metaOpened});},
+            findLabel:s.busy?'Reading highlights...':'Find '+plur(s.count,'connection'),findMeta:()=>this.run(()=>{const st=this.state,pool=st.metaMore.slice(); if(!pool.length){this.setState({metaPoolEmpty:true});return;} const m=Object.assign({},pool.shift()); this.setState({metas:st.metas.concat([m]),metaMore:pool,metaSel:m.id,metaHint:'',metaOpened:Object.assign({},st.metaOpened,{[m.id]:true})});},1800),
+            saveGroups,saveCount:count,saveNoun:count===1?'card ready':'cards ready',needCount:needs.length,needText:plur(needs.length,'question')+' still '+(needs.length===1?'needs an answer':'need answers')+'. Answer or remove before saving.',goNeed:()=>this.select(needs[0]),
+            markText:'Mark '+plur(info.mark,'highlight')+' as reviewed',leftText:[info.left>0?plur(info.left,'highlight')+' will stay to do.':'Every pending highlight is covered.',unopened?plur(unopened,'highlight')+' with suggestions you haven\'t opened '+(unopened===1?'is':'are')+' not included. '+(unopened===1?'Its':'Their')+' suggestions stay here for later.':'',metasWaiting?plur(metasWaiting,'connection')+' you haven\'t opened also '+(metasWaiting===1?'stays':'stay')+' here.':'',ideasWaiting?plur(ideasWaiting,'key idea')+' you haven\'t opened also '+(ideasWaiting===1?'stays':'stay')+' here.':''].filter(Boolean).join(' '),markMeta:s.markMeta,toggleMarkMeta:()=>this.setState({markMeta:!s.markMeta}),
+            saveWaiting:s.saveWaiting,saveNotWaiting:!s.saveWaiting,saveUnplugNote:!s.mounted&&!s.saveWaiting,saveBlocked:needs.length>0||count===0,saveBtn:s.mounted?'Save to reader':'Back up and wait for reader',doSave:()=>{ if(needs.length)return; if(s.mounted)this.finishSave(); else this.setState({saveWaiting:true}); },
+            doneTitle:plur(s.saved||count,'card')+' on your reader',doneRows:[{t:'Backed up on this computer',p:'~/Library/Application Support/pbAnki/pbanki.db'},{t:'Added to pbAnki\'s inbox',p:'applications/pbanki/inbox.jsonl'},{t:plur(s.savedMark||info.mark,'highlight')+' noted as reviewed for the plugin',p:'applications/pbanki/reviewed.jsonl. Takes effect when you next open the book in KOReader.'},{t:'Read back from the reader',p:'Both files landed'}],doEject:()=>this.setState({ejected:true,mounted:false}),ejected:s.ejected,ejectLabel:s.ejected?'Safe to unplug':'Eject reader',
+            autoSuggest:s.auto,toggleAuto:()=>this.setState({auto:!s.auto}),
+            additions:ADDS.map((a,i)=>({n:i+1,t:a[0],d:a[1]}))
+          };
+        }
+        chapterText(m){
+          const out=[]; m.sources.forEach(id=>{const c=HL.find(h=>h.id===id).ch; if(!out.includes(c))out.push(c);});
+          return out.map(chName).join(' · ');
+        }
+        selectMeta(id){ this.setState({metaSel:id,metaOpened:Object.assign({},this.state.metaOpened,{[id]:true})}); }
+        selectIdea(id){
+          this.setState({screen:'ideas',ideaSel:id,drawer:null,ideaOpened:Object.assign({},this.state.ideaOpened,{[id]:true})});
+          const el=document.getElementById('main'); if(el) el.scrollTop=0;
+        }
+        doDefine(e){
+          e.preventDefault();
+          const s=this.state, term=s.selTerm, hid=s.sel; if(!term) return;
+          const window_sel=window.getSelection(); if(window_sel) window_sel.removeAllRanges();
+          const def=DEFS[term.toLowerCase()]||'The AI writes what this means as the book uses it. This mock only knows a few words, such as ardour, petty and windfall.';
+          const src=s.compStage==='have'&&s.compSend!=='Off'?'AI, using the Book Companion':'AI';
+          this.run(()=>{
+            const st=this.state, add=[{kind:'def',src,front:'Define '+term,back:def},{kind:'def',src,front:def,back:term}].map(clone);
+            this.setState({cards:Object.assign({},st.cards,{[hid]:(st.cards[hid]||[]).concat(add)}),selTerm:''});
+          },1000);
+        }
+      }
+    </script>
+  </body>
+</html>
+
