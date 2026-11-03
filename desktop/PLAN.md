@@ -11,7 +11,7 @@ A local web app, served by a small Python program on the Mac, for making flashca
    - `applications/koreader/plugins/pbanki.koplugin/*` (only after the user clicks Update plugin)
 
    It never writes `.sdr` folders, `history.lua`, `settings.reader.lua`, `system/` or anything else. It never launches KOReader or any program on the reader. A test asserts this by snapshotting a fake reader before and after a whole session.
-2. **Writes to the reader are proven, not assumed.** Its FAT disk has silently dropped newly written files after a clean copy. Every write is: write, flush, `os.fsync`, `os.sync`, wait `PBANKI_SYNC_DELAY` seconds (default 2), read the file back from disk, compare, retry once, then fail loudly.
+2. **Writes to the reader are proven, not assumed.** Its FAT disk has silently dropped newly created files and folders after a clean copy, and a read in the same mount session can be served from the Mac's cache (`assistant.koplugin/.claude/skills/deploy-plugin/SKILL.md`, incidents of 2026-07-12 and 2026-09-29). So all writes go through `device.py`: write, flush that file with `F_FULLFSYNC`, wait `PBANKI_SYNC_DELAY` seconds, **unmount and mount the disk again** (`diskutil`), read back and compare, re-copy only what vanished, up to 3 rounds, then fail loudly. Do not call `os.sync()`: on this Mac it was still blocked after 3 minutes. Paths outside `/Volumes` (a test's fake reader) skip the remount. `device.check_allowed` enforces ground rule 1 in code.
 3. **Work is never lost.** Everything the user types or the AI writes goes to SQLite on the Mac immediately. The whole working screen functions with the reader unplugged, from a local cache of the book's highlights and passages.
 4. **No third-party Python packages.** Python 3.11+ standard library only, so `python3 desktop/run.py` works with no install step. The browser code uses vendored Preact + htm, with no build step and nothing fetched from the internet at run time (fonts are vendored too).
 5. **Local only.** The server binds `127.0.0.1`, rejects requests whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>`, and rejects state-changing requests whose `Origin` is present and not the app's own. Book text is untrusted input to the AI, so the AI runs with no tools (see section 6).
@@ -184,11 +184,11 @@ Pipeline for one batch, each step recorded so a crash resumes safely:
 
 1. Write the batch to SQLite: `backed_up`. Drafts become `saved` here so they can't be saved twice.
 2. If the reader is unplugged, stop and show the mock's waiting state. A background watcher continues when the mount appears, and also on app start.
-3. Re-read `inbox.jsonl` and `reviewed.jsonl`, append only lines whose batch isn't already complete there, following ground rule 2: `written`.
-4. Read both back from disk and compare byte for byte with what was expected: `verified`. A failure retries once, then reports exactly which file failed with the batch kept safe and a Try again button.
+3. Re-read `inbox.jsonl` and `reviewed.jsonl`, and work out the new contents, appending only lines whose batch isn't already there: `written` once `device.write_files` has been handed both files together.
+4. `device.write_files` does the remount and read-back: `verified`. Failure reports its plain sentence, with the batch kept safe and a Try again button. The mount watcher holds `device.remount_lock`, so this brief absence isn't shown as unplugged.
 5. Refresh the book's status. Report the counts shown on the Saved screen.
 
-Eject uses `diskutil eject <mount>` after `os.sync`, and reports failure in plain words ("Something on this Mac is still using the reader").
+Eject uses `diskutil eject <mount>`, and reports failure in plain words ("Something on this Mac is still using the reader").
 
 Plugin update copies `koreader/pbanki.koplugin/**` to the reader's plugin folder under ground rule 2, skipping files whose bytes already match, and leaves `prompts/` on the reader to the plugin itself. Runs only on the button.
 
