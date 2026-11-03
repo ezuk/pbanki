@@ -135,12 +135,18 @@ function M.buildMessages(h, request, companion, position_note)
     table.insert(messages, { role = "system", content = M.systemPrompt(request.prompt, M.requestKind(request)) })
 
     local parts = {}
-    local about = {
-        line("Book", h.book),
-        line("Author", h.author),
-        line("Chapter", h.chapter),
-        h.percent and string.format("Position in book: %d%%", math.floor(h.percent + 0.5)) or nil,
-    }
+    local about = {}
+    for _idx, entry in ipairs({
+        { "Book", h.book },
+        { "Author", h.author },
+        { "Chapter", h.chapter },
+    }) do
+        local text = line(entry[1], entry[2])
+        if text then table.insert(about, text) end
+    end
+    if h.percent then
+        table.insert(about, string.format("Position in book: %d%%", math.floor(h.percent + 0.5)))
+    end
     if #about > 0 then
         table.insert(parts, tagged("book", table.concat(about, "\n")))
     end
@@ -453,6 +459,86 @@ function M.parseReply(text, request, h, decode)
         return nil, "The AI's cloze cards did not quote the book. Try Suggest again."
     end
     return kept
+end
+
+--- A card from a reviewed.jsonl line with only the fields the history uses,
+-- or nil when it has no front or a back that is not text.
+local function desktopCard(item)
+    if type(item) ~= "table" or type(item.front) ~= "string" then return nil end
+    if item.back ~= nil and type(item.back) ~= "string" then return nil end
+    local suggested = item.suggested
+    if type(suggested) == "table" and type(suggested.front) == "string" and type(suggested.back) == "string" then
+        suggested = { front = suggested.front, back = suggested.back }
+    else
+        suggested = nil
+    end
+    return {
+        front = item.front,
+        back = item.back or "",
+        suggested = suggested,
+        quote = type(item.quote) == "string" and item.quote or nil,
+        note = type(item.note) == "string" and item.note or nil,
+    }
+end
+
+--- The decoded reviewed.jsonl line `line` as {file, key, cards}, or nil when malformed.
+local function desktopSave(line, decode)
+    local ok, data = pcall(decode, line)
+    if not ok or type(data) ~= "table" or data.v ~= 1 then return nil end
+    if type(data.file) ~= "string" or type(data.key) ~= "string" or data.key == "" then return nil end
+    if data.cards ~= nil and type(data.cards) ~= "table" then return nil end
+    local cards = {}
+    for _idx, item in ipairs(data.cards or {}) do
+        local card = desktopCard(item)
+        if not card then return nil end
+        table.insert(cards, card)
+    end
+    return { file = data.file, key = data.key, cards = cards }
+end
+
+--- What the text of reviewed.jsonl holds for book `file`. Blank lines are dropped.
+-- @func decode JSON decoder (string -> table), errors or returns nil on bad input
+-- @return this book's saves as {file, key, cards}; the raw lines to keep, being
+-- other books' and malformed ones; the malformed raw lines alone
+function M.parseDesktopSaves(text, file, decode)
+    local saves, remaining, malformed = {}, {}, {}
+    for line in (text .. "\n"):gmatch("(.-)\n") do
+        if line:find("%S") then
+            local save = desktopSave(line, decode)
+            if not save then
+                table.insert(malformed, line)
+                table.insert(remaining, line)
+            elseif save.file == file then
+                table.insert(saves, save)
+            else
+                table.insert(remaining, line)
+            end
+        end
+    end
+    return saves, remaining, malformed
+end
+
+--- History entries for the cards in `saves` (see M.parseDesktopSaves), leaving
+-- out those already in `history` with the same front, back and quote.
+function M.newHistoryEntries(history, saves)
+    local entries = {}
+    local function known(list, entry)
+        for _idx, e in ipairs(list) do
+            if e.front == entry.front and e.back == entry.back and e.quote == entry.quote then
+                return true
+            end
+        end
+        return false
+    end
+    for _idx, save in ipairs(saves) do
+        for _idx2, card in ipairs(save.cards) do
+            local entry = M.historyEntry({ text = card.quote, note = card.note }, card)
+            if not known(history or {}, entry) and not known(entries, entry) then
+                table.insert(entries, entry)
+            end
+        end
+    end
+    return entries
 end
 
 return M

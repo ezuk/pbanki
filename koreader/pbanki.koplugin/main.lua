@@ -38,6 +38,8 @@ local T = ffiUtil.template
 
 local PBANKI_DIR = os.getenv("PBANKI_DIR") or "/mnt/ext1/applications/pbanki"
 local INBOX_FILE = PBANKI_DIR .. "/inbox.jsonl"
+-- Highlights the desktop app saved, waiting for their book to open
+local REVIEWED_FILE = PBANKI_DIR .. "/reviewed.jsonl"
 local DEFAULT_PROMPTS_DIR = PBANKI_DIR .. "/prompts"
 
 -- Words of book text on each side of the highlight sent to the AI
@@ -66,6 +68,7 @@ function PbAnki:init()
     self.settings.questions_only = self.settings.questions_only or false
     -- Prompt folder books use unless they pick another
     self.settings.default_prompt = self.settings.default_prompt or prompts.STANDARD
+    self:applyDesktopSaves()
     self:writeStandardPrompt()
     self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
@@ -397,6 +400,66 @@ function PbAnki:addToCardHistory(h, cards)
     end
     self.ui.doc_settings:saveSetting("pbanki_card_history",
         cardgen.appendHistory(self:cardHistory(), entries, HISTORY_KEPT))
+end
+
+-- Desktop saves: highlights and cards from the desktop app in reviewed.jsonl
+
+--- Applies this book's lines in reviewed.jsonl. A bad file never stops the book opening.
+function PbAnki:applyDesktopSaves()
+    local ok, err = pcall(self.readDesktopSaves, self)
+    if not ok then
+        logger.warn("pbanki: cannot apply desktop saves", err)
+    end
+end
+
+--- Marks this book's saved highlights, adds their cards to the card history and
+-- takes their lines out of the file once the book's settings are on disk.
+function PbAnki:readDesktopSaves()
+    local input = io.open(REVIEWED_FILE, "rb")
+    if not input then return end
+    local text = input:read("*a")
+    input:close()
+    local saves, remaining, malformed = cardgen.parseDesktopSaves(text, self.ui.document.file, json.decode)
+    for _idx, line in ipairs(malformed) do
+        logger.warn("pbanki: unreadable line kept in reviewed.jsonl", line)
+    end
+    if #saves > 0 then
+        local doc_settings = self.ui.doc_settings
+        local reviewed = self:reviewed()
+        for _idx, save in ipairs(saves) do
+            reviewed[save.key] = true
+        end
+        doc_settings:saveSetting("pbanki_reviewed", reviewed)
+        local entries = cardgen.newHistoryEntries(self:cardHistory(), saves)
+        if #entries > 0 then
+            doc_settings:saveSetting("pbanki_card_history",
+                cardgen.appendHistory(self:cardHistory(), entries, HISTORY_KEPT))
+        end
+        if not doc_settings:flush() then
+            logger.warn("pbanki: cannot write book settings, reviewed.jsonl left as it is")
+            return
+        end
+    elseif #remaining > 0 then
+        return
+    end
+    self:writeDesktopSaves(remaining)
+end
+
+--- Replaces reviewed.jsonl with `lines`, through a temp file, or deletes it when none.
+function PbAnki:writeDesktopSaves(lines)
+    if #lines == 0 then
+        os.remove(REVIEWED_FILE)
+        return
+    end
+    local temp = REVIEWED_FILE .. ".tmp"
+    local written, err = util.writeToFile(table.concat(lines, "\n") .. "\n", temp, true)
+    if written then
+        written, err = os.rename(temp, REVIEWED_FILE)
+    end
+    if not written then
+        logger.warn("pbanki: cannot rewrite reviewed.jsonl", err)
+        os.remove(temp)
+    end
 end
 
 --- Highlights in book order that have not been reviewed.

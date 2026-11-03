@@ -248,4 +248,15 @@ assert(cardgen.wasEdited({ front = "Q2", back = "Mine", suggested = { front = "Q
 assert(cardgen.wasEdited({ front = "A {{c1::b}}", back = "x", suggested = { front = "A {{c1::b}}", back = "" } }),
     "adding a cloze extra is an edit")
 
+-- A book with no author or no table of contents
+local missing = cardgen.buildMessages({ text = "x", book = "B", chapter = "C", percent = 12 }, { count = 1 })
+assert(missing[2].content:find("<book>\nBook: B\nChapter: C\nPosition in book: 12%\n</book>", 1, true),
+    "no author leaves the other fields in place")
+missing = cardgen.buildMessages({ text = "x", book = "B", author = "A", percent = 12 }, { count = 1 })
+assert(missing[2].content:find("<book>\nBook: B\nAuthor: A\nPosition in book: 12%\n</book>", 1, true),
+    "no chapter leaves the other fields in place")
+missing = cardgen.buildMessages({ text = "x", percent = 0 }, { count = 1 })
+assert(missing[2].content:find("<book>\nPosition in book: 0%\n</book>", 1, true), "position alone")
+assert(not cardgen.buildMessages({ text = "x" }, { count = 1 })[2].content:find("<book>", 1, true), "nothing known")
+
 print("cardgen_spec: OK")
