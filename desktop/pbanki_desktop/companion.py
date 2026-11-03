@@ -690,8 +690,12 @@ def creation_status(device_path):
 
 
 def forget_creation(device_path):
-    """Stops treating a Create as running, for when the Terminal window was closed."""
+    """Stops treating a Create as running, for when the Terminal window was closed.
+    An empty output file goes too, as it would keep counting as running."""
     (work_dir(device_path) / _SCRIPT_NAME).unlink(missing_ok=True)
+    output = _work_output(device_path)
+    if not _non_empty(output):
+        output.unlink(missing_ok=True)
 
 
 def watch(device_path, on_found, interval=2.0, stop=None):

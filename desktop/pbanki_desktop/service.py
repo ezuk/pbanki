@@ -94,6 +94,12 @@ class ServiceError(Exception):
         return {"error": self.sentence}
 
 
+CHOOSE_FOLDER_SECONDS = 300
+_CHOOSE_FOLDER_SCRIPT = (
+    'POSIX path of (choose folder with prompt "Where does the reader mount?" default location POSIX file "/Volumes")'
+)
+
+
 def _route(method):
     """Turns the layers' errors into ServiceError."""
 
@@ -200,6 +206,19 @@ def _open_command(args):
         return subprocess.run(command, capture_output=True, timeout=30, check=False).returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
+
+
+def _pick_folder():
+    # Runs the Mac's folder dialog, or the test command in PBANKI_CHOOSE_FOLDER_CMD
+    override = os.environ.get("PBANKI_CHOOSE_FOLDER_CMD")
+    command = shlex.split(override) if override else ["osascript", "-e", _CHOOSE_FOLDER_SCRIPT]
+    try:
+        done = subprocess.run(command, capture_output=True, text=True, timeout=CHOOSE_FOLDER_SECONDS, check=False)
+    except subprocess.TimeoutExpired:
+        return None
+    except (OSError, subprocess.SubprocessError):
+        raise ServiceError(500, "The folder dialog couldn't open. Type the folder instead.") from None
+    return (done.stdout.strip() or None) if done.returncode == 0 else None
 
 
 def _model_command(model):
@@ -910,6 +929,12 @@ class Service:
         idea_views = [self._idea_view(item) for item in context.ideas]
         have = companion_view["have"]
         pending = counts["todo"]
+        form_lede = (
+            "The AI writes cards for your 1 pending highlight."
+            if pending == 1
+            else f"The AI writes cards for each of your {pending} pending highlights, "
+                 "then reads them together to find connections across chapters."
+        )
         run_view = self._run_view(context, have)
         stored_counts = data.get("counts") or {}
         return {
@@ -947,12 +972,8 @@ class Service:
             "run": run_view,
             "suggest": {
                 "pending": pending,
-                "lede": (
-                    "Using your last choices. Only the cards you open get saved."
-                    if run_view["phase"] != "idle"
-                    else f"The AI writes cards for each of your {pending} pending highlights, "
-                         "then reads them together to find connections across chapters."
-                ),
+                "lede": "Using your last choices. Only the cards you open get saved." if run_view["phase"] != "idle" else form_lede,
+                "formLede": form_lede,
                 "sugBtn": f"Suggest cards for {_plural(pending, 'highlight')}",
             },
             "find": self._find_view(context),
@@ -1944,6 +1965,16 @@ class Service:
         return {"ejected": True, "ejectLabel": "Safe to unplug"}
 
     @_route
+    def reader_choose_folder(self):
+        """Asks the Mac for the folder the reader mounts at, on the button only, and stores it.
+        `mount` is None when the dialog was cancelled."""
+        picked = _pick_folder()
+        if picked is None:
+            return {"mount": None}
+        self.update_settings({"mount": picked})
+        return {"mount": self._store.get_settings()["mount"]}
+
+    @_route
     def reader_plugin_update(self):
         """Copies the plugin to the reader, on the button only, as a proven write."""
         if not self._connected():
@@ -1967,7 +1998,11 @@ class Service:
         new = self._checked_settings(changes, current)
         merged = {**current, **new}
         if "assistants" in new:
-            left = ai.enabled_models(merged["assistants"])
+            left = self._usable_models(merged)
+            if not left:
+                if self._usable_models(current):
+                    raise ServiceError(400, _BOTH_OFF)
+                left = ai.enabled_models(merged["assistants"])
             for key in ("model", "meta_model"):
                 if merged[key] not in {m["id"] for m in left}:
                     new[key] = merged[key] = left[0]["id"]
@@ -2132,6 +2167,22 @@ class Service:
         with self._creations_lock:
             self._creations[book_id] = {"device_path": book["device_path"], "stage": "running"}
         self._publish_book(book_id, "companion", stage="running")
+        return self._companion_response(book_id)
+
+    @_route
+    def companion_forget(self, book_id):
+        """Start over: stops treating a Create as running, for when the Terminal window was closed."""
+        book = self._book(book_id)
+        with self._create_lock:
+            if self._creation_stage(book["device_path"]) != "running":
+                raise ServiceError(409, "This Book Companion isn't being created.")
+            companion.forget_creation(book["device_path"])
+            stage = self._creation_stage(book["device_path"])
+        if stage == "none":
+            # Still tracked, so a session left running is noticed when it finishes
+            with self._creations_lock:
+                self._creations[book_id] = {"device_path": book["device_path"], "stage": stage}
+            self._publish_book(book_id, "companion", stage=stage)
         return self._companion_response(book_id)
 
     def _require_ready_companion(self, book):

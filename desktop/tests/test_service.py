@@ -197,6 +197,13 @@ class Reading(Base):
         self.assertTrue(card["on_memory_card"])
         self.assertTrue(card["note"])
 
+    def test_lede_with_one_pending_highlight(self):
+        view = self.opened(self.mostly)
+        self.assertEqual(view["suggest"]["pending"], 1)
+        self.assertEqual(view["suggest"]["lede"], "The AI writes cards for your 1 pending highlight.")
+        self.assertEqual(view["suggest"]["formLede"], view["suggest"]["lede"])
+        self.assertEqual(view["suggest"]["sugBtn"], "Suggest cards for 1 highlight")
+
     def test_book_is_a_full_working_state(self):
         view = self.opened()
         json.dumps(view, allow_nan=False)

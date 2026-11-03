@@ -13,6 +13,8 @@ Pick behaviour with FAKE_AI_MODE, or a marker anywhere in the prompt such as
   empty          an empty answer
   no_output      claude: nothing on stdout, exit 0. codex: exit 0 without writing the -o file
   slow           sleeps FAKE_AI_SLOW_SECONDS (default 30), then answers as valid
+  believable     text built from the prompt, so screens look right. Waits FAKE_AI_DELAY seconds first
+  no_connections a correct reply that lists no connections
 
 FAKE_AI_LOG        append one JSON line per run: tool, argv, cwd, stdin, path
 FAKE_AI_PIDS       write "<own pid> <child pid>" to this file when slow, with a child process running
@@ -26,7 +28,8 @@ import subprocess
 import sys
 import time
 
-MODES = ("valid", "later", "fenced", "malformed", "is_error", "not_logged_in", "exit", "empty", "no_output", "slow")
+MODES = ("valid", "later", "fenced", "malformed", "is_error", "not_logged_in", "exit", "empty", "no_output", "slow",
+         "believable", "no_connections")
 
 
 def mode_for(prompt):
@@ -45,6 +48,8 @@ def log_run(tool, prompt):
 
 
 def hold_when_slow(mode):
+    if mode == "believable":
+        time.sleep(float(os.environ.get("FAKE_AI_DELAY", "0")))
     if mode != "slow":
         return
     seconds = float(os.environ.get("FAKE_AI_SLOW_SECONDS", "30"))
@@ -81,7 +86,80 @@ def _cloze_cards(prompt):
     return cards
 
 
+def _opening(text, words=7):
+    parts = text.split()
+    return " ".join(parts[:words]).rstrip(",.;:") + ("..." if len(parts) > words else "")
+
+
+def _sentence(text):
+    match = re.match(r"(.+?[.!?])(\s|$)", text.strip(), re.S)
+    return match.group(1) if match else text.strip()
+
+
+def _believable_cards(prompt):
+    text = _section(prompt, "highlight")
+    if '{"cards": [{"front": "Sentence quoted' in prompt:
+        return _cloze_cards(prompt)
+    fronts = [
+        f'What is the author getting at with "{_opening(text)}"?',
+        f'How would you explain "{_opening(text, 5)}" to a friend?',
+        "Why does this idea matter in everyday life?",
+        f'What would change if "{_opening(text, 4)}" were not true?',
+    ]
+    backs = [
+        _sentence(text),
+        "Put simply, it is about what the passage says plainly: " + _sentence(text).lower(),
+        "It changes how you act on the rest of the chapter.",
+        "The rest of the argument would have nothing to stand on.",
+    ]
+    bare = "Write only the questions" in prompt
+    return [{"front": fronts[n % 4], "back": "" if bare else backs[n % 4]} for n in range(_card_count(prompt))]
+
+
+def believable_reply(prompt):
+    if '{"connections":' in prompt:
+        rows = _numbered_highlights(prompt)
+        found = []
+        for first, second in zip(rows, rows[1:]):
+            found.append({
+                "title": f"{first[1]} and {second[1]}"[:60],
+                "front": f'How does "{_opening(first[2], 5)}" bear on "{_opening(second[2], 5)}"?',
+                "back": f"{_sentence(first[2])} Read beside it: {_sentence(second[2])}",
+                "sources": [first[0], second[0]],
+            })
+        return {"connections": found[:3]}
+    if '{"chapters":' in prompt:
+        rows = _numbered_highlights(prompt)
+        chapters, ideas = [], []
+        for chapter in dict.fromkeys(row[1] for row in rows):
+            quote = next(row[2] for row in rows if row[1] == chapter)
+            chapters.append({"chapter": chapter, "big": f"{chapter} turns on one claim: {_sentence(quote)}", "points": [
+                {"text": _sentence(quote), "covered": True},
+                {"text": f"What {chapter} leaves unsaid, and why the author leaves it there.", "covered": False,
+                 "idea": len(ideas)},
+            ]})
+            ideas.append({"title": f"The quiet point of {chapter}"[:60], "chapter": chapter,
+                          "note": f"The notes say {chapter} rests on an assumption your highlights don't touch.",
+                          "quote": quote, "front": f"What does {chapter} assume without saying so?",
+                          "back": "That the reader will act on it, and not only agree with it."})
+        return {"chapters": chapters, "ideas": ideas}
+    if '{"term":' in prompt:
+        term = _section(prompt, "term") or _section(prompt, "highlight")
+        return {"term": term, "definition": "As the book uses it, the plain sense of the word in this passage."}
+    if '{"cards":' in prompt:
+        reply = {"cards": _believable_cards(prompt)}
+        text = _section(prompt, "highlight")
+        if "later_research" in prompt and len(text) % 3 == 0:
+            reply["later_research"] = "Later studies support the broad idea, though the effect is smaller than the book suggests."
+        return reply
+    return {"front": "Put another way, what does the passage ask you to do?", "back": "Act on it today, in a small way."}
+
+
 def valid_reply(prompt, mode="valid"):
+    if mode == "believable":
+        return believable_reply(prompt)
+    if mode == "no_connections" and '{"connections":' in prompt:
+        return {"connections": []}
     if '{"connections":' in prompt:
         rows = _numbered_highlights(prompt)
         found = []

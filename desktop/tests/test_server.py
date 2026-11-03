@@ -502,6 +502,17 @@ class Routes(Base):
         self.refused(409, "POST", "/api/reader/eject", text="still using")
         self.refused(405, "GET", "/api/reader/eject")
 
+    def test_choose_folder(self):
+        with mock.patch.dict(os.environ, {"PBANKI_CHOOSE_FOLDER_CMD": f"/bin/echo {self.tmp}/picked/"}):
+            self.assertEqual(self.ok("POST", "/api/reader/choose-folder")["mount"], f"{self.tmp}/picked")
+        self.assertEqual(self.ok("GET", "/api/state")["settings"]["mount"], f"{self.tmp}/picked")
+        with mock.patch.dict(os.environ, {"PBANKI_CHOOSE_FOLDER_CMD": "/usr/bin/false"}):
+            self.assertIsNone(self.ok("POST", "/api/reader/choose-folder")["mount"])
+        self.assertEqual(self.ok("GET", "/api/state")["settings"]["mount"], f"{self.tmp}/picked")
+        with mock.patch.dict(os.environ, {"PBANKI_CHOOSE_FOLDER_CMD": "/nonexistent/command"}):
+            self.refused(500, "POST", "/api/reader/choose-folder", text="Type the folder")
+        self.refused(405, "GET", "/api/reader/choose-folder")
+
     def test_plugin_update(self):
         before = self.fake.snapshot()
         found = self.ok("POST", "/api/reader/plugin/update")
@@ -584,8 +595,50 @@ class Routes(Base):
         self.assertTrue(self.ok("POST", f"{base}/keep")["companion"]["have"])
         self.assertEqual(self.fake.snapshot(), before)
 
+    def test_last_found_assistant_stays_on(self):
+        with mock.patch.dict(os.environ, {"PBANKI_CODEX_BIN": str(self.tmp / "no-codex")}):
+            before = self.ok("GET", "/api/state")["settings"]["assistants"]
+            self.refused(400, "PATCH", "/api/settings", {"assistants": {"claude": False}}, text="stay on")
+            self.assertEqual(self.ok("GET", "/api/state")["settings"]["assistants"], before)
+
+    def test_companion_forget(self):
+        self.open_book()
+        base = f"/api/books/{self.pride}/companion"
+        self.refused(409, "POST", f"{base}/forget", text="isn't being created")
+        self.assertTrue(self.ok("POST", f"{base}/create")["companion"]["running"])
+        output = companion._work_output(self.fake.books["pride"])
+        output.write_text("", encoding="utf-8")
+        answer = self.ok("POST", f"{base}/forget")["companion"]
+        self.assertTrue(answer["none"])
+        self.assertEqual(answer["status"], "None yet")
+        self.assertFalse(output.exists())
+        self.assertTrue(self.ok("POST", f"{base}/create")["companion"]["running"])
+
+    def test_companion_forget_still_notices_the_file(self):
+        self.open_book()
+        base = f"/api/books/{self.pride}/companion"
+        self.ok("POST", f"{base}/create")
+        self.ok("POST", f"{base}/forget")
+        output = companion._work_output(self.fake.books["pride"])
+        output.write_text("# Pride\n\n## 1. Overview\n\nManners.\n", encoding="utf-8")
+        past = time.time() - 60
+        os.utime(output, (past, past))
+        self.svc._poll_creations()
+        self.assertEqual(self.svc._creations[self.pride]["stage"], "found")
+
+    def test_companion_forget_keeps_a_finished_file(self):
+        self.open_book()
+        base = f"/api/books/{self.pride}/companion"
+        self.ok("POST", f"{base}/create")
+        output = companion._work_output(self.fake.books["pride"])
+        output.write_text("# Pride\n\n## 1. Overview\n\nManners.\n", encoding="utf-8")
+        past = time.time() - 60
+        os.utime(output, (past, past))
+        self.refused(409, "POST", f"{base}/forget", text="isn't being created")
+        self.assertTrue(output.exists())
+
     def test_companion_unknown_book(self):
-        for action in ("create", "copy", "keep"):
+        for action in ("create", "copy", "keep", "forget"):
             self.refused(404, "POST", f"/api/books/nope/companion/{action}")
 
     def test_unknown_addresses_are_json(self):

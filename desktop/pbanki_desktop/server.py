@@ -196,6 +196,7 @@ _ROUTES = (
     ("POST", "/api/books/*/save/retry", {}, lambda s, r: s.save_retry(*r.args)),
     ("POST", "/api/reader/eject", {}, lambda s, r: s.reader_eject()),
     ("POST", "/api/reader/plugin/update", {}, lambda s, r: s.reader_plugin_update()),
+    ("POST", "/api/reader/choose-folder", {}, lambda s, r: s.reader_choose_folder()),
     ("PATCH", "/api/settings", _SETTINGS_FIELDS, lambda s, r: s.update_settings(r.body)),
     ("GET", "/api/prompts/*", {}, lambda s, r: s.prompt(*r.args)),
     ("POST", "/api/prompts/open", _PROMPT_FILE_FIELDS, _call_prompt_file("open_prompt")),
@@ -203,6 +204,7 @@ _ROUTES = (
     ("POST", "/api/books/*/companion/create", {}, lambda s, r: s.companion_create(*r.args)),
     ("POST", "/api/books/*/companion/copy", {}, lambda s, r: s.companion_copy(*r.args)),
     ("POST", "/api/books/*/companion/keep", {}, lambda s, r: s.companion_keep(*r.args)),
+    ("POST", "/api/books/*/companion/forget", {}, lambda s, r: s.companion_forget(*r.args)),
 )
 
 

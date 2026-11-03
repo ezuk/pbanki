@@ -247,6 +247,7 @@ POST /api/books/<id>/save            {mark_connection_sources}
 POST /api/books/<id>/save/retry
 POST /api/reader/eject
 POST /api/reader/plugin/update
+POST /api/reader/choose-folder       opens the Mac's folder dialog, stores the pick as the mount
 PATCH /api/settings                  {mount?, auto_suggest?, assistants?, model?, meta_model?, companion_send?, ...}
 GET  /api/prompts/<name>             files and text
 POST /api/prompts/open               {name, file}
@@ -254,6 +255,7 @@ POST /api/prompts/reveal             {name, file}
 POST /api/books/<id>/companion/create
 POST /api/books/<id>/companion/copy
 POST /api/books/<id>/companion/keep
+POST /api/books/<id>/companion/forget   stops treating a Create as running, after Terminal was closed
 ```
 
 The server watches the mount every 2 s in one background thread and pushes `reader` events.
