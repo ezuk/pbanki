@@ -1,13 +1,7 @@
 // Settings drawer.
 
 import { html, Drawer, Field, ReaderChip, Select } from "../ui.js";
-import { useStore, saveSettings, update } from "../store.js";
-import { api } from "../api.js";
-
-// Throws on a refusal, so the field keeps what was typed and tries again on the next blur.
-async function saveMount(mount) {
-  update({ state: await api.patch("/api/settings", { mount }), error: null });
-}
+import { useStore, saveSettings, saveMount } from "../store.js";
 
 const SettingSelect = ({ label, value, options, name }) => html`<div class="setrow">
   <span>${label}</span>

@@ -1,11 +1,10 @@
 // The cards of one highlight: written by hand or by the AI, editable, with Rewrite and the preview.
 
-import { useEffect } from "../../vendor/preact-htm.js";
-import { store, useStore, setUi, mutate, useEvent } from "../store.js";
+import { useEffect, useLayoutEffect, useRef } from "../../vendor/preact-htm.js";
+import { store, useStore, setUi, mutate, removeRecord, showError, useEvent } from "../store.js";
 import { html, Field, Pulse, EinkBar } from "../ui.js";
 
-const saveFront = (card) => (front) => mutate("PATCH", `/api/cards/${card.id}`, { front }, { quiet: true });
-const saveBack = (card) => (back) => mutate("PATCH", `/api/cards/${card.id}`, { back }, { quiet: true });
+const cardPath = (card) => `/api/cards/${card.id}`;
 
 // Open panels and the Rewrite text, per card. They outlive moving between highlights.
 const panels = (id) => (store.ui.cardPanels || {})[id] || {};
@@ -22,14 +21,19 @@ function hideSelected(event, card) {
   const start = el.selectionStart;
   const end = el.selectionEnd;
   const text = el.value;
-  const n = (text.match(/\{\{c\d+::/g) || []).length + 1;
+  const blocks = [...text.matchAll(/\{\{c(\d+)::.*?\}\}/gs)];
+  if (blocks.some((block) => start < block.index + block[0].length && end > block.index)) {
+    showError("Part of that is already hidden. Select words outside the hidden parts.");
+    return;
+  }
+  const n = Math.max(0, ...blocks.map((block) => Number(block[1]))) + 1;
   el.value = `${text.slice(0, start)}{{c${n}::${text.slice(start, end)}}}${text.slice(end)}`;
   el.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 function ClozeFields({ card }) {
   return html`
-    <${Field} key="front" id=${`f-${card.id}`} class="ta c" rows="1" value=${card.front} onSave=${saveFront(card)} placeholder="Paste or type a sentence, select the words to hide" />
+    <${Field} key="front" id=${`f-${card.id}`} class="ta c" rows="1" value=${card.front} path=${cardPath(card)} field="front" placeholder="Paste or type a sentence, select the words to hide" />
     <div class="clbar"><button class="btn" onMouseDown=${(event) => hideSelected(event, card)}>Hide selected words</button><span style="font-size:13px;color:var(--ink3)">Select words above, then press this.</span></div>
     <div class="clprev">${card.parts.map((part, i) => (part.gap ? html`<span key=${i} class="gap">[...]</span>` : html`<span key=${i}>${part.text}</span>`))}</div>
   `;
@@ -37,20 +41,33 @@ function ClozeFields({ card }) {
 
 function PlainFields({ card }) {
   return html`
-    <${Field} key="front" id=${`f-${card.id}`} class="ta f" rows="1" value=${card.front} onSave=${saveFront(card)} placeholder="Question" />
-    <${Field} key="back" class=${card.backCls} rows="1" value=${card.back} onSave=${saveBack(card)} placeholder=${card.backPh} />
+    <${Field} key="front" id=${`f-${card.id}`} class="ta f" rows="1" value=${card.front} path=${cardPath(card)} field="front" placeholder="Question" />
+    <${Field} key="back" class=${card.backCls} rows="1" value=${card.back} path=${cardPath(card)} field="back" placeholder=${card.backPh} />
   `;
 }
 
+// The card whose Rewrite was just clicked: its box takes the cursor.
+let focusRewrite = null;
+
 function RewritePanel({ card }) {
+  const input = useRef(null);
+  // Before the next key press can reach the keyboard shortcuts
+  useLayoutEffect(() => {
+    if (focusRewrite === card.id) input.current.focus();
+    focusRewrite = null;
+  }, []);
   const send = () => {
+    if (card.rewriting) return;
     const instruction = (panels(card.id).text || "").trim();
     const body = { model: store.state.settings.model };
     if (instruction) body.instruction = instruction;
     mutate("POST", `/api/cards/${card.id}/rewrite`, body);
   };
+  const onKeyDown = (event) => {
+    if (event.key === "Enter" && !event.isComposing) send();
+  };
   return html`<div class="rw">
-    <input class="in" value=${panels(card.id).text || ""} onInput=${(e) => setPanels(card.id, { text: e.target.value })} placeholder="Say what to change, or leave empty" />
+    <input class="in" ref=${input} value=${panels(card.id).text || ""} onInput=${(e) => setPanels(card.id, { text: e.target.value })} onKeyDown=${onKeyDown} placeholder="Say what to change, or leave empty" />
     <button class="btn" onClick=${send} disabled=${card.rewriting}>${card.rwBtn}</button>
   </div>`;
 }
@@ -67,12 +84,16 @@ function Card({ card, highlight, book }) {
   useStore();
   const open = panels(card.id);
   const remove = async () => {
-    if (await mutate("DELETE", `/api/cards/${card.id}`)) setUi({ removed: { hid: card.hid, id: card.id } });
+    if (await removeRecord(cardPath(card))) setUi({ removed: { hid: card.hid, id: card.id } });
+  };
+  const toggleRewrite = () => {
+    if (!open.rw) focusRewrite = card.id;
+    setPanels(card.id, { rw: !open.rw });
   };
   return html`<div class="card">
     <div class="chd"><span class="ckind">${card.kindLabel}</span><span>${card.src}</span>
       <span class="chdr">
-        <button class="lnk" onClick=${() => setPanels(card.id, { rw: !open.rw })}>Rewrite</button>
+        <button class="lnk" onClick=${toggleRewrite}>Rewrite</button>
         <button class="lnk" onClick=${() => setPanels(card.id, { prev: !open.prev })}>On the reader</button>
         <button class="x" onClick=${remove} aria-label="Remove card">✕</button>
       </span>
@@ -92,6 +113,34 @@ function SavedCard({ card }) {
   </div>`;
 }
 
+// Between a click and the new field appearing, typed letters wait here rather than act as shortcuts.
+function holdKeys() {
+  let held = "";
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  const onKey = (event) => {
+    if (event.key.length !== 1 || event.metaKey || event.ctrlKey || event.altKey) return;
+    event.preventDefault();
+    event.stopPropagation();
+    held += event.key;
+  };
+  window.addEventListener("keydown", onKey, true);
+  return {
+    stop() {
+      window.removeEventListener("keydown", onKey, true);
+      return held;
+    },
+  };
+}
+
+async function fieldOnScreen(id) {
+  for (let tries = 0; tries < 100; tries += 1) {
+    const el = document.getElementById(id);
+    if (el) return el;
+    await new Promise((done) => setTimeout(done, 10));
+  }
+  return null;
+}
+
 // The Cards section, with its header, empty states and Undo.
 export function Cards({ highlight, book }) {
   const { ui } = useStore();
@@ -103,13 +152,21 @@ export function Cards({ highlight, book }) {
   useEvent(onRewriteDone);
 
   const add = async (kind) => {
+    const keys = holdKeys();
     const answer = await mutate("POST", `/api/books/${book.id}/highlights/${highlight.id}/cards`, { kind });
-    if (!answer) return;
+    if (!answer) {
+      keys.stop();
+      return;
+    }
     setUi({ removed: null });
-    setTimeout(() => {
-      const el = document.getElementById(`f-${answer.card.id}`);
-      if (el) el.focus();
-    }, 60);
+    const el = await fieldOnScreen(`f-${answer.card.id}`);
+    const typed = keys.stop();
+    if (!el) return;
+    el.focus();
+    if (typed) {
+      el.value += typed;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    }
   };
   const undo = async () => {
     if (await mutate("POST", `/api/cards/${removed.id}/restore`)) setUi({ removed: null });

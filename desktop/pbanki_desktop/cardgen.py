@@ -591,12 +591,15 @@ def parse_connections(text, highlight_count, limit=None, decode=json.loads):
 
 def build_ideas(highlights, request, companion, book=None):
     """Messages asking for key ideas: `companion` is the sliced Companion, `highlights`
-    every highlight with its chapter. `request`: optional prompt, guidance, count, rejected."""
+    every highlight with its chapter. `request`: optional prompt, guidance, count, rejected, existing."""
     parts = _about_block(book)
     if highlights:
         parts.append(_tagged("highlights", _highlight_list(highlights), "Everything the reader highlighted:"))
     else:
         parts.append("The reader has no highlights in this book yet.")
+    if request.get("existing"):
+        parts.append(_tagged("existing_ideas", _card_list(request["existing"]),
+                             "These key ideas are already written. Do not write them again or close variants of them:"))
     if request.get("rejected"):
         parts.append(_tagged("removed_cards", _card_list(request["rejected"]),
                              "The reader removed these suggested ideas. Do not write them again or close "

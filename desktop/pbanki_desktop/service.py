@@ -74,7 +74,7 @@ _REMEMBERED = {
     "ideas": "suggest_ideas",
 }
 
-_RUN_KEYS = ("count", "kind", "model", "prompt", "sees", "companion", "hint", "connections", "meta_model", "ideas")
+_RUN_KEYS = ("count", "kind", "model", "prompt", "sees", "companion", "hint", "highlights", "connections", "meta_model", "ideas")
 _SUGGEST_KEYS = ("count", "kind", "model", "prompt", "sees", "companion", "hint")
 _SETTING_KEYS = (
     "mount", "auto_suggest", "assistants", "model", "meta_model", "companion_send", "sees", "kind", "count",
@@ -286,7 +286,7 @@ def _saved_row(front, back, kind=None):
 def _card_view(card, warn=None, rewriting=None):
     front, back = card["front"], card["back"]
     is_cloze = card["kind"] == "cloze"
-    need = card["kind"] == "qonly" and not back.strip()
+    need = card["kind"] == "qonly" and not back.strip() or bool(front.strip()) and save.need_of(card) == "answer"
     return {
         "id": card["id"],
         "hid": card["hid"],
@@ -492,7 +492,11 @@ class Service:
         # A remount only happens to a disk that is there
         if device.remount_lock.locked():
             return True
-        return reader.is_connected(self._mount())
+        connected = reader.is_connected(self._mount())
+        # Seen gone between polls: its return still counts as appearing
+        if not connected:
+            self._seen_connected = False
+        return connected
 
     def _read_reader(self, read):
         """`read(mount)`, or None when the reader isn't there or left during the read."""
@@ -596,11 +600,23 @@ class Service:
             raise ServiceError(409, f"{info['name']} isn't installed, or pbAnki can't find it.")
         return model
 
+    def _settle_models(self):
+        """The settings, after moving a model off an assistant that isn't there, if another is."""
+        settings = self._store.get_settings()
+        usable = self._usable_models(settings)
+        ids = {model["id"] for model in usable}
+        changes = {key: usable[0]["id"] for key in ("model", "meta_model") if usable and settings[key] not in ids}
+        if not changes:
+            return settings
+        self._store.set_settings(changes)
+        self._hub.publish({"topic": SETTINGS, "type": "changed", "keys": sorted(changes)})
+        return self._store.get_settings()
+
     # GET /api/state
 
     @_route
     def state(self):
-        settings = self._store.get_settings()
+        settings = self._settle_models()
         enabled = settings["assistants"]
         current = settings.get("current_book")
         skill = companion.skill_status()
@@ -929,13 +945,20 @@ class Service:
         idea_views = [self._idea_view(item) for item in context.ideas]
         have = companion_view["have"]
         pending = counts["todo"]
-        form_lede = (
-            "The AI writes cards for your 1 pending highlight."
-            if pending == 1
-            else f"The AI writes cards for each of your {pending} pending highlights, "
-                 "then reads them together to find connections across chapters."
-        )
+        due = self._due_count(context)
+        if not due:
+            form_lede = "No highlight is waiting for cards. The AI can still look for connections and key ideas."
+        elif due == 1 and pending == 1:
+            form_lede = "The AI writes cards for your 1 pending highlight."
+        elif due == pending:
+            form_lede = (f"The AI writes cards for each of your {pending} pending highlights, "
+                         "then reads them together to find connections across chapters.")
+        else:
+            form_lede = (f"The AI writes cards for the {_plural(due, 'pending highlight')} with none yet, "
+                         "then reads them together to find connections across chapters.")
         run_view = self._run_view(context, have)
+        looked = runs.ideas_looked((context.run.get("progress")) or {})
+        read = data.get("percent_finished") or 0
         stored_counts = data.get("counts") or {}
         return {
             "id": book["id"],
@@ -972,17 +995,46 @@ class Service:
             "run": run_view,
             "suggest": {
                 "pending": pending,
+                "due": due,
+                "canConnect": pending >= 2,
                 "lede": "Using your last choices. Only the cards you open get saved." if run_view["phase"] != "idle" else form_lede,
                 "formLede": form_lede,
-                "sugBtn": f"Suggest cards for {_plural(pending, 'highlight')}",
+                "sugBtn": f"Suggest cards for {_plural(due, 'highlight')}",
             },
             "find": self._find_view(context),
-            "ideaEmptyText": "No key ideas left. Your highlights and cards cover the rest." if have else "Nothing to compare against yet.",
+            "ideaEmptyText": (
+                "Nothing to compare against yet." if not have
+                else "pbAnki hasn't compared the Book Companion with your highlights yet." if looked is None
+                else "No key ideas left. Your highlights and cards cover the rest."
+            ),
             "ideasNeedComp": not have,
+            "ideaLook": {
+                "show": have and bool(context.highlights),
+                "label": "Look for key ideas" if looked is None else "Look again",
+                "note": "You've read further since pbAnki last looked." if looked is not None and read > looked + 0.005 else "",
+            },
+            "aiNote": self._ai_note(context),
             "save": self._save_small(preview, context),
             "pending_saves": self._pending_saves_view(book["id"]),
             "reader": self._reader_small(),
         }
+
+    def _due_count(self, context):
+        # Highlights a run would ask for: as Runner._due, from rows already read
+        book_id = context.book["id"]
+        rejected = {card["hid"] for card in self._store.list_cards(book_id, None, (store_module.REMOVED,))
+                    if card["suggested"] is not None}
+        return sum(1 for h in context.highlights if h["status"] != "reviewed" and not context.is_skipped(h)
+                   and not context.drafts.get(h["hid"]) and h["hid"] not in rejected)
+
+    def _ai_note(self, context):
+        # When the "AI reads" choice can't be honoured
+        book = context.book
+        if not book["data"].get("is_epub", book["ext"].lower() == "epub"):
+            return ""
+        if self._connected() or self.runner.has_book_copy(book["id"]):
+            return ""
+        return "Your reader is unplugged and this book's file isn't on this computer yet, so the AI reads only the passage around each highlight."
 
     def _highlight_view(self, context, h, index=None, total=None):
         hid = h["hid"]
@@ -1206,7 +1258,11 @@ class Service:
         if run_status is not None:
             finished = done >= total
             failed = counts.get("failed", 0) if finished else 0
-            if failed:
+            if (status.get("options") or {}).get("highlights") is False:
+                pass
+            elif not total:
+                rows.append({"title": "Highlight cards", "path": "No highlights were waiting for cards", "ok": True})
+            elif failed:
                 rows.append({"title": "Highlight cards", "path": f"{failed} of {_plural(total, 'highlight')} failed",
                              "ok": False, "failed": True})
             else:
@@ -1283,6 +1339,7 @@ class Service:
         else:
             status = {"running": "Being created", "found": "Ready to copy"}.get(stage, "None yet")
         connected = self._connected()
+        missing = connected and bool(book["data"].get("missing"))
         return {
             "have": have,
             "none": not have and stage not in ("running", "found"),
@@ -1303,10 +1360,10 @@ class Service:
             "command": preview["command"],
             "watching": preview["watching"],
             "skill": skill,
-            "can_create": skill["ok"] and connected,
+            "can_create": skill["ok"] and connected and not missing,
             "can_copy": connected,
             "cutOff": companion.copy_cut_off(device_path),
-            "problem": skill["problem"] or ("" if connected else "Plug in the reader first, so pbAnki can copy the book."),
+            "problem": skill["problem"] or (companion.NOT_ON_READER if missing else "" if connected else companion.PLUG_IN_FIRST),
         }
 
     # POST /api/books/<id>/open
@@ -1329,6 +1386,7 @@ class Service:
         if self._store.get_setting("current_book") != book_id:
             self._store.set_setting("current_book", book_id)
             self._hub.publish({"topic": SETTINGS, "type": "current_book", "book_id": book_id})
+        self._settle_models()
         started = self._auto_start(book_id)
         return {**self._book_view(_Context(self, book)), "auto_started": started}
 
@@ -1342,6 +1400,18 @@ class Service:
         except runs.RunError:
             return False
 
+    # POST /api/books/<id>/prompt
+
+    @_route
+    def choose_prompt(self, book_id, prompt):
+        """Keeps the prompt picked for this book. It wins over the one saved on the reader."""
+        self._book(book_id)
+        prompts.check_name(prompt)
+        picked = {**self._store.get_settings()["book_prompts"], book_id: prompt}
+        self._store.set_settings({"book_prompts": picked, "last_prompt": prompt})
+        self._hub.publish({"topic": SETTINGS, "type": "changed", "keys": ["book_prompts", "last_prompt"]})
+        return {"options": self.runner.default_options(book_id)}
+
     # POST /api/books/<id>/run
 
     @_route
@@ -1351,7 +1421,9 @@ class Service:
         if action == "start":
             chosen = self._checked_options(book_id, options, _RUN_KEYS)
             self._check_model(chosen.get("model") or self.runner.default_options(book_id)["model"])
-            self._remember(chosen)
+            # Looking for one step alone doesn't change what the form remembers
+            if chosen.get("highlights", True):
+                self._remember(chosen)
             self.runner.start(book_id, chosen)
         elif action == "pause":
             self.runner.pause(book_id)
@@ -1386,7 +1458,7 @@ class Service:
             prompts.check_name(given["prompt"])
         if "hint" in given and not isinstance(given["hint"], str):
             raise ServiceError(400, "The note to the AI has to be text.")
-        for key in ("connections", "ideas"):
+        for key in ("highlights", "connections", "ideas"):
             if key in given and not isinstance(given[key], bool):
                 raise ServiceError(400, "That choice has to be on or off.")
         for key in ("model", "meta_model"):
@@ -1842,6 +1914,8 @@ class Service:
         return view
 
     def _publish_save(self, result):
+        if result["status"] == save.WAITING:
+            self._seen_connected = False
         view = self._save_result_view(result)
         self._publish_book(view.pop("book_id"), "save", **view)
 
@@ -1874,13 +1948,24 @@ class Service:
         connected = self._connected()
         mount = self._mount()
         saving = self._is_saving()
+        held_count = preview["count"] - fresh["count"]
+        need_link = None
+        if fresh["needs"]:
+            need_link = {"screen": "highlights", "id": fresh["needs"][0]}
+        elif fresh["need_connections"]:
+            need_link = {"screen": "connections", "id": fresh["need_connections"][0]}
+        elif fresh["need_ideas"]:
+            need_link = {"screen": "ideas", "id": fresh["need_ideas"][0]}
         return {
             **preview,
             "markMeta": bool(mark),
             "saveCount": preview["count"],
-            "heldCount": preview["count"] - fresh["count"],
+            "heldCount": held_count,
+            "freshCount": fresh["count"],
+            "heldText": self._held_text(held_count, fresh["count"]),
             "saveNoun": preview["noun"],
-            "needCount": len(preview["needs"]),
+            "needCount": len(preview["needs"]) + len(preview["need_connections"]) + len(preview["need_ideas"]),
+            "needLink": need_link,
             "needText": preview["need_text"],
             "markText": preview["mark_text"],
             "leftText": preview["left_text"],
@@ -1888,7 +1973,8 @@ class Service:
             "saveBtn": "Saving..." if saving else "Save to reader" if connected else "Back up and wait for reader",
             "saveWaiting": bool(waiting),
             "saveUnplugNote": not connected and not waiting,
-            "waitText": f"Step 1 is done. The rest happens by itself when {mount} appears.",
+            "waitText": (f"Step 1 is done for {_plural(held_count, 'card')}. The rest happens by itself when {mount} appears."
+                         if fresh["count"] else f"Step 1 is done. The rest happens by itself when {mount} appears."),
             "waiting": waiting,
             "failed": failed,
             "saving": saving,
@@ -1904,6 +1990,14 @@ class Service:
             ],
             "last_saved": self._save_result_view(save.batch_result(verified[-1])) if verified else None,
         }
+
+    @staticmethod
+    def _held_text(held, fresh):
+        # What a waiting or failed save leaves out
+        if not held or not fresh:
+            return ""
+        verb = "isn't" if fresh == 1 else "aren't"
+        return f"{_plural(fresh, 'newer card')} {verb} part of that save. Save again afterwards to send them."
 
     @_route
     def save_book(self, book_id, mark_connection_sources=None):

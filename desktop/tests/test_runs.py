@@ -838,7 +838,7 @@ class NoDuplicatesTest(Base):
         self.assertEqual(len(self.ai.texts()), 4)
         self.assertEqual(len(set(self.ai.texts())), 4)
 
-    def test_a_second_run_asks_nothing_when_all_is_done(self):
+    def test_a_second_run_asks_nothing_when_nothing_is_ticked(self):
         book = self.add_book(3, COMPANION)
         runner = self.runner()
         self.run_all(runner, book)
@@ -846,12 +846,71 @@ class NoDuplicatesTest(Base):
         cards = len(self.store.list_cards(book))
         connections = len(self.store.list_connections(book))
         ideas = len(self.store.list_ideas(book))
-        status = self.run_all(runner, book)
+        status = self.run_all(runner, book, {"connections": False, "ideas": False})
         self.assertEqual(self.ai.calls, [])
         self.assertEqual(status["status"], "done")
         self.assertEqual(len(self.store.list_cards(book)), cards)
         self.assertEqual(len(self.store.list_connections(book)), connections)
         self.assertEqual(len(self.store.list_ideas(book)), ideas)
+
+    def test_a_second_run_looks_again_but_adds_no_idea_twice(self):
+        book = self.add_book(3, COMPANION)
+        runner = self.runner()
+        self.run_all(runner, book)
+        self.ai.calls.clear()
+        cards = len(self.store.list_cards(book))
+        ideas = [idea["title"] for idea in self.store.list_ideas(book)]
+        self.assertTrue(ideas)
+        front = self.store.list_ideas(book)[0]["front"]
+        status = self.run_all(runner, book)
+        self.assertEqual(sorted(call["kind"] for call in self.ai.calls), ["connections", "ideas"])
+        idea_call = next(call for call in self.ai.calls if call["kind"] == "ideas")
+        self.assertIn(front, idea_call["prompt"])
+        self.assertEqual(len(self.store.list_cards(book)), cards)
+        self.assertEqual([idea["title"] for idea in self.store.list_ideas(book)], ideas)
+        self.assertEqual(status["progress"]["ideas"]["found"], 0)
+
+    def test_carrying_on_skips_finished_steps_and_keeps_their_counts(self):
+        book = self.add_book(2, COMPANION)
+        runner = self.runner()
+        self.run_all(runner, book)
+        found = self.store.get_run(book)["progress"]["connections"]["found"]
+        self.store.set_run(book, runs.INTERRUPTED)
+        self.ai.calls.clear()
+        status = self.run_all(runner, book)
+        self.assertEqual(self.ai.calls, [])
+        self.assertEqual(status["progress"]["connections"]["found"], found)
+        self.assertEqual(status["progress"]["ideas"]["state"], "done")
+
+    def test_key_ideas_alone_on_a_book_with_every_highlight_reviewed(self):
+        book = self.add_book(2, COMPANION)
+        self.store.set_reader_reviewed(book, [h["key"] for h in self.store.get_book(book)["data"]["highlights"]])
+        status = self.run_all(self.runner(), book, {"highlights": False, "connections": False, "ideas": True})
+        self.assertEqual([call["kind"] for call in self.ai.calls], ["ideas"])
+        self.assertEqual(status["progress"]["highlights"]["total"], 0)
+        self.assertEqual(status["progress"]["ideas"]["state"], "done")
+        self.assertIsNotNone(runs.ideas_looked(status["progress"]))
+
+    def test_ideas_looked_outlives_a_later_run_without_them(self):
+        book = self.add_book(2, COMPANION, percent_finished=0.5)
+        runner = self.runner()
+        self.run_all(runner, book)
+        status = self.run_all(runner, book, {"connections": False, "ideas": False})
+        self.assertEqual(runs.ideas_looked(status["progress"]), 0.5)
+
+    def test_reading_further_reaches_ideas_that_were_past_the_progress(self):
+        book = self.add_book(2, COMPANION, percent_finished=0.5)
+        runner = self.runner()
+        self.run_all(runner, book)
+        first = next(call for call in self.ai.calls if call["kind"] == "ideas")
+        self.assertNotIn("A spoiler point", first["prompt"])
+        record = self.store.get_book(book)
+        self.store.upsert_book({"device_path": record["device_path"], "title": record["title"], "author": record["author"],
+                                "stem": record["stem"], "ext": record["ext"], "data": {**record["data"], "percent_finished": 1.0}})
+        self.ai.calls.clear()
+        self.run_all(runner, book)
+        again = next(call for call in self.ai.calls if call["kind"] == "ideas")
+        self.assertIn("A spoiler point", again["prompt"])
 
     def test_skipping_during_a_call_drops_its_cards(self):
         book = self.add_book(2)
@@ -1117,6 +1176,28 @@ class SlowReplyTest(Base):
         self.ai.reply(self.text(1), ai.AIError("Claude Code took longer than 5 minutes and was stopped."))
         self.run_all(self.runner(), book, {"connections": False})
         self.assertIn("took longer", self.store.get_highlight(book, self.hid(book, 1))["error"])
+
+
+class AutoStartTest(Base):
+    def test_a_finished_book_with_a_companion_still_looks_for_key_ideas(self):
+        book = self.add_book(2, COMPANION)
+        self.store.set_reader_reviewed(book, [h["key"] for h in self.store.get_book(book)["data"]["highlights"]])
+        runner = self.runner()
+        self.assertIsNotNone(runner.auto_start(book))
+        status = self.finish(runner, book)
+        self.assertEqual([call["kind"] for call in self.ai.calls], ["ideas"])
+        self.assertEqual(status["progress"]["ideas"]["state"], "done")
+
+    def test_a_finished_book_with_no_companion_doesnt_start(self):
+        book = self.add_book(2)
+        self.store.set_reader_reviewed(book, [h["key"] for h in self.store.get_book(book)["data"]["highlights"]])
+        self.assertIsNone(self.runner().auto_start(book))
+
+    def test_a_finished_book_doesnt_start_with_key_ideas_turned_off(self):
+        book = self.add_book(2, COMPANION)
+        self.store.set_reader_reviewed(book, [h["key"] for h in self.store.get_book(book)["data"]["highlights"]])
+        self.store.set_settings({"suggest_ideas": False})
+        self.assertIsNone(self.runner().auto_start(book))
 
 
 class ConnectionsTest(Base):
@@ -1430,6 +1511,41 @@ class FakeCommandTest(Base):
         runner.suggest(book, hid_for(h["key"]), {"count": 1})
         self.assertIn(h["passage"]["after"], section(self.ai.calls[-1]["prompt"], "passage"))
 
+    def test_the_ai_reads_choice_holds_with_the_reader_unplugged(self):
+        fake = build_reader(self.mount)
+        book = self.cache_reader_book(fake, "pride")
+        runner = self.runner()
+        self.assertTrue(runner.cache_book_text(book))
+        self.assertTrue(runner.has_book_copy(book))
+        h = self.store.get_book(book)["data"]["highlights"][5]
+        hid = hid_for(h["key"])
+
+        def words_read(sees):
+            self.ai.calls.clear()
+            runner.suggest(book, hid, {"count": 1, "sees": sees})
+            return len(section(self.ai.calls[-1]["prompt"], "passage").split())
+
+        plugged = {sees: words_read(sees) for sees in ("600 words each side", "The chapter", "The whole book")}
+        shutil.rmtree(self.mount)
+        unplugged = {sees: words_read(sees) for sees in plugged}
+        self.assertEqual(unplugged, plugged)
+        self.assertGreater(unplugged["The whole book"], unplugged["600 words each side"])
+
+    def test_the_kept_copy_follows_a_changed_book(self):
+        fake = build_reader(self.mount)
+        book = self.cache_reader_book(fake, "pride")
+        runner = self.runner()
+        runner.cache_book_text(book)
+        kept = runner._book_copy_path(book)
+        local = fake.local("pride")
+        self.assertEqual(kept.read_bytes(), local.read_bytes())
+        with local.open("ab") as file:
+            file.write(b"\0")
+        before = fake.snapshot()
+        runner.cache_book_text(book)
+        self.assertEqual(kept.read_bytes(), local.read_bytes())
+        self.assertEqual(fake.snapshot(), before)
+
     def test_a_reader_pulled_out_mid_run_changes_nothing_for_the_run(self):
         fake = build_reader(self.mount)
         book = self.cache_reader_book(fake, "pride")
@@ -1614,7 +1730,7 @@ class ChapterNameTest(Base):
         book = self.add_book(1, chapters=self.CHAPTERS)
         runner = self.runner()
         return runner._add_ideas(self.store.get_book(book), {"chapters": [], "ideas": [
-            {"title": "T", "chapter": chapter, "note": "", "quote": "", "front": "F?", "back": "B"},
+            {"title": f"T {len(self.store.list_ideas(book))}", "chapter": chapter, "note": "", "quote": "", "front": "F?", "back": "B"},
         ]})[0]["chapter"]
 
     def test_every_form_of_the_name_becomes_the_card_form(self):

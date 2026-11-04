@@ -7,7 +7,7 @@ export class ApiError extends Error {
   }
 }
 
-const NO_ANSWER = "pbAnki isn't answering. Check it's still running in Terminal, then try again.";
+export const NO_ANSWER = "pbAnki isn't answering. Check it's still running in Terminal, then try again.";
 
 async function request(method, path, body, options = {}) {
   const init = { method, keepalive: !!options.keepalive };
@@ -39,31 +39,18 @@ export const api = {
   del: (path) => request("DELETE", path),
 };
 
-// Opens the event stream and keeps it open. `onOpen` gets true if this follows a lost connection.
-export function listen({ onEvent, onOpen, onLost }) {
+// A stream of this page's own, for browsers that can't share one. Answers with a function that closes it.
+function ownStream({ open, lost, message }) {
   let source = null;
-  let lost = false;
   let timer = null;
   let stopped = false;
 
   function connect() {
     source = new EventSource("/api/events");
-    source.onopen = () => {
-      onOpen(lost);
-      lost = false;
-    };
-    source.onmessage = (message) => {
-      let event;
-      try {
-        event = JSON.parse(message.data);
-      } catch {
-        return;
-      }
-      onEvent(event);
-    };
+    source.onopen = open;
+    source.onmessage = (event) => message(event.data);
     source.onerror = () => {
-      if (!lost) onLost();
-      lost = true;
+      lost();
       // The browser retries by itself unless the stream has closed for good
       if (source.readyState === EventSource.CLOSED && !stopped) {
         clearTimeout(timer);
@@ -78,4 +65,46 @@ export function listen({ onEvent, onOpen, onLost }) {
     clearTimeout(timer);
     source.close();
   };
+}
+
+// Opens the event stream and keeps it open, shared between tabs where the browser can.
+// `onOpen` gets true if this follows a lost connection.
+export function listen({ onEvent, onOpen, onLost }) {
+  let wasLost = false;
+  const open = () => {
+    onOpen(wasLost);
+    wasLost = false;
+  };
+  const lost = () => {
+    if (!wasLost) onLost();
+    wasLost = true;
+  };
+  const message = (data) => {
+    let event;
+    try {
+      event = JSON.parse(data);
+    } catch {
+      return;
+    }
+    onEvent(event);
+  };
+  const own = () => ownStream({ open, lost, message });
+
+  let worker;
+  try {
+    worker = new SharedWorker(new URL("./events-worker.js", import.meta.url));
+  } catch {
+    return own();
+  }
+  let close = () => worker.port.close();
+  worker.onerror = () => {
+    close = own();
+  };
+  worker.port.onmessage = ({ data }) => {
+    if (data.type === "open") open();
+    else if (data.type === "lost") lost();
+    else if (data.type === "event") message(data.data);
+    else if (data.type === "unavailable") close = own();
+  };
+  return () => close();
 }

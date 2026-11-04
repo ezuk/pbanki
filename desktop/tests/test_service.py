@@ -1954,3 +1954,175 @@ class PromptFindings(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RegressionFindings(Base):
+    def all_reviewed(self, book_id):
+        book = self.svc.open_book(book_id)
+        self.svc._store.set_reader_reviewed(book_id, [h["key"] for h in book["highlights"]])
+
+    def test_a_finished_book_can_start_key_ideas_alone(self):
+        self.svc._store.set_setting("auto_suggest", False)
+        self.all_reviewed(self.mostly)
+        book = self.svc.book(self.mostly)
+        self.assertEqual(book["suggest"]["due"], 0)
+        self.assertFalse(book["suggest"]["canConnect"])
+        self.assertEqual(book["ideaEmptyText"], "pbAnki hasn't compared the Book Companion with your highlights yet.")
+        self.assertTrue(book["ideaLook"]["show"])
+        self.svc.run(self.mostly, "start", {"highlights": False, "connections": False, "ideas": True})
+        self.wait_run(self.mostly)
+        book = self.svc.book(self.mostly)
+        self.assertEqual([call["kind"] for call in self.ai.calls], ["ideas"])
+        self.assertEqual([row["title"] for row in book["run"]["rows"]], ["Key ideas you didn't highlight"])
+        self.assertEqual(self.svc._store.get_settings()["suggest_connections"], True)
+
+    def test_key_ideas_say_nothing_is_left_only_after_looking(self):
+        self.svc._store.set_setting("auto_suggest", False)
+        book = self.svc.open_book(self.mostly)
+        self.assertNotIn("No key ideas left", book["ideaEmptyText"])
+        self.svc.run(self.mostly, "start", {"connections": False})
+        self.wait_run(self.mostly)
+        self.svc.run(self.mostly, "start", {"connections": False, "ideas": False})
+        self.wait_run(self.mostly)
+        self.assertIn("No key ideas left", self.svc.book(self.mostly)["ideaEmptyText"])
+
+    def test_a_save_finishes_when_the_reader_was_gone_only_between_checks(self):
+        self.svc.tick()
+        book = self.svc.open_book(self.mostly)
+        hid = next(h for h in book["highlights"] if h["canEdit"])["id"]
+        self.svc.open_highlight(self.mostly, hid)
+        card = self.svc.add_card(self.mostly, hid, "qa")["card"]
+        self.svc.update_card(card["id"], front="Q?", back="A")
+        self.unplug()
+        self.assertEqual(self.svc.save_book(self.mostly)["status"], "waiting")
+        self.replug()
+        self.svc.tick()
+        self.assertTrue(self.svc.save_preview(self.mostly)["last_saved"]["done"])
+
+    def test_reading_further_is_noticed(self):
+        self.svc._store.set_setting("auto_suggest", False)
+        self.svc.open_book(self.mostly)
+        self.svc.run(self.mostly, "start", {"connections": False})
+        self.wait_run(self.mostly)
+        self.assertEqual(self.svc.book(self.mostly)["ideaLook"]["note"], "")
+        record = self.svc._store.get_book(self.mostly)
+        looked = runs.ideas_looked(self.svc.runner.status(self.mostly)["progress"])
+        self.svc._store.upsert_book({**record, "data": {**record["data"], "percent_finished": looked + 0.2}})
+        self.assertIn("read further", self.svc.book(self.mostly)["ideaLook"]["note"])
+
+    def test_the_due_count_matches_what_a_run_asks_for(self):
+        self.svc._store.set_setting("auto_suggest", False)
+        book = self.svc.open_book(self.pride)
+        hids = [h["id"] for h in book["highlights"]]
+        pending = book["counts"]["todo"]
+        self.assertEqual(book["suggest"]["due"], pending)
+        card = self.svc.add_card(self.pride, hids[0], "qa")["card"]
+        self.svc.skip_highlight(self.pride, hids[1], True)
+        rejected = self.svc._store.add_card(self.pride, hids[2], "qa", "F", "B", suggested={"front": "F", "back": "B"})
+        self.svc.remove_card(rejected["id"])
+        self.assertTrue(card["id"])
+        book = self.svc.book(self.pride)
+        self.assertEqual(book["suggest"]["due"], pending - 3)
+        self.assertEqual(book["suggest"]["sugBtn"], f"Suggest cards for {pending - 3} highlights")
+        self.assertIn("with none yet", book["suggest"]["formLede"])
+        self.svc.run(self.pride, "start", {"connections": False, "ideas": False})
+        self.wait_run(self.pride)
+        self.assertEqual(self.svc.runner.status(self.pride)["progress"]["highlights"]["total"], pending - 3)
+
+    def test_a_run_with_nothing_waiting_says_so(self):
+        self.svc._store.set_setting("auto_suggest", False)
+        self.svc.open_book(self.pride)
+        self.svc.run(self.pride, "start", {"connections": False, "ideas": False})
+        self.wait_run(self.pride)
+        self.svc.run(self.pride, "start", {"connections": False, "ideas": False})
+        self.wait_run(self.pride)
+        row = self.svc.book(self.pride)["run"]["rows"][0]
+        self.assertEqual(row["path"], "No highlights were waiting for cards")
+        self.assertTrue(row["ok"])
+
+    def test_a_prompt_picked_for_a_book_beats_the_one_on_the_reader(self):
+        self.svc._store.set_setting("auto_suggest", False)
+        record = self.svc._store.get_book(self.svc.open_book(self.mostly)["id"])
+        self.svc._store.upsert_book({**record, "data": {**record["data"], "pbanki_prompt": "Self Help"}})
+        self.assertEqual(self.svc.book(self.mostly)["options"]["prompt"], "Self Help")
+        answer = self.svc.choose_prompt(self.mostly, "Standard")
+        self.assertEqual(answer["options"]["prompt"], "Standard")
+        self.assertEqual(self.svc.book(self.mostly)["options"]["prompt"], "Standard")
+        self.assertEqual(self.svc.book(self.pride)["options"]["prompt"], "Standard")
+        with self.assertRaises(ServiceError):
+            self.svc.choose_prompt(self.mostly, "Nothing Called This")
+
+    def test_a_picked_prompt_that_was_deleted_falls_back(self):
+        self.svc._store.set_setting("auto_suggest", False)
+        record = self.svc._store.get_book(self.svc.open_book(self.mostly)["id"])
+        self.svc._store.upsert_book({**record, "data": {**record["data"], "pbanki_prompt": "Standard"}})
+        self.svc.choose_prompt(self.mostly, "Self Help")
+        shutil.rmtree(paths.prompts_dir() / "Self Help")
+        self.assertEqual(self.svc.book(self.mostly)["options"]["prompt"], "Standard")
+
+    def test_models_move_off_an_assistant_that_isnt_installed(self):
+        with mock.patch.dict(os.environ, {"PBANKI_CLAUDE_BIN": str(self.tmp / "missing")}):
+            settings = self.svc.state()["settings"]
+            self.assertEqual(settings["model"], "gpt-6.1-sol")
+            self.assertEqual(settings["meta_model"], "gpt-6.1-sol")
+            self.assertTrue(self.svc.open_book(self.pride)["auto_started"])
+            self.wait_run(self.pride)
+
+    def test_models_stay_when_no_assistant_is_there(self):
+        before = self.svc._store.get_settings()["model"]
+        with mock.patch.dict(os.environ, {"PBANKI_CLAUDE_BIN": str(self.tmp / "no"), "PBANKI_CODEX_BIN": str(self.tmp / "no")}):
+            self.assertEqual(self.svc.state()["settings"]["model"], before)
+
+    def test_create_on_a_book_gone_from_the_reader_gives_the_real_reason(self):
+        gone = book_id_for(self.fake.books["gone"])
+        view = self.svc.open_book(gone)["companion"]
+        self.assertFalse(view["can_create"])
+        self.assertEqual(view["problem"], companion.NOT_ON_READER)
+        with self.assertRaises(ServiceError) as caught:
+            self.svc.companion_create(gone)
+        self.assertEqual(caught.exception.sentence, companion.NOT_ON_READER)
+
+    def test_the_ai_note_shows_only_when_the_choice_cant_be_honoured(self):
+        self.svc._store.set_setting("auto_suggest", False)
+        book = self.svc.open_book(self.pride)
+        self.assertEqual(book["aiNote"], "")
+        self.unplug()
+        self.assertEqual(self.svc.book(self.pride)["aiNote"], "")
+        copy = self.svc.runner._book_copy_path(self.pride)
+        copy.unlink()
+        self.assertIn("only the passage", self.svc.book(self.pride)["aiNote"])
+        self.replug()
+
+    def test_a_waiting_save_says_what_it_leaves_out(self):
+        self.svc._store.set_setting("auto_suggest", False)
+        book = self.svc.open_book(self.pride)
+        hid = book["highlights"][0]["id"]
+        self.svc.open_highlight(self.pride, hid)
+        card = self.svc.add_card(self.pride, hid, "qa")["card"]
+        self.svc.update_card(card["id"], front="Q1", back="A1")
+        self.unplug()
+        self.svc.save_book(self.pride)
+        self.assertEqual(self.svc.save_preview(self.pride)["heldText"], "")
+        other = book["highlights"][1]["id"]
+        self.svc.open_highlight(self.pride, other)
+        card = self.svc.add_card(self.pride, other, "qa")["card"]
+        self.svc.update_card(card["id"], front="Q2", back="A2")
+        preview = self.svc.save_preview(self.pride)
+        self.assertEqual(preview["saveCount"], 2)
+        self.assertEqual(preview["freshCount"], 1)
+        self.assertIn("Step 1 is done for 1 card.", preview["waitText"])
+        self.assertEqual(preview["heldText"], "1 newer card isn't part of that save. Save again afterwards to send them.")
+        self.replug()
+
+    def test_need_link_goes_to_the_first_thing_lacking(self):
+        self.svc._store.set_setting("auto_suggest", False)
+        book = self.svc.open_book(self.pride)
+        hid = book["highlights"][0]["id"]
+        self.svc.open_highlight(self.pride, hid)
+        card = self.svc.add_card(self.pride, hid, "qa")["card"]
+        self.svc.update_card(card["id"], front="Question?")
+        preview = self.svc.save_preview(self.pride)
+        self.assertEqual(preview["needLink"], {"screen": "highlights", "id": hid})
+        self.assertEqual(preview["needCount"], 1)
+        self.assertTrue(preview["saveBlocked"])
+        self.assertTrue(self.svc.book(self.pride)["highlights"][0]["cards"][0]["need"])

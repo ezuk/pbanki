@@ -8,7 +8,7 @@ import { Cards, useClearRemoved } from "./working-cards.js";
 import { Passage } from "./working-passage.js";
 import { AskPanel, askForCards } from "./working-ask.js";
 
-const RUN_OPTIONS = ["count", "kind", "model", "prompt", "sees", "companion", "hint", "connections", "meta_model", "ideas"];
+const RUN_OPTIONS = ["count", "kind", "model", "prompt", "sees", "companion", "hint", "highlights", "connections", "meta_model", "ideas"];
 
 function runAction(book, action, options) {
   if (action === "start") setUi({ suggestAgain: null });
@@ -33,9 +33,14 @@ function CompanionBanner({ companion }) {
 }
 
 function SuggestForm({ book }) {
-  const { state } = useStore();
+  const { state, ui } = useStore();
   const options = currentOptions(book);
   const have = book.companion.have;
+  const { due, canConnect, sugBtn } = book.suggest;
+  // With no highlight waiting, the button says which other steps it will run
+  const steps = [options.connections && canConnect && "connections", options.ideas && have && "key ideas"].filter(Boolean);
+  const label = due || !steps.length ? sugBtn : `Look for ${steps.join(" and ")}`;
+  const again = ui.suggestAgain === book.id;
   return html`
     <section class="comp">
       <div class="compt">Highlight cards</div>
@@ -56,7 +61,9 @@ function SuggestForm({ book }) {
     ${have && html`<section class="comp">
       <label class="cbx"><input type="checkbox" checked=${options.ideas} onChange=${(e) => setOption(book, "ideas", e.target.checked)} /><span><span class="compt">Key ideas you didn't highlight</span><br />Important points in the Book Companion that your highlights miss. Kept apart from your highlight cards.</span></label>
     </section>`}
-    <div class="rowg"><button class="btn pri" style="padding:11px 16px" onClick=${() => runAction(book, "start", options)} disabled=${!book.suggest.pending}>${book.suggest.sugBtn}</button><button class="lnk" onClick=${() => go(here("highlights"))}>Skip, write them myself</button></div>
+    <div class="rowg"><button class="btn pri" style="padding:11px 16px" onClick=${() => runAction(book, "start", options)} disabled=${!due && !steps.length}>${label}</button>${again
+      ? html`<button class="lnk" onClick=${() => setUi({ suggestAgain: null })}>Back to the last run</button>`
+      : html`<button class="lnk" onClick=${() => go(here("highlights"))}>Skip, write them myself</button>`}</div>
   `;
 }
 
@@ -88,6 +95,10 @@ export function Suggest() {
   // Suggest again shows the choices over a finished run
   const phase = run.phase === "done" && ui.suggestAgain === book.id ? "idle" : run.phase;
   const lede = phase === "idle" ? suggest.formLede : suggest.lede;
+  // Leaving ends Suggest again, so coming back shows the finished run
+  useEffect(() => () => {
+    if (store.ui.suggestAgain) setUi({ suggestAgain: null });
+  }, []);
   return html`
     <${Top} middle=${html`<${BookButton} book=${book} />`} />
     <div class="center centertop"><div class="narrow" style="gap:18px">
@@ -124,11 +135,12 @@ const EMPTY_FILTER = { all: "This book has no highlights.", todo: "Nothing left 
 
 function HighlightNav({ book, selected }) {
   const { ui } = useStore();
-  const filter = ui.hlFilter || "all";
+  const filter = (ui.hlFilters || {})[book.id] || "all";
   const groups = [];
   for (const h of book.highlights.filter((item) => inFilter(item, filter))) {
-    let group = groups.find((item) => item.name === h.chapter_name);
-    if (!group) groups.push((group = { name: h.chapter_name, items: [] }));
+    // Only neighbours share a heading, so the list keeps the order of Next, J and "3 of 5"
+    let group = groups[groups.length - 1];
+    if (!group || group.name !== h.chapter_name) groups.push((group = { name: h.chapter_name, items: [] }));
     group.items.push(h);
   }
   const listRef = useRef(null);
@@ -144,13 +156,13 @@ function HighlightNav({ book, selected }) {
   }, [selected]);
   return html`<aside class="nav">
     <div class="navhd">
-      <div class="seg">${book.filters.map((item) => html`<button key=${item.id} class=${filter === item.id ? "sg on" : "sg"} onClick=${() => setUi({ hlFilter: item.id })}>${item.label}</button>`)}</div>
+      <div class="seg">${book.filters.map((item) => html`<button key=${item.id} class=${filter === item.id ? "sg on" : "sg"} onClick=${() => setUi({ hlFilters: { ...ui.hlFilters, [book.id]: item.id } })}>${item.label}</button>`)}</div>
       <${RunProgress} book=${book} />
     </div>
     <div class="navlist" ref=${listRef}>
       ${!groups.length && html`<div class="empty" style="margin:14px">${EMPTY_FILTER[filter]}</div>`}
-      ${groups.map((group) => html`
-        <div key=${`c-${group.name}`} class="chap">${group.name}</div>
+      ${groups.map((group, i) => html`
+        <div key=${`c-${i}-${group.name}`} class="chap">${group.name}</div>
         ${group.items.map((h) => html`<button key=${h.id} class=${`hl${h.id === selected ? " on" : ""}${h.state === "rev" || h.state === "skip" ? " rev" : ""}`} onClick=${() => go(here("highlights", h.id))}>
           <span class="hlg">${h.glyph}</span><span class="hls">${h.mark}</span>
           <span class="hlm">${h.page != null && html`<span>p. ${h.page}</span>`}<span>${h.meta}</span></span>
@@ -229,15 +241,19 @@ function useShortcuts(run) {
   }, []);
 }
 
-// With no highlight in the address, the first still to do.
-function firstHighlight(book) {
-  return book.highlights.find((h) => inFilter(h, "todo")) || book.highlights[0] || null;
+// With no highlight in the address, the one last open here, else the first still to do.
+function firstHighlight(book, remembered) {
+  return book.highlights.find((h) => h.id === remembered) || book.highlights.find((h) => inFilter(h, "todo")) || book.highlights[0] || null;
 }
 
 export function Highlights() {
-  const { book, route } = useStore();
-  const h = book.highlights.find((item) => item.id === route.sub) || firstHighlight(book);
+  const { book, route, ui } = useStore();
+  const h = book.highlights.find((item) => item.id === route.sub) || firstHighlight(book, (ui.highlightPick || {})[book.id]);
   const hid = h ? h.id : null;
+
+  useEffect(() => {
+    if (hid) setUi({ highlightPick: { ...store.ui.highlightPick, [book.id]: hid } });
+  }, [book.id, hid]);
 
   // Put the choice in the address, keeping an open drawer
   useEffect(() => {

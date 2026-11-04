@@ -306,6 +306,47 @@ class WordsTests(unittest.TestCase):
         self.assertEqual(epub.words("soft­hyphen"), "softhyphen")
 
 
+class RealBookCasesTests(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.path = Path(folder.name) / "book.epub"
+
+    def test_a_selection_cut_off_mid_word_stays_where_pos0_points(self):
+        make_epub(self.path, "Book", "Author", [("One", [
+            "A green house stood here.",
+            "Nothing to see in this one at all.",
+            "There was a green housekeeper at the door.",
+        ])])
+        book = epub.open_epub(self.path)
+        loc = book.locate({
+            "text": "green house",
+            "pos0": "/body/DocFragment[1]/body/p[3]/text().12",
+            "pos1": "/body/DocFragment[1]/body/p[3]/text().23",
+        })
+        self.assertEqual(book.passage(loc)["mark"], "green housekeeper")
+
+    def test_a_whole_word_match_where_pos0_points_is_kept(self):
+        make_epub(self.path, "Book", "Author", [("One", ["A green housekeeper first.", "A green house here."])])
+        book = epub.open_epub(self.path)
+        loc = book.locate({"text": "green house", "pos0": "/body/DocFragment[1]/body/p[2]/text().2"})
+        self.assertEqual(book.passage(loc)["mark"], "green house")
+
+    def test_a_table_of_contents_with_one_entry_doesnt_make_the_book_one_chapter(self):
+        make_epub(self.path, "Book", "Author", [("Only", ["First document."]), ("Two", ["Second document."])])
+        with zipfile.ZipFile(self.path) as z:
+            files = {name: z.read(name) for name in z.namelist()}
+        ncx = files["OEBPS/toc.ncx"].decode()
+        files["OEBPS/toc.ncx"] = ncx[:ncx.index('<navPoint id="n2"')].encode() + b"</navMap></ncx>"
+        with zipfile.ZipFile(self.path, "w") as z:
+            for name, data in files.items():
+                z.writestr(name, data)
+        book = epub.open_epub(self.path)
+        loc = book.locate({"text": "First document.", "pos0": "/body/DocFragment[1]/body/p[1]/text().0"})
+        before, after = book.ai_context(loc, epub.MODE_CHAPTER)
+        self.assertNotIn("Second document", before + after)
+
+
 class ChapterNameTests(unittest.TestCase):
     def test_numbered_titles_stay_as_written(self):
         for title in ("Chapter 3: Things", "3. Things", "chapter one", "CHAPTER IV."):

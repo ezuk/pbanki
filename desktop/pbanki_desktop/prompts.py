@@ -17,6 +17,7 @@ from pathlib import Path
 from . import paths
 
 STANDARD = "Standard"
+COPIED_FILE = ".copied"
 
 # The first file name is the one written for Standard
 KINDS = [
@@ -138,16 +139,23 @@ def seed():
     (root / "README.md").write_text(README_TEXT, encoding="utf-8")
     if not _repo_prompts().is_dir():
         return
+    # Names already copied, so a folder the user deleted stays deleted
+    marks = root / COPIED_FILE
+    copied = set(marks.read_text(encoding="utf-8").split("\n")) - {""} if marks.is_file() else set()
     for folder in sorted(_repo_prompts().iterdir()):
         if not folder.is_dir() or folder.name == STANDARD or folder.name.startswith("."):
             continue
         target = root / folder.name
+        if folder.name in copied:
+            continue
+        copied.add(folder.name)
         if target.exists():
             continue
         target.mkdir()
         for path in sorted(folder.iterdir()):
             if path.is_file() and not path.name.startswith("."):
                 (target / path.name).write_bytes(path.read_bytes())
+    marks.write_text("".join(f"{name}\n" for name in sorted(copied)), encoding="utf-8")
 
 
 def folder_names():

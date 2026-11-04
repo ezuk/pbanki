@@ -132,7 +132,7 @@ def _topics(query):
 _RUN_FIELDS = {"action": str, "options": dict}
 _RUN_OPTIONS = {
     "count": int, "kind": str, "model": str, "prompt": str, "sees": str, "companion": str, "hint": str,
-    "connections": bool, "meta_model": str, "ideas": bool,
+    "highlights": bool, "connections": bool, "meta_model": str, "ideas": bool,
 }
 _SUGGEST_FIELDS = {"count": int, "kind": str, "model": str, "prompt": str, "sees": str, "companion": str, "hint": str}
 _FIND_FIELDS = {"chapters": list, "scope": str, "count": int, "model": str, "prompt": str, "hint": str}
@@ -149,6 +149,11 @@ _SETTINGS_FIELDS = {
 def _call_run(s, r):
     options = r.body.get("options")
     return s.run(*r.args, r.body.get("action"), None if options is None else _checked(options, _RUN_OPTIONS))
+
+
+def _call_choose_prompt(s, r):
+    _required(r.body, "prompt")
+    return s.choose_prompt(*r.args, r.body["prompt"])
 
 
 def _call_prompt_file(method):
@@ -168,6 +173,7 @@ _ROUTES = (
     ("GET", "/api/books", {}, lambda s, r: s.books()),
     ("GET", "/api/books/*", {}, lambda s, r: s.book(*r.args)),
     ("POST", "/api/books/*/open", {}, lambda s, r: s.open_book(*r.args)),
+    ("POST", "/api/books/*/prompt", {"prompt": str}, _call_choose_prompt),
     ("POST", "/api/books/*/run", _RUN_FIELDS, _call_run),
     ("POST", "/api/books/*/highlights/*/open", {}, lambda s, r: s.open_highlight(*r.args)),
     ("POST", "/api/books/*/highlights/*/skip", {"skipped": bool},

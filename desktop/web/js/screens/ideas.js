@@ -1,16 +1,15 @@
 // Key ideas: points in the Book Companion that none of the highlights cover.
 
-import { useStore, mutate, here, go, replace, openDrawer } from "../store.js";
+import { useStore, mutate, removeRecord, here, go, replace, openDrawer } from "../store.js";
 import { html, WorkTop, Field, EinkBar, Running } from "../ui.js";
 import { useSelected, useOpenShown, StageNote } from "./connections.js";
+import { currentOptions } from "./working-options.js";
 
 const RUN_ROW = "Key ideas you didn't highlight";
 
-const save = (id, field) => (text) => mutate("PATCH", `/api/ideas/${id}`, { [field]: text }, { quiet: true });
-
 function IdeaPage({ book, idea, rest }) {
   const remove = async () => {
-    const answer = await mutate("DELETE", `/api/ideas/${idea.id}`);
+    const answer = await removeRecord(`/api/ideas/${idea.id}`);
     if (answer) replace(here("ideas", rest.length ? rest[0].id : null));
   };
   return html`
@@ -24,8 +23,8 @@ function IdeaPage({ book, idea, rest }) {
     <div class="two">
       <div class="card" style="background:var(--sheet);min-width:0">
         <div class="chd"><span class="ckind">Key idea card</span><span>${idea.src}</span></div>
-        <${Field} key=${`${idea.id}-front`} class="ta f" rows="1" value=${idea.front} placeholder="Question" onSave=${save(idea.id, "front")} />
-        <${Field} key=${`${idea.id}-back`} class="ta b" rows="1" value=${idea.back} placeholder="Answer" onSave=${save(idea.id, "back")} />
+        <${Field} key=${`${idea.id}-front`} class="ta f" rows="1" value=${idea.front} placeholder="Question" path=${`/api/ideas/${idea.id}`} field="front" />
+        <${Field} key=${`${idea.id}-back`} class="ta b" rows="1" value=${idea.back} placeholder="Answer" path=${`/api/ideas/${idea.id}`} field="back" />
       </div>
       <div class="pf">
         <span class="lab">Context on the reader</span>
@@ -56,6 +55,23 @@ function emptyText(book) {
   return book.ideaEmptyText;
 }
 
+// Runs key ideas alone, for a book already gone through or read further since.
+function LookForIdeas({ book }) {
+  const { state } = useStore();
+  const look = book.ideaLook;
+  if (!look.show) return null;
+  const { meta_model, prompt } = currentOptions(book);
+  const start = () => mutate("POST", `/api/books/${book.id}/run`, {
+    action: "start",
+    options: { highlights: false, connections: false, ideas: true, meta_model, prompt },
+  });
+  const usable = state.models.some((model) => model.id === meta_model);
+  return html`<div class="rowg" style="font-size:14px;color:var(--ink2)">
+    <button class="btn" onClick=${start} disabled=${book.run.active || !usable}>${book.run.active ? "Working..." : look.label}</button>
+    ${look.note && html`<span>${look.note}</span>`}
+  </div>`;
+}
+
 export function Ideas() {
   const { book } = useStore();
   const items = book.ideasNeedComp ? [] : book.ideas;
@@ -65,7 +81,7 @@ export function Ideas() {
     <${WorkTop} tab="ideas" />
     <div class="work">
       <aside class="nav">
-        <div class="navhd"><div style="font-size:14px;color:var(--ink2)" class="rowg"><span>Important points in the Book Companion that none of your highlights cover, from chapters you've read. Only the ones you open get saved.</span></div></div>
+        <div class="navhd"><div style="font-size:14px;color:var(--ink2)" class="rowg"><span>Important points in the Book Companion that none of your highlights cover, from chapters you've read. Only the ones you open get saved.</span></div><${LookForIdeas} book=${book} /></div>
         <div class="navlist" style="padding:0">
           ${items.map((item) => html`<button key=${item.id} class=${current && item.id === current.id ? "ml on" : "ml"} onClick=${() => go(here("ideas", item.id))}>
             <span class="mlt">${item.title}</span>

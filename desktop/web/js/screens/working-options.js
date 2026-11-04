@@ -1,6 +1,6 @@
 // The choices the AI panels share: read from settings, kept in settings when changed.
 
-import { store, useStore, update, setUi, saveSettings, openDrawer } from "../store.js";
+import { store, useStore, update, setUi, saveSettings, mutate, openDrawer } from "../store.js";
 import { html, Opt, Select, Stepper, PromptLine, useReloadAgo } from "../ui.js";
 
 // Option name to the setting that holds it
@@ -25,7 +25,7 @@ export function currentOptions(book) {
 export function setOption(book, option, value) {
   if (option === "prompt") {
     setUi({ prompts: { ...store.ui.prompts, [book.id]: value } });
-    saveSettings({ last_prompt: value });
+    mutate("POST", `/api/books/${book.id}/prompt`, { prompt: value });
     return;
   }
   const setting = SETTING[option];

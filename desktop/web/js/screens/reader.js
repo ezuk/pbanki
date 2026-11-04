@@ -1,17 +1,29 @@
 // Plug in and Reader check.
 
+import { useRef } from "../../vendor/preact-htm.js";
 import { api } from "../api.js";
-import { store, useStore, go, openBook, saveSettings, showError, clearError, loadState, loadBooks, update, setUi } from "../store.js";
-import { html, ErrorBar, Field, Pulse, CheckRow } from "../ui.js";
+import { store, useStore, go, openBook, saveMount, showError, clearError, loadState, loadBooks, update, setUi } from "../store.js";
+import { html, ErrorBar, Field, Pulse, CheckRow, useTick } from "../ui.js";
+
+// Seconds since the server looked for the reader, counting up between fetches of the state.
+function useCheckedAgo() {
+  const { state } = useStore();
+  const from = useRef(null);
+  if (!from.current || from.current.state !== state) from.current = { state, at: Date.now() };
+  useTick();
+  return state.reader.checked_ago + Math.floor((Date.now() - from.current.at) / 1000);
+}
 
 export function PlugIn() {
   const { state, ui } = useStore();
   const { reader, resume, settings } = state;
+  const checkedAgo = useCheckedAgo();
 
   const chooseFolder = async () => {
     try {
       await api.post("/api/reader/choose-folder");
       await loadState();
+      clearError();
     } catch (error) {
       showError(error);
     }
@@ -22,9 +34,9 @@ export function PlugIn() {
     <div class="center"><div class="narrow">
       <h1 class="h1">Plug in your PocketBook</h1>
       <p class="lede">pbAnki gets your book and highlights from the reader, so it has to be connected before you start. This page moves on by itself as soon as it appears.</p>
-      <div class="watch"><${Pulse} /><span>Looking for ${reader.mount}</span><span style="color:var(--ink3)">checked ${reader.checked_ago} s ago</span></div>
+      <div class="watch"><${Pulse} /><span>Looking for ${reader.mount}</span><span style="color:var(--ink3)">checked ${checkedAgo} s ago</span></div>
       <div class="fl"><div class="lab">Where the reader mounts</div><div class="rowg">
-        <${Field} tag="input" commit class="in" style="flex:1 1 260px;width:auto" value=${settings.mount} onSave=${(mount) => saveSettings({ mount })} />
+        <${Field} tag="input" commit class="in" style="flex:1 1 260px;width:auto" value=${settings.mount} onSave=${saveMount} />
         <button class="btn" onClick=${chooseFolder}>Choose folder</button>
       </div></div>
       ${resume && html`<div class="resume">

@@ -1,7 +1,7 @@
 // Entry point: routes to the screen and drawer the hash names.
 
 import { render, useErrorBoundary, useEffect } from "../vendor/preact-htm.js";
-import { useStore, start, useBookLoader, replace, go } from "./store.js";
+import { useStore, start, useBookLoader, replace, go, bookPath } from "./store.js";
 import { html, ErrorBar, Waiting } from "./ui.js";
 import { PlugIn, ReaderCheck } from "./screens/reader.js";
 import { PickBook } from "./screens/books.js";
@@ -13,11 +13,14 @@ import { PromptDrawer } from "./drawers/prompt.js";
 import { SettingsDrawer } from "./drawers/settings.js";
 import { CreateDrawer } from "./drawers/create.js";
 
+// Looked up with text from the address, so these have no inherited names
+const table = (entries) => Object.assign(Object.create(null), entries);
+
 // Screens with no book
-const SCREENS = { plug: PlugIn, check: ReaderCheck, books: PickBook };
+const SCREENS = table({ plug: PlugIn, check: ReaderCheck, books: PickBook });
 // Screens of the open book. They can count on store.book being there.
-const BOOK_SCREENS = { suggest: Suggest, highlights: Highlights, connections: Connections, ideas: Ideas, save: SaveCards, saved: Saved };
-const DRAWERS = { prompt: PromptDrawer, settings: SettingsDrawer, create: CreateDrawer };
+const BOOK_SCREENS = table({ suggest: Suggest, highlights: Highlights, connections: Connections, ideas: Ideas, save: SaveCards, saved: Saved });
+const DRAWERS = table({ prompt: PromptDrawer, settings: SettingsDrawer, create: CreateDrawer });
 
 // The plug-in screen moves on by itself, and a home address picks the right start.
 function useReaderRedirects(route, connected) {
@@ -29,8 +32,9 @@ function useReaderRedirects(route, connected) {
     const move = (hash) => replace(query ? `${hash}?${query}` : hash);
     if (connected && (name === "plug" || name === "home")) move("#/check");
     else if (!connected && (name === "check" || name === "home")) move("#/plug");
-    else if (name !== "home" && !SCREENS[name] && !BOOK_SCREENS[name]) move(connected ? "#/check" : "#/plug");
-  }, [route.name, connected]);
+    else if (route.bookId && !BOOK_SCREENS[name]) move(bookPath(route.bookId));
+    else if (name !== "home" && !route.bookId && !SCREENS[name]) move(connected ? "#/check" : "#/plug");
+  }, [route.name, route.bookId, connected]);
 }
 
 function Problem({ title, children }) {

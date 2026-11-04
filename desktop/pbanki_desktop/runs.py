@@ -8,6 +8,7 @@ for a wider passage, when the reader happens to be there. No lock is held during
 import copy
 import logging
 import os
+import shutil
 import threading
 from collections import deque
 
@@ -43,7 +44,10 @@ SCOPE_PENDING = "pending"
 SCOPE_ALL = "all"
 
 CARD_KINDS = ("qa", "cloze", "qonly")
-_OPTION_KEYS = ("count", "kind", "model", "prompt", "sees", "companion", "hint", "connections", "meta_model", "ideas")
+_OPTION_KEYS = ("count", "kind", "model", "prompt", "sees", "companion", "hint", "highlights", "connections", "meta_model", "ideas")
+
+# In a run's progress: percent_finished when key ideas last ran, kept from run to run
+IDEAS_LOOKED = "ideas_looked"
 
 _UNEXPECTED = "Something went wrong while writing these cards. Try Suggest again."
 _RUN_PROBLEM = "Something went wrong and the suggestions stopped early. Your finished cards are safe."
@@ -74,9 +78,21 @@ def _stage_state(on, name, finished):
     return WAITING if on else OFF
 
 
-def _new_progress(total, finished, connections_on, ideas_on):
+def ideas_looked(progress):
+    """percent_finished when key ideas last ran, or None if they never have."""
+    looked = progress.get(IDEAS_LOOKED)
+    if looked is None and IDEAS in (progress.get("finished") or []):
+        return 0
+    return looked
+
+
+def _new_progress(total, finished, connections_on, ideas_on, previous=None):
+    previous = previous or {}
+
     def stage(on, name):
-        return {"state": _stage_state(on, name, finished), "found": 0, "error": None}
+        # A step this run has already finished keeps what it found
+        found = (previous.get(name) or {}).get("found", 0) if name in finished else 0
+        return {"state": _stage_state(on, name, finished), "found": found, "error": None}
 
     return {
         "stage": HIGHLIGHTS,
@@ -85,6 +101,7 @@ def _new_progress(total, finished, connections_on, ideas_on):
         CONNECTIONS: stage(connections_on, CONNECTIONS),
         IDEAS: stage(ideas_on, IDEAS),
         "finished": list(finished),
+        IDEAS_LOOKED: ideas_looked(previous),
         "error": None,
     }
 
@@ -161,11 +178,12 @@ class Runner:
         settings = self.store.get_settings()
         book = self.store.get_book(book_id) if book_id else None
         choice = book["data"].get("pbanki_prompt") if book else None
+        picked = (settings.get("book_prompts") or {}).get(book_id)
         return {
             "count": settings["count"],
             "kind": settings["kind"],
             "model": settings["model"],
-            "prompt": prompts.default_for_book(choice, settings["last_prompt"]),
+            "prompt": prompts.default_for_book(picked, prompts.default_for_book(choice, settings["last_prompt"])),
             "sees": settings["sees"],
             "companion": settings["companion_send"],
             "connections": settings["suggest_connections"],
@@ -176,7 +194,9 @@ class Runner:
     def start(self, book_id, options=None):
         """Starts a run in the background and returns status(). A run already going is left
         alone. `options` overrides default_options(): count, kind, model, prompt, sees, companion,
-        hint, connections, meta_model, ideas. Raises RunError with a plain sentence."""
+        hint, highlights (false to write no highlight cards), connections, meta_model, ideas. A run
+        carrying on from an unfinished one skips the steps that one finished; after a finished run,
+        every step asked for runs again. Raises RunError with a plain sentence."""
         with self._cond:
             if self._closed:
                 raise RunError("pbAnki is closing.")
@@ -191,11 +211,12 @@ class Runner:
         chosen = self._checked_options(book, options)
         highlights = self._highlights(book)
         reviewed = self._reviewed(book_id)
-        queue = [h for h in highlights if self._due(book_id, h, reviewed)]
+        queue = [h for h in highlights if self._due(book_id, h, reviewed)] if chosen["highlights"] else []
         stored = self.store.get_run(book_id)
-        finished = (stored["progress"].get("finished") or []) if stored else []
+        previous = stored["progress"] if stored else {}
+        finished = (previous.get("finished") or []) if stored and stored["status"] != DONE else []
         has_companion = self._companion_text(book) is not None
-        progress = _new_progress(len(queue), finished, chosen["connections"], chosen["ideas"] and has_companion)
+        progress = _new_progress(len(queue), finished, chosen["connections"], chosen["ideas"] and has_companion, previous)
         run = _Run(book_id, chosen, progress, queue)
 
         with self._cond:
@@ -217,8 +238,10 @@ class Runner:
 
     def auto_start(self, book_id):
         """Starts a run when a book is picked, if the setting is on, nothing has run for this
-        book yet and it has highlights waiting. Returns status(), or None when it didn't start."""
-        if not self.store.get_settings().get("auto_suggest"):
+        book yet and it has highlights waiting, or key ideas to look for among reviewed ones.
+        Returns status(), or None when it didn't start."""
+        settings = self.store.get_settings()
+        if not settings.get("auto_suggest"):
             return None
         if self.store.get_run(book_id) is not None:
             return None
@@ -226,7 +249,10 @@ class Runner:
         if book is None:
             return None
         reviewed = self._reviewed(book_id)
-        if not any(self._due(book_id, h, reviewed) for h in self._highlights(book)):
+        highlights = self._highlights(book)
+        due = any(self._due(book_id, h, reviewed) for h in highlights)
+        ideas = highlights and settings.get("suggest_ideas") and self._whole_companion(book)
+        if not due and not ideas:
             return None
         return self.start(book_id)
 
@@ -398,10 +424,17 @@ class Runner:
                    for h in book["data"].get("highlights") or [])
 
     def cache_book_text(self, book_id):
-        """Keeps the book's text on this Mac while the reader is plugged in, so key idea quotes
-        can be checked with it unplugged. True when the text was read from the reader."""
+        """Keeps the book's file and text on this Mac while the reader is plugged in, so key idea
+        quotes and what the AI reads work the same with it unplugged. True when the text was read."""
         book = self.store.get_book(book_id)
-        return book is not None and self._refresh_book_text(book) is not None
+        if book is None:
+            return False
+        self._keep_book_copy(book)
+        return self._refresh_book_text(book) is not None
+
+    def has_book_copy(self, book_id):
+        """Whether the book's file is on this Mac, for when the reader isn't plugged in."""
+        return self._book_copy_path(book_id).is_file()
 
     # The run itself
 
@@ -409,6 +442,7 @@ class Runner:
         try:
             book = self._book(run.book_id)
             if run.progress[IDEAS]["state"] == WAITING:
+                self._keep_book_copy(book)
                 self._refresh_book_text(book)
             self._highlight_stage(run, book)
             self._connection_stage(run, book)
@@ -538,7 +572,10 @@ class Runner:
             return self._ask_ideas(book, request, token)
 
         def write(found):
-            return self._add_ideas(book, found)
+            added = self._add_ideas(book, found)
+            with self._cond:
+                run.progress[IDEAS_LOOKED] = book["data"].get("percent_finished") or 0
+            return added
 
         self._ask_stage(run, IDEAS, ask, write)
 
@@ -727,6 +764,7 @@ class Runner:
         ask = {
             "prompt": self._prompt(request["prompt"]),
             "rejected": self.store.list_ideas(book["id"], (REMOVED,)),
+            "existing": self.store.list_ideas(book["id"], (DRAFT, SAVED)),
         }
         messages = cardgen.build_ideas(rows, ask, notes, _book_about(book))
         answer = self._call(request["model"], messages, token)
@@ -740,20 +778,35 @@ class Runner:
         return found
 
     def _add_ideas(self, book, found):
-        # A chapter note's link to an idea is stored as the idea's id
+        # A chapter note's link to an idea is stored as the idea's id. An idea written before
+        # isn't added twice: its note links to the one there, or to none if it was removed
         book_id = book["id"]
         added = []
+        by_index = []
+        known = {}
+        for state in (DRAFT, SAVED, REMOVED):
+            for item in self.store.list_ideas(book_id, (state,)):
+                known.setdefault(cardgen.words(item["title"]), item)
         with self.store.transaction():
             for idea in found["ideas"]:
-                added.append(self.store.add_idea(book_id, _card_chapter(book, idea["chapter"]), idea["title"], idea["note"],
-                                                 idea["quote"], idea["front"], idea["back"]))
+                earlier = known.get(cardgen.words(idea["title"]))
+                if earlier is not None:
+                    by_index.append(earlier)
+                    continue
+                item = self.store.add_idea(book_id, _card_chapter(book, idea["chapter"]), idea["title"], idea["note"],
+                                           idea["quote"], idea["front"], idea["back"])
+                added.append(item)
+                by_index.append(item)
             self.store.clear_chapter_notes(book_id)
             for chapter in found["chapters"]:
                 points = []
                 for point in chapter["points"]:
                     stored = {**point}
                     if "idea" in point:
-                        stored["idea"] = added[point["idea"]]["id"]
+                        linked = by_index[point["idea"]]
+                        stored.pop("idea")
+                        if linked["state"] != REMOVED:
+                            stored["idea"] = linked["id"]
                     points.append(stored)
                 self.store.set_chapter_notes(book_id, chapter["chapter"], chapter["big"], points)
         return added
@@ -792,18 +845,53 @@ class Runner:
     def _mount(self):
         return self._mount_override or self.store.get_settings()["mount"]
 
+    def _on_reader(self, book):
+        # The book's file if the reader is plugged in and has it, else None
+        mount = self._mount()
+        local = paths.device_to_local(book["device_path"], mount)
+        if local is None or not reader.is_connected(mount) or not local.is_file():
+            return None
+        return local
+
     def _open_epub(self, book):
-        # The book's ePub if the reader is plugged in and has it, else None
+        # The book's ePub from the reader, else the copy kept on this Mac, else None
         if str(book.get("ext") or "").lower() != "epub":
             return None
-        mount = self._mount()
         try:
-            local = paths.device_to_local(book["device_path"], mount)
-            if local is None or not reader.is_connected(mount):
-                return None
-            return epub.open_epub(local)
+            local = self._on_reader(book)
+            if local is not None:
+                return epub.open_epub(local)
+        except (epub.EpubError, OSError):
+            pass
+        copy_path = self._book_copy_path(book["id"])
+        try:
+            return epub.open_epub(copy_path) if copy_path.is_file() else None
         except (epub.EpubError, OSError):
             return None
+
+    def _book_copy_path(self, book_id):
+        return paths.home() / "book-text" / f"{book_id}.epub"
+
+    def _keep_book_copy(self, book):
+        # Reads the reader and writes only on this Mac
+        if str(book.get("ext") or "").lower() != "epub":
+            return
+        target = self._book_copy_path(book["id"])
+        try:
+            local = self._on_reader(book)
+            if local is None:
+                return
+            found = local.stat()
+            if target.is_file():
+                kept = target.stat()
+                if kept.st_size == found.st_size and int(kept.st_mtime) == int(found.st_mtime):
+                    return
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temp = target.with_suffix(f".{threading.get_ident()}.tmp")
+            shutil.copy2(local, temp)
+            os.replace(temp, target)
+        except OSError:
+            _log.warning("The book's file could not be kept on this computer")
 
     def _companion_text(self, book):
         try:
@@ -867,6 +955,7 @@ class Runner:
             raise RunError("That choice of how much the AI reads isn't one pbAnki knows.")
         if chosen["companion"] not in companion.SEND_OPTIONS:
             raise RunError("That choice for the Book Companion isn't one pbAnki knows.")
+        chosen["highlights"] = bool(chosen.get("highlights", True))
         chosen["connections"] = bool(chosen["connections"])
         chosen["ideas"] = bool(chosen["ideas"])
         return chosen

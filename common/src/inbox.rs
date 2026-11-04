@@ -299,7 +299,12 @@ impl CardContext {
     pub fn to_html(&self) -> String {
         let mut html = String::new();
         if !self.quote.is_empty() {
-            html.push_str(&format!("<i>“{}”</i><hr>", self.quote));
+            let quoted = self.quote.starts_with('“') && self.quote.ends_with('”');
+            if quoted {
+                html.push_str(&format!("<i>{}</i><hr>", self.quote));
+            } else {
+                html.push_str(&format!("<i>“{}”</i><hr>", self.quote));
+            }
         }
         if !self.book.is_empty() {
             html.push_str(&format!("<b>{}</b><br>", self.book));
@@ -679,6 +684,41 @@ mod tests {
         assert_eq!(
             context.to_html(),
             "<i>“To be”</i><hr><b>Hamlet</b><br>Shakespeare<br>Act III · p. 57"
+        );
+    }
+
+    #[test]
+    fn context_keeps_a_quote_that_has_its_own_marks() {
+        let context = CardContext {
+            quote: "“To be”".into(),
+            ..Default::default()
+        };
+        assert_eq!(context.to_html(), "<i>“To be”</i><hr>");
+    }
+
+    // A line written by the real desktop app, with emoji, quotes, HTML characters and a backslash
+    #[test]
+    fn imports_emoji_quotes_and_html_from_a_real_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut col = collection(dir.path());
+        let line = r#"{"front":"What does Mrs. Bennet call \"a fine thing\" 💰 for 'our girls'?","back":"A single man — “four or five thousand” a year 🎩 & <b>more</b>\nSecond line \\ backslash","quote":"“Oh, single!”","book":"Pride and Prejudice","author":"Jane Austen","chapter":"Chapter I.","page":36,"file":"/mnt/ext1/English/book.epub","position":"/body/DocFragment[3]/body/p[6]/text().0","batch":"b21d1958375bb317"}"#;
+        fs::write(dir.path().join(INBOX_FILE), format!("{line}\n")).unwrap();
+
+        assert_eq!(
+            import_inbox(&mut col, dir.path()).unwrap(),
+            ImportSummary {
+                added: 1,
+                failed: 0
+            }
+        );
+        let notes = koreader_notes(&mut col);
+        assert_eq!(
+            notes[0][0],
+            "What does Mrs. Bennet call \"a fine thing\" 💰 for 'our girls'?"
+        );
+        assert_eq!(
+            notes[0][1],
+            "A single man — “four or five thousand” a year 🎩 &amp; &lt;b&gt;more&lt;/b&gt;<br>Second line \\ backslash"
         );
     }
 }

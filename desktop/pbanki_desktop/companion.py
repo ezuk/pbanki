@@ -639,6 +639,10 @@ def _launch_terminal(script):
         raise CompanionError("Terminal could not be opened.")
 
 
+PLUG_IN_FIRST = "Plug in the reader first, so pbAnki can copy the book."
+NOT_ON_READER = "This book's file isn't on the reader any more, so pbAnki can't copy it."
+
+
 def create(device_path, mount):
     """Copies the book to the Mac, writes the .command script there and opens it in Terminal.
     Only ever runs on the user's click. Returns {work_dir, epub, script, watching}."""
@@ -647,7 +651,9 @@ def create(device_path, mount):
         raise CompanionError(status["problem"])
     source = paths.device_to_local(device_path, mount)
     if source is None or not source.is_file():
-        raise CompanionError("Plug in the reader first, so pbAnki can copy the book.")
+        if Path(mount).is_dir():
+            raise CompanionError(NOT_ON_READER)
+        raise CompanionError(PLUG_IN_FIRST)
     folder = work_dir(device_path)
     folder.mkdir(parents=True, exist_ok=True)
     (folder / _FINISHED_MARK).unlink(missing_ok=True)

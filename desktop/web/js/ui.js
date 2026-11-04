@@ -1,30 +1,40 @@
 // Pieces the mock repeats across screens.
 
 import { html, useEffect, useLayoutEffect, useRef, useState } from "../vendor/preact-htm.js";
-import { store, useStore, go, openDrawer, closeDrawer, clearError, debouncedSave, bookPath, here } from "./store.js";
+import { useStore, go, openDrawer, closeDrawer, clearError, debouncedSave, editSaver, bookPath, here } from "./store.js";
 
 export { html };
 
 export const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
+const NOT_TEXT = ["checkbox", "radio", "button", "submit", "reset", "file", "color", "range"];
+
 // Whether a key press went to something being typed in, for keyboard shortcuts.
 export function isTyping(event) {
   const el = event.target;
-  return !!el && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName));
+  if (!el) return false;
+  if (el.isContentEditable) return true;
+  if (el.tagName === "TEXTAREA") return !el.readOnly;
+  return el.tagName === "INPUT" && !el.readOnly && !NOT_TEXT.includes(el.type);
 }
 
 // Top bar
 
-const LOST = "pbAnki stopped answering. Check it's still running in Terminal. Your work is safe on this computer.";
+const LOST = "pbAnki stopped answering. Check it's still running in Terminal.";
+const SAFE = "Your work is safe on this computer.";
+const UNSAVED = "Some of your typing hasn't reached pbAnki yet. It's kept in this browser, and pbAnki keeps trying.";
+const AT_RISK = "Some of your typing hasn't reached pbAnki yet. Keep this page open until this goes away.";
 
-// The error strip. Screens with a Top get it from there.
+// The error strip. Screens with a Top get it from there. Its wrapper stays when the bars come and
+// go, so the screen below isn't moved in the page, which would drop the cursor.
 export function ErrorBar() {
-  const { error, lost } = useStore();
-  return html`
-    ${lost && html`<div class="unplug">${LOST}</div>`}
+  const { error, lost, unsaved, unsavedOnlyHere } = useStore();
+  return html`<div class="bars">
+    ${lost && html`<div class="unplug">${LOST} ${unsavedOnlyHere ? "" : SAFE}</div>`}
+    ${unsaved && (unsavedOnlyHere || !lost) && html`<div class="unplug">${unsavedOnlyHere ? AT_RISK : UNSAVED}</div>`}
     ${error &&
     html`<div class="unplug"><span>${error}</span><button class="lnk" style="color:var(--ink)" onClick=${clearError}>Dismiss</button></div>`}
-  `;
+  </div>`;
 }
 
 export function ReaderChip() {
@@ -36,7 +46,7 @@ export function ReaderChip() {
 export function BookButton({ book }) {
   return html`<button class="bookbtn" onClick=${() => go("#/books")} style="max-width:300px">
     <span class="bookt">${book.title}</span>
-    <span class="booka">${book.author ? `${book.author} · ` : ""}change book</span>
+    <span class="booka">${book.author && html`<span class="bookau" title=${book.author}>${book.author}</span>`}<span class="bookc">${book.author ? " · " : ""}change book</span></span>
   </button>`;
 }
 
@@ -56,8 +66,7 @@ export function Top({ middle, settings = true, children }) {
 
 export function UnplugBar() {
   const { state } = useStore();
-  if (state.reader.connected) return null;
-  return html`<div class="unplug">Your reader is unplugged. Keep working. Your cards stay on this computer until you plug it in and save.</div>`;
+  return html`<div class="bars">${!state.reader.connected && html`<div class="unplug">Your reader is unplugged. Keep working. Your cards stay on this computer until you plug it in and save.</div>`}</div>`;
 }
 
 // The top bar of Highlights, Connections and Key ideas. `tab` is the route name of the one showing.
@@ -153,6 +162,13 @@ export const EinkBar = ({ style }) => html`<div class="einkb" style=${style}><sp
 
 // A drawer on its scrim, with the title and close button. Fills the rest with `children`.
 export function Drawer({ title, children }) {
+  useLayoutEffect(() => {
+    const onKey = (event) => {
+      if (event.key === "Escape") closeDrawer();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   return html`<div class="scrim" onClick=${closeDrawer}>
     <div class="drawer" onClick=${(e) => e.stopPropagation()}>
       <div class="drh"><h2 class="drt">${title}</h2><button class="x" onClick=${closeDrawer} aria-label="Close">✕</button></div>
@@ -163,21 +179,36 @@ export function Drawer({ title, children }) {
 }
 
 // A text field that saves itself. Give it a `key` per record. Once the user types, a new `value`
-// from the server waits until they leave the field and the text is saved. `onSave(text)` returns
-// a promise, which rejects if the save failed: the text then stays, the error shows, and the next
-// blur tries again. `commit` saves only on blur or Enter, for values a half-typed entry would break.
-// `tag` is "textarea" (the default) or "input"; everything else goes on the element.
-export function Field({ value, onSave, commit = false, tag = "textarea", ...rest }) {
+// from the server waits until they leave the field and the text is saved. A record's field gives
+// `path` and `field`, and is sent as PATCH <path> {<field>: text}: text the server hasn't taken stays
+// on screen when the field comes back, is kept in the browser and is retried until it goes through.
+// Anything else gives `onSave(text)`, which returns a promise that rejects if the save failed: the
+// text then stays, the error shows, and the next blur tries again. `commit` saves only on blur or
+// Enter, for values a half-typed entry would break. `tag` is "textarea" (the default) or "input";
+// everything else goes on the element.
+export function Field({ value, onSave, path, field, commit = false, tag = "textarea", ...rest }) {
   const [, rerender] = useState(0);
-  // The user's text, or null when showing `value`
-  const draft = useRef(null);
   const ref = useRef(null);
   const latest = useRef(onSave);
   latest.current = onSave;
   const saver = useRef(null);
-  if (!saver.current) saver.current = debouncedSave((text) => latest.current(text));
+  if (!saver.current) saver.current = path ? editSaver(path, field) : debouncedSave((text) => latest.current(text));
+  // The user's text, or null when showing `value`
+  const draft = useRef(saver.current.pending() ?? null);
 
-  useEffect(() => () => saver.current.flush(), []);
+  useEffect(() => {
+    const stopListening = saver.current.listen(() => {
+      if (document.activeElement !== ref.current) {
+        draft.current = null;
+        rerender((n) => n + 1);
+      }
+    });
+    return () => {
+      stopListening();
+      const flushed = saver.current.flush();
+      if (!path) flushed.then(() => saver.current.drop());
+    };
+  }, []);
 
   const shown = draft.current ?? value ?? "";
   useLayoutEffect(() => {

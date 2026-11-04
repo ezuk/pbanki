@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import signal
 import stat
 import subprocess
@@ -464,9 +465,16 @@ class CreateTest(Folders):
         self.assertFalse(self.launched.exists())
 
     def test_refuses_with_the_reader_unplugged(self):
+        shutil.rmtree(self.mount)
         with self.assertRaises(companion.CompanionError) as caught:
             companion.create(self.DEVICE, self.mount)
         self.assertIn("Plug in the reader", str(caught.exception))
+        self.assertFalse(self.launched.exists())
+
+    def test_a_book_gone_from_a_plugged_in_reader_says_so(self):
+        with self.assertRaises(companion.CompanionError) as caught:
+            companion.create(self.DEVICE, self.mount)
+        self.assertEqual(str(caught.exception), companion.NOT_ON_READER)
         self.assertFalse(self.launched.exists())
 
     def test_copies_to_the_mac_and_opens_terminal(self):

@@ -825,6 +825,11 @@ class Epub:
             if matches:
                 target = self.doc(fragment).resolve(tail)
                 match = self._nearest(corpus, matches, fragment, target)
+                if target is not None and not self._in_block_of(corpus, match, fragment, target):
+                    # A selection cut off mid-word only matches whole words somewhere else
+                    closer = self._nearest(corpus, corpus.find_compact(query) or [match], fragment, target)
+                    if self._in_block_of(corpus, closer, fragment, target):
+                        match = closer
                 return self._loc(corpus, match, prefix, suffix, "fragment")
 
         corpus = self._whole_book()
@@ -833,6 +838,11 @@ class Epub:
             return dict(NOT_FOUND)
         match = self._nearest(corpus, matches, fragment, None)
         return self._loc(corpus, match, prefix, suffix, "book")
+
+    def _in_block_of(self, corpus, match, fragment, target):
+        number, start, _end = corpus.spans[match[0]]
+        doc = self.doc(fragment)
+        return number == fragment and doc.block_at(start) == doc.block_at(target)
 
     @staticmethod
     def _nearest(corpus, matches, fragment, target):
@@ -954,7 +964,8 @@ class Epub:
     def _chapter_bounds(self, doc, offset):
         """(start doc, start offset, end doc, end offset) of the chapter around a position."""
         regions = self.regions()
-        if not any(entry["doc"] is not None for entry in regions):
+        # One entry doesn't divide the book
+        if sum(entry["doc"] is not None for entry in regions) < 2:
             return (doc, 0, doc, len(self.doc(doc).text))
         index = self._entry_at(regions, doc, offset)
         if index is None:

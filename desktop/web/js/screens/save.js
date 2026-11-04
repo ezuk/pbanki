@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "../../vendor/preact-htm.js";
 import { api } from "../api.js";
-import { useStore, store, go, here, mutate, setUi, useEvent } from "../store.js";
-import { html, Top, Pulse, Waiting } from "../ui.js";
+import { useStore, store, go, here, mutate, editsSent, setUi, useEvent } from "../store.js";
+import { html, Top, Pulse, Waiting, plural } from "../ui.js";
 
 const previewPath = (id) => `/api/books/${encodeURIComponent(id)}/save`;
 
@@ -42,7 +42,7 @@ const Group = ({ group }) => html`<div>
   <div class="sgh"><span>${group.head}</span><span class="sgm">${group.where}</span></div>
   ${group.rows.map((row, i) => html`<div key=${i} class="sr">
     <span class="srq">${row.front}</span>
-    <span>${row.need && html`<span class="srneed">No answer yet</span>`}<span>${row.back}</span></span>
+    <span>${row.need && html`<span class="srneed">${row.needLabel}</span>`}<span>${row.back}</span></span>
   </div>`)}
 </div>`;
 
@@ -54,10 +54,12 @@ export function SaveCards() {
   const { book, state, ui } = useStore();
   const id = book.id;
   const [busy, setBusy] = useState(null); // "save" or "retry"
-  const { preview, error, load } = usePreview(id, ui.saveMark, [book, state.reader.connected, state.reader.mount]);
+  const marks = ui.saveMarks || {};
+  const { preview, error, load } = usePreview(id, marks[id], [book, state.reader.connected, state.reader.mount]);
 
   const finished = useCallback(() => {
-    setUi({ ejected: false });
+    // Carrying on after a save starts from what's still to do
+    setUi({ ejected: false, highlightPick: { ...store.ui.highlightPick, [id]: null } });
     if (store.route.name === "save" && store.route.bookId === id) go(here("saved"));
   }, [id]);
 
@@ -73,12 +75,13 @@ export function SaveCards() {
 
   const send = async (kind, path, body) => {
     setBusy(kind);
+    await editsSent();
     const answer = await mutate("POST", path, body);
     setBusy(null);
     if (answer && answer.status === "verified") finished();
     else load();
   };
-  const save = () => send("save", previewPath(id), { mark_connection_sources: ui.saveMark ?? preview.markMeta });
+  const save = () => send("save", previewPath(id), { mark_connection_sources: marks[id] ?? preview.markMeta });
   const retry = () => send("retry", `${previewPath(id)}/retry`);
 
   const middle = html`<span class="bookt">Save cards</span>`;
@@ -88,7 +91,7 @@ export function SaveCards() {
   }
 
   const failed = preview.failed.length > 0;
-  const mark = ui.saveMark ?? preview.markMeta;
+  const mark = marks[id] ?? preview.markMeta;
   return html`
     ${top}
     <div class="savew">
@@ -99,14 +102,15 @@ export function SaveCards() {
       <aside class="saver">
         <div class="rowg" style="align-items:baseline"><span class="bignum">${preview.saveCount}</span><span>${preview.saveNoun}</span></div>
         ${preview.needCount > 0 &&
-        html`<div class="errb"><span>${preview.needText}</span><button class="lnk" style="color:var(--ink)" onClick=${() => go(here("highlights", preview.needs[0]))}>Go to it</button></div>`}
+        html`<div class="errb"><span>${preview.needText}</span><button class="lnk" style="color:var(--ink)" onClick=${() => go(here(preview.needLink.screen, preview.needLink.id))}>Go to it</button></div>`}
         ${failed && html`<div class="errb"><span>${safeError(preview.failed[0].error)}</span></div>`}
         <div class="fl" style="gap:12px">
           <div class="lab">What happens when you save</div>
           ${preview.steps.map((step) => html`<${Step} key=${step.n} step=${step} />`)}
         </div>
-        <label class="cbx"><input type="checkbox" checked=${mark} onChange=${(e) => setUi({ saveMark: e.target.checked })} /><span>Also mark highlights used only by connection cards</span></label>
+        <label class="cbx"><input type="checkbox" checked=${mark} onChange=${(e) => setUi({ saveMarks: { ...store.ui.saveMarks, [id]: e.target.checked } })} /><span>Also mark highlights used only by connection cards</span></label>
         <div style="font-size:13.5px;color:var(--ink2)">${preview.leftText}</div>
+        ${preview.heldText && html`<div style="font-size:13.5px;color:var(--ink2)">${preview.heldText}</div>`}
         ${preview.saveWaiting &&
         html`<div class="waitb"><div class="rowg"><${Pulse} /><b style="font-weight:600">Plug in your PocketBook to finish</b></div><div style="font-size:13.5px;overflow-wrap:anywhere">${preview.waitText}</div></div>`}
         ${!preview.saveWaiting && failed &&
@@ -165,6 +169,7 @@ export function Saved() {
     <div class="center"><div class="narrow">
       <h1 class="h1">${done.doneTitle}</h1>
       <p class="lede">${done.lede}</p>
+      ${preview.freshCount > 0 && html`<p class="lede">${plural(preview.freshCount, "more card")} written since ${preview.freshCount === 1 ? "is" : "are"} still here, not saved yet.</p>`}
       <div style="border-top:3px solid var(--ink)">
         ${done.doneRows.map((row) => html`<div key=${row.t} class="chk"><span class="chkg">✓</span><span class="chkt">${row.t}</span><span class="chkp">${row.p}</span></div>`)}
       </div>

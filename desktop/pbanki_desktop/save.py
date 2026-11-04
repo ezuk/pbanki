@@ -23,7 +23,7 @@ import unicodedata
 from collections import Counter
 from pathlib import Path
 
-from . import device, epub, paths, reader
+from . import cardgen, device, epub, paths, reader
 from . import store as store_module
 from .store import BACKED_UP, VERIFIED
 
@@ -220,6 +220,21 @@ def _filled(item):
     return item["front"].strip() != ""
 
 
+def _cloze_sound(front):
+    """Whether a cloze hides some words and has no stray braces around its hidden parts."""
+    gaps = _CLOZE_GAP.findall(front)
+    rest = _CLOZE_GAP.sub("", front)
+    return any(gap.strip() for gap in gaps) and "{{" not in rest and "}}" not in rest
+
+
+def need_of(item):
+    """What a written card lacks before it can be answered on the reader: "cloze", "answer" or None."""
+    front = item["front"]
+    if item.get("kind") == "cloze" or cardgen.is_cloze(front) or "{{c" in front:
+        return None if _cloze_sound(front) else "cloze"
+    return None if item["back"].strip() else "answer"
+
+
 def _select(store, book, highlights, mark_connection_sources):
     """What a save covers, by the mock's rules: only what the user opened."""
     book_id = _book_id(book)
@@ -262,11 +277,16 @@ def _select(store, book, highlights, mark_connection_sources):
                 connection_only.append(hid)
     marked_sources = connection_only if mark_connection_sources else []
 
-    needs = []
+    needs, need_kinds = [], []
     for hid in with_cards:
         for card in drafts[hid]:
-            if _filled(card) and card["kind"] == "qonly" and not card["back"].strip():
+            need = need_of(card) if _filled(card) else None
+            if need:
                 needs.append(hid)
+                need_kinds.append(need)
+    need_connections = [c["id"] for c in connections if need_of(c)]
+    need_ideas = [i["id"] for i in ideas if need_of(i)]
+    need_kinds += ["answer"] * (len(need_connections) + len(need_ideas))
     count = sum(sum(1 for c in drafts[hid] if _filled(c)) for hid in with_cards) + len(connections) + len(ideas)
 
     return {
@@ -284,16 +304,26 @@ def _select(store, book, highlights, mark_connection_sources):
         "connections_waiting": sum(1 for c in all_connections if not c["opened"]),
         "ideas_waiting": sum(1 for i in all_ideas if not i["opened"]),
         "needs": needs,
+        "need_connections": need_connections,
+        "need_ideas": need_ideas,
+        "need_kinds": need_kinds,
         "count": count,
         "mark_count": len(with_cards) + len(skipped) + len(marked_sources),
         "left": len(pending) - len(with_cards) - len(marked_sources),
     }
 
 
-def _need_text(needs):
-    n = len(needs)
-    verb = "needs an answer" if n == 1 else "need answers"
-    return f"{_plural(n, 'question')} still {verb}. Answer or remove before saving."
+def _need_text(kinds):
+    answers, clozes = kinds.count("answer"), kinds.count("cloze")
+    parts = []
+    if answers:
+        verb = "needs an answer" if answers == 1 else "need answers"
+        parts.append(f"{_plural(answers, 'question')} still {verb}.")
+    if clozes:
+        verb = "needs" if clozes == 1 else "need"
+        parts.append(f"{_plural(clozes, 'cloze card')} still {verb} words hidden correctly.")
+    fix = "Answer or remove before saving." if not clozes else "Fix or remove before saving."
+    return " ".join([*parts, fix])
 
 
 def _left_text(selection):
@@ -328,11 +358,15 @@ def _where(highlight):
     return " · ".join(p for p in (chapter, "" if page is None else f"p. {page}") if p)
 
 
+_NEED_LABELS = {"answer": "No answer yet", "cloze": "No words hidden"}
+
+
 def _preview_row(card):
-    if card["kind"] == "cloze":
-        return {"front": _CLOZE_GAP.sub("[...]", card["front"]), "back": "Cloze", "need": False}
-    need = card["kind"] == "qonly" and not card["back"].strip()
-    return {"front": card["front"], "back": card["back"], "need": need}
+    need = need_of(card)
+    label = {"need": bool(need), **({"needLabel": _NEED_LABELS[need]} if need else {})}
+    if card.get("kind") == "cloze":
+        return {"front": _CLOZE_GAP.sub("[...]", card["front"]), "back": "Cloze", **label}
+    return {"front": card["front"], "back": card["back"], **label}
 
 
 def _groups(selection):
@@ -349,7 +383,7 @@ def _groups(selection):
                 "id": c["id"],
                 "head": f"Connection: {c['title']}",
                 "where": connection_chapters(c, by_hid),
-                "rows": [{"front": c["front"], "back": c["back"], "need": False}],
+                "rows": [_preview_row(c)],
             }
         )
     for i in selection["ideas"]:
@@ -359,7 +393,7 @@ def _groups(selection):
                 "id": i["id"],
                 "head": f"Key idea: {i['title']}",
                 "where": _text(i.get("chapter")),
-                "rows": [{"front": i["front"], "back": i["back"], "need": False}],
+                "rows": [_preview_row(i)],
             }
         )
     return groups
@@ -378,13 +412,16 @@ def preview(store, book, highlights, mark_connection_sources=True):
     selection = _select(store, book, highlights, mark_connection_sources)
     count = selection["count"]
     needs = selection["needs"]
+    kinds = selection["need_kinds"]
     return {
         "groups": _groups(selection),
         "count": count,
         "noun": _noun(count),
         "needs": needs,
-        "need_text": _need_text(needs) if needs else "",
-        "blocked": bool(needs) or count == 0,
+        "need_connections": selection["need_connections"],
+        "need_ideas": selection["need_ideas"],
+        "need_text": _need_text(kinds) if kinds else "",
+        "blocked": bool(kinds) or count == 0,
         "mark_count": selection["mark_count"],
         "mark_text": _mark_text(selection["mark_count"]),
         "marked": {
@@ -421,8 +458,8 @@ def back_up(store, book, highlights, mark_connection_sources=True):
     book_id = _book_id(book)
     with store.transaction():
         selection = _select(store, book, highlights, mark_connection_sources)
-        if selection["needs"]:
-            raise SaveBlocked(_need_text(selection["needs"]))
+        if selection["need_kinds"]:
+            raise SaveBlocked(_need_text(selection["need_kinds"]))
         if selection["count"] == 0:
             batches = store.list_batches(book_id)
             if any(batch["status"] != VERIFIED for batch in batches):

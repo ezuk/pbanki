@@ -16,6 +16,7 @@ pbAnki started as a fork of [ananyatimalsina/pbanki](https://github.com/ananyati
 
 - [Part 1: making cards in KOReader](#part-1-making-cards-in-koreader)
 - [Part 2: studying in pbAnki](#part-2-studying-in-pbanki)
+- [Part 3: the desktop companion](#part-3-the-desktop-companion)
 - [Install on a PocketBook](#install-on-a-pocketbook)
 - [Building](#building)
 
@@ -327,11 +328,51 @@ The deck list and the study screen show the time in the top-right corner, update
 ### Under the hood
 
 - One Cargo workspace with a single lock file. The Anki dependency is pinned to an exact commit.
-- 80 Rust tests, covering card layout, config, the KOReader inbox and the study flow against real Anki collections, plus specs for the plugin's card prompts and prompt folders. The original had none.
+- 83 Rust tests, covering card layout, config, the KOReader inbox and the study flow against real Anki collections, plus specs for the plugin's card prompts and prompt folders. The original had none.
 - CI checks formatting, runs Clippy and the tests, and cross-builds for the PocketBook on every push.
 - Fixes to the original: sync could never log in with the default config (an empty token counted as a real one), settings were always saved to the device path, the sync status got stuck after a failure, and a page size of 0 crashed the app.
 - The launcher works around firmware 6.11 refusing to load `libinkview.so`.
 - If the collection can't be opened, pbAnki says why instead of quitting.
+
+## Part 3: the desktop companion
+
+The plugin makes cards one highlight at a time on an e-ink screen. The desktop companion is for a whole book at once: a local web app on your Mac that reads your reader's highlights, has the AI suggest cards in the background, and lets you review them on a big screen with the book's text beside them.
+
+Plug in the reader and start it:
+
+```bash
+./run-desktop.sh
+```
+
+To try it with a fake reader and made-up AI answers, so nothing real is touched:
+
+```bash
+./run-desktop.sh --practice
+```
+
+It needs Python 3.11 or newer on a Mac, and nothing else to install. AI cards use your own [Claude Code](https://claude.com/claude-code) or Codex command line. The screenshots below use sample cards on a practice reader.
+
+<p align="center"><img src="docs/screenshots/desktop/07-highlights-cards-preview.png" width="800" alt="The Highlights screen: a list of highlights on the left, and on the right two AI cards with a preview of the question, answer and context pages as they look on the reader"></p>
+
+### What it adds
+
+- **Suggestions run by themselves.** Open a book and the AI starts on its highlights while you read through them. Your work stays on the Mac, so you can keep going with the reader unplugged.
+- **The passage around each highlight**, with your note, card checks, Rewrite, cloze and question-only cards, definition cards from selected words, and a preview of each card as it will look on the reader.
+- **Connections:** questions that take several highlights to answer, each naming its chapters by number and title.
+- **Key ideas:** with a Book Companion, important points your highlights missed, and a warning when later research questions a claim you highlighted.
+- **Prompts as files on your Mac**, reloaded when you edit them, in the same format as the plugin's.
+
+<p align="center"><img src="docs/screenshots/desktop/11-key-ideas.png" width="800" alt="The Key ideas screen: a point from the Book Companion that the highlights missed, with a quote from the book and a card"></p>
+
+### Saving to the reader
+
+Only what you opened gets saved. **Save to reader** backs up to your Mac, adds the cards to pbAnki's inbox, and marks those highlights as reviewed; the plugin picks that up the next time you open the book in KOReader. Your reader's disk has silently lost freshly copied files before, so the app ejects and remounts it and reads the files back before saying they landed.
+
+It writes only `applications/pbanki/inbox.jsonl` and `reviewed.jsonl`, plus a Book Companion or the plugin if you click the button for it. It never changes KOReader's own files, and never starts anything on the reader.
+
+<p align="center"><img src="docs/screenshots/desktop/12-save-review.png" width="800" alt="The Save cards screen: every card to be saved, grouped by highlight, with the steps that happen when you save"></p>
+
+Click **Update plugin** on the Reader check screen once, so the plugin can read desktop saves. More in [desktop/PLAN.md](desktop/PLAN.md).
 
 ## Install on a PocketBook
 
@@ -418,6 +459,7 @@ common/      App logic: Anki backend, card layout, KOReader inbox, settings
 dev/         Desktop build, the emulator and the KOReader screenshot runner
 ui/          Slint UI and the bundled JetBrains Mono font
 koreader/    KOReader plugin and its specs (lua koreader/spec/cardgen_spec.lua, prompts_spec.lua)
+desktop/     Desktop companion: local server, browser app and their tests
 pocketbook/  Device launcher, app icon and icon build script
 docs/        README screenshots and the script that renders them
 ```

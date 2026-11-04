@@ -28,6 +28,7 @@ desktop/
     __init__.py
     paths.py                 app-support paths and env overrides
     lua.py                   parser for KOReader's Lua data files
+    device.py                proven writes to the reader: the remount, the read-back, and the lock around them
     reader.py                mount detection, reader check, history, book records, highlights
     epub.py                  spine, table of contents, xpointer and text lookup, passages
     companion.py             sidecar finding, sections, slicer port, chapter notes, create and copy
@@ -47,9 +48,13 @@ desktop/
   web/
     index.html
     companion.css            copied from design/, then extended only where needed
+    fonts.css                the @font-face rules
     fonts/                   vendored woff2 and their licences
     vendor/preact-htm.js
-    js/                      app.js, api.js, and one module per screen
+    js/                      app.js, api.js, store.js (the one store), ui.js (shared pieces),
+                             events-worker.js (the event stream all tabs share)
+    js/screens/              one or more modules per screen
+    js/drawers/              Prompt file, Settings, Create a Book Companion
   tests/
     fixtures/                fake reader builder, a real KOReader sidecar, fake AI commands
     test_*.py                unittest, run with: python3 -m unittest discover -s desktop/tests
@@ -57,11 +62,11 @@ desktop/
 ```
 
 `paths.py` honours these for tests and for the user's convenience:
-`PBANKI_DESKTOP_HOME` (default `~/Library/Application Support/pbAnki`), `PBANKI_MOUNT` (default `/Volumes/PB629`), `PBANKI_CLAUDE_BIN`, `PBANKI_CODEX_BIN`, `PBANKI_SYNC_DELAY`, `PBANKI_ASSISTANT_DIR` (default `~/Documents/GitHub/assistant.koplugin`), `PBANKI_TERMINAL_CMD` (test hook replacing the Terminal launch).
+`PBANKI_DESKTOP_HOME` (default `~/Library/Application Support/pbAnki`), `PBANKI_MOUNT` (default `/Volumes/PB629`), `PBANKI_CLAUDE_BIN`, `PBANKI_CODEX_BIN`, `PBANKI_SYNC_DELAY`, `PBANKI_ASSISTANT_DIR` (default `~/Documents/GitHub/assistant.koplugin`), `PBANKI_TERMINAL_CMD` (test hook replacing the Terminal launch), `PBANKI_OPEN_CMD` (test hook replacing `open`), `PBANKI_CHOOSE_FOLDER_CMD` (test hook replacing the folder dialog). `PBANKI_DEV_COMPANION_SECONDS` is read by the fake Terminal in tests, for how long a fake Companion takes.
 
 ## 3. What the reader looks like
 
-Facts checked against `assistant.koplugin/backups/*/koreader` and the plugin source:
+Facts checked against `assistant.koplugin/backups/*/koreader`, the plugin source and, for real book sidecars (the backups above hold very few), `~/Documents/GitHub/ereader-backup/PB629`:
 
 - Mount `/Volumes/PB629`. Device paths start `/mnt/ext1/`, which maps to the mount. Paths on other roots (such as `/mnt/ext2/`) are not reachable; list those books dimmed with "On the memory card".
 - KOReader lives at `applications/koreader`, pbAnki at `applications/pbanki`, the plugin at `applications/koreader/plugins/pbanki.koplugin`.
@@ -100,7 +105,7 @@ Chapters: each highlight's chapter is its annotation `chapter` (or the table-of-
 
 Folder: `<home>/prompts/<Name>/`, with the same file rules as `prompts.lua` (`questions.md`/`question.md`, `cloze.md`, `definitions.md`/`definition.md`) plus `connections.md`, `ideas.md`, `rewrite.md`. A missing or blank file means Standard's. `normalize()` matches `prompts.lua`'s exactly (test it against Lua).
 
-On start, Standard is rewritten from the repo: `koreader/pbanki.koplugin/prompts/Standard/*` and `desktop/prompts/Standard/*`, with a README explaining that edits to Standard are undone. `prompts/*` folders from the repo other than Standard (today `Self Help`) are copied once if not already present, and never overwritten. Prompt files are re-read for every AI call, so edits apply at once; a watcher records each file's mtime to report "reloaded N s ago" and notifies the page. Default prompt for a book: its `pbanki_prompt` from the sidecar when that folder exists here, else the last prompt used, else Standard.
+On start, Standard is rewritten from the repo: `koreader/pbanki.koplugin/prompts/Standard/*` and `desktop/prompts/Standard/*`, with a README explaining that edits to Standard are undone. `prompts/*` folders from the repo other than Standard (today `Self Help`) are copied once if not already present, and never overwritten. A `.copied` list in the prompts folder records them, so a folder the user deleted stays deleted. Prompt files are re-read for every AI call, so edits apply at once; a watcher records each file's mtime to report "reloaded N s ago" and notifies the page. Default prompt for a book: the prompt last picked for it on this computer (`book_prompts` in settings) when that folder exists, else its `pbanki_prompt` from the sidecar when that folder exists here, else the last prompt used, else Standard.
 
 Actions: list folders and their files, each marked "this prompt" or "uses Standard", with the path shown always the one in the chosen folder; read one; open it in the default text editor (`open -t`); reveal it in Finder (`open -R`). Opening a "uses Standard" file in another folder first copies Standard's text to that folder's file, because edits to Standard are undone. Revealing one copies nothing, and shows the folder if the file isn't there. Folder names from requests are checked against the listing, so they cannot escape the prompts folder.
 
@@ -140,15 +145,20 @@ Assistant detection reports path and version from `--version`. Models: Claude Co
 
 `runs.py` keeps one run per book, in order: highlight cards, connections, key ideas (when a Companion exists and the box is on). Highlight work runs up to 3 AI calls at a time. Requests carry the plugin's `max` semantics (the AI chooses 1 to n) for bulk runs and `count` for "Suggest N". Runs can pause, resume and stop; finished work is kept. A highlight that already has cards, or is reviewed or skipped, is not requested again. A run interrupted by quitting does not resume by itself; reopening the book offers it again. Picking a book starts a run automatically when the setting is on and nothing has run for this book yet. Each result updates SQLite and pushes an event. Cards that arrive for a highlight that has since been reviewed, skipped or removed from the reader are dropped, for runs, Suggest N and Definition alike. The first row of a run's progress says how many highlights failed, once it has gone through them all.
 
+A second run on a book asks only for the steps ticked for it, and carrying on a stopped or paused run skips steps it already finished. A run can leave out highlight cards (`highlights: false`), which is how Key ideas looks on a book with nothing pending. A book with nothing pending also starts automatically for key ideas if it has a Companion, the box is on and they haven't run. Key idea requests list the ideas already there; a reply repeating one by title adds nothing. Whether key ideas have run is kept in the run's progress, so "No key ideas left" only shows after a look that finished. AI requests read the passage from the reader, else from a copy of the book kept at `<home>/book-text/<book id>.epub` from the last time the book was read.
+
+If the chosen model's assistant isn't there and another is, the model settings move to the first usable model. A model is never changed while its assistant is present.
+
 Key idea chapters are stored in the book's `Chapter N: Title` form when the chapter matches one the book lists, whichever form the AI wrote, and as written otherwise.
 
 ## 7. Book Companion (`companion.py`)
 
-- `find(book)` checks beside the book, then `<home>/companions/`, reporting "on the reader" or "on this computer".
+- `find(book)` checks beside the book; with the reader unplugged, the copy kept in `<home>/companion-cache/` from the last time it was found there, still reported as "on the reader"; then `<home>/companions/`, reported as "on this computer". `<home>/book-text/` keeps each book's text the same way (`<book id>.txt`, for checking key idea quotes, and `<book id>.epub`, for passages).
 - `slice_text` ports `assistant_companion_slicer.lua`, with parity tests against Lua.
 - `chapter_block(text, chapter)` matches `###` headings to the chapter by normalised title, ignoring `<!-- pos: -->` markers. An unmatched chapter gets `found: false` and no notes panel.
 - Notes panel: before key ideas have run, `big` is the block's first sentence and `points` its bullet lines, untagged. After they run, the AI's `chapters` data replaces it, adding ✓ and ○ and links to key ideas.
 - Later research warning comes only from the AI's `later_research` field. It is never inferred from word matching.
+- Create refuses in plain words when the book isn't there: one sentence for an unplugged reader, another for a book gone from a plugged-in reader.
 - Create: copy the ePub to `<home>/companion-work/<book stem>/<book file name>`, so the skill's beside-the-book copy lands on the Mac and not on the reader. Write a `.command` script there that runs `cd <assistant dir>; claude "/book-companion '<local epub path>'"`, using `shlex.quote` throughout, and start it with `open -a Terminal`. Watch that folder for `<book stem>.companion.md`. Never start it automatically. Create is refused while one is running or a finished file awaits the choice below, so a second click can't open another Terminal or move the finished file aside. The script removes itself when its session ends, which is what ends "running". Show the assistant folder in Settings; if the folder or skill is missing, say so and disable the button.
 - When the file appears, ask: **Copy to reader** (proven write, beside the book) or **Keep it on this computer** (copy to `<home>/companions/`).
 - Until a Copy to reader is proven, a mark in the book's work folder says the file beside the book can't be trusted, and `find` ignores it. Copy can run again to repair it, even after Keep.
@@ -160,19 +170,20 @@ Key idea chapters are stored in the book's `Chapter N: Title` form when the chap
 - `books(id, device_path, title, author, stem, ext, data_json, last_seen)`: `id` is the first 16 hex digits of SHA-1 of the device path. `data_json` caches chapters and highlights with passages, so the screens work unplugged. A highlight that leaves the reader stays cached while it has draft cards or a draft connection cites it. A settings file that can't be read keeps the cached title and author, so cards stay in the same deck.
 - `highlight_state(book_id, hid, key, opened, skipped, error, later_research, chapter_notes_seen)`: `hid` is the first 16 hex digits of SHA-1 of the key, used in URLs.
 - `cards(id, book_id, hid, kind, source, front, back, suggested_front, suggested_back, position, state, created_at, updated_at)`. `kind` is `qa|cloze|qonly|def`. `state` is `draft|removed|saved`. Removed cards feed the `rejected` list and restore on Undo, unless their highlight has left the reader.
-- `connections(id, book_id, title, front, back, source, sources_json, opened, state)` with `state` as above.
-- `ideas(id, book_id, chapter, title, note, quote, front, back, source, opened, state)`.
+- `connections(id, book_id, title, front, back, source, sources_json, opened, state, created_at)` with `state` as above.
+- `ideas(id, book_id, chapter, title, note, quote, front, back, source, opened, state, created_at)`.
 - `chapter_notes(book_id, chapter, big, points_json)` from key ideas.
-- `save_batches(id, book_id, created_at, status, inbox_json, reviewed_json, summary_json)`: `status` is `backed_up|written|verified`.
-- `saved_cards(batch_id, hid, front, back, ...)`: for showing what was saved from a highlight.
+- `save_batches(id, book_id, created_at, status, inbox_json, reviewed_json, summary_json, intended_inbox, intended_reviewed, error)`: `status` is `backed_up|written|verified`. `intended_*` are the bytes handed to the reader, for checking a retry. The screens see `waiting` or `failed` for an unverified batch, depending on `error`, from `batch_result`.
+- `saved_cards(batch_id, hid, position, kind, front, back, source)`: for showing what was saved from a highlight.
 - `runs(book_id, status, options_json, progress_json, updated_at)`.
 - `settings(key, value_json)`.
+- `reader_reviewed(book_id, key)`: reviewed keys as last seen on the reader.
 
 Editing a card marks AI-written ones `AI, edited`, except that answering a question the AI left blank isn't an edit, same as `wasEdited`. Reviewed status for display is the sidecar's `pbanki_reviewed`, plus keys in the reader's `reviewed.jsonl`, plus keys in batches not yet verified on the reader. With the reader unplugged, or the file failing to read for any reason other than not being there, `reader_reviewed(book_id, key)` keeps its keys as last seen, plus those of batches verified since. Local saved cards do not count on their own, so "Review this book's highlights again" on the reader makes them pending here too, the next time the reader is plugged in.
 
 ## 9. Save (`save.py`)
 
-The preview groups exactly what the mock shows: only cards from highlights the user opened, connections opened, and key ideas opened. Blocked while any `qonly` card has no answer. A blank front is not saved. A batch waiting for the reader or failed stays on this screen, as in the mock: its cards and marks are added to whatever is new.
+The preview groups exactly what the mock shows: only cards from highlights the user opened, connections opened, and key ideas opened. Blocked while any card to be saved can't be answered on the reader (`need_of`): a card, connection or key idea with a blank back, or a cloze that hides no words or has stray braces. A blank front is not saved. A batch waiting for the reader or failed stays on this screen, as in the mock: its cards and marks are added to whatever is new, and the screen says how many newer cards aren't part of that batch and need saving again afterwards.
 
 Skipping excludes a highlight's cards. The preview says how many that is, and the save turns them `removed`, since marking the highlight reviewed means no later save could include them.
 
@@ -224,6 +235,7 @@ GET  /api/books                      rows for Pick a book
 GET  /api/books/<id>                 full working state: book, chapters, highlights with status and passages,
                                      cards, connections, ideas, companion, run, counts, reader flags
 POST /api/books/<id>/open            mark current, refresh from reader, start the automatic run if due
+POST /api/books/<id>/prompt          {prompt}, keeps the prompt picked for this book
 POST /api/books/<id>/run             {action:"start"|"pause"|"resume"|"stop", options?}
 POST /api/books/<id>/highlights/<hid>/open
 POST /api/books/<id>/highlights/<hid>/skip        {skipped}
@@ -264,7 +276,7 @@ One copy of the program uses a data folder at a time, held with a lock the syste
 
 ## 12. Browser app (`web/`)
 
-Preact + htm from `web/vendor/preact-htm.js`. A single store object holds `state`, `books`, the open `book` and local UI fields. SSE events refetch what changed, without overwriting a field the user is typing in. Edits save with a 300 ms debounce and flush on blur. Screens use the mock's class names and markup, so `companion.css` applies unchanged. The mock's top "Mock controls" bar, its Additions screen, its "Mock:" links, its numbered `ad` badges and its canned data do not ship.
+Preact + htm from `web/vendor/preact-htm.js`. A single store object holds `state`, `books`, the open `book` and local UI fields. SSE events refetch what changed, without overwriting a field the user is typing in. Edits save with a 300 ms debounce and flush on blur. An edit that can't reach the server stays on screen and in `localStorage`, is sent again every 3 s and at the next load, and a bar says so. Only when the page is going away does the last edit go as a `keepalive` request, for texts under 60 KB. All of a browser's tabs share one event stream through a `SharedWorker`, since each stream holds one of the six connections a browser allows, falling back to one per tab. Removing a record sends its edits first and forgets what's left. The bars above a screen sit in wrappers that always stay, so the screen isn't moved in the page and the cursor stays when one comes or goes. Screens use the mock's class names and markup, so `companion.css` applies, extended only for what the mock doesn't show (the long author in the bar, the wrappers below). The mock's top "Mock controls" bar, its Additions screen, its "Mock:" links, its numbered `ad` badges and its canned data do not ship.
 
 Screens and panels, with mock names: Plug in, Reader check, Pick a book, Suggest cards, Highlights, Connections, Key ideas, Save cards, Saved, plus drawers Prompt file, Settings, Create a Book Companion. Every visible behaviour in the mock's "What I added" list ships: automatic start, resume unplugged, Skip, card kinds, Show more, notes, how much the AI reads, reader preview with Question/Answer/Context, card checks, Rewrite, all-highlights scope, the save review, Eject, keyboard shortcuts (J, K, ⌘↵, X, ignored while typing), Companion panel, later research warning, Key ideas, Create, read back.
 
@@ -277,6 +289,7 @@ The app routes by URL hash so reload keeps your place. Layout works from 1100 px
 - Unit tests per module with `unittest`. Parity tests against the Lua originals for `cardgen`, `prompts.normalize` and the slicer.
 - **Real fixtures, not guesses:** generate a sidecar with real KOReader in Docker (`dev/koreader`, existing image and `target/koreader-emulator/book.epub`), creating highlights in that real ePub, and keep it as `tests/fixtures/real_sidecar/` so the Lua parser, keys, xpointers and passage lookup are tested against what KOReader really writes.
 - Fake reader builder: a folder tree with `history.lua`, books, sidecars and a Companion. Fake `claude` and `codex` scripts that return valid JSON, malformed JSON, errors and slow replies on request.
+- Browser regressions: `tests/e2e/run_regressions.mjs` has one check per bug found in the browser app, each driving the real server: outages, reloads, the cursor, Back and Forward, many tabs.
 - End to end: Playwright drives the real server against the fake reader through the complete flow, unplugged and replugged, then asserts on the bytes of `inbox.jsonl` and `reviewed.jsonl` and that nothing else on the fake reader changed.
 - One real smoke run against each AI command on one highlight.
 - Real pbAnki import: a Rust test feeding a produced `inbox.jsonl` through `import_inbox` (key idea cards with an empty quote, connection cards, cloze, the extra `batch` field).
@@ -290,7 +303,7 @@ The app routes by URL hash so reload keeps your place. Layout works from 1100 px
 3. Service and server.
 4. Browser app.
 5. Independent reviews, then fixes.
-6. End-to-end run, visual comparison with the mock, real AI smoke, proof page, README.
+6. End-to-end run, visual comparison with the mock, real AI smoke, proof page, READMEs (`desktop/web/README.md`, `desktop/tests/e2e/README.md`; the project's own README doesn't cover the desktop app yet).
 
 ## 15. Not in this version
 

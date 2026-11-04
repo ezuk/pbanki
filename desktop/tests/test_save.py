@@ -134,6 +134,51 @@ class SaveCase(unittest.TestCase):
         return batches[0]
 
 
+class NothingToAnswerTests(SaveCase):
+    def test_a_question_with_no_answer_blocks_the_save(self):
+        h = self.add_highlight("k1", cards=(("qa", "Why?", "  "),))
+        p = save.preview(self.store, self.book, [h])
+        self.assertTrue(p["blocked"])
+        self.assertEqual(p["needs"], [h["hid"]])
+        self.assertEqual(p["need_text"], "1 question still needs an answer. Answer or remove before saving.")
+        self.assertEqual(p["groups"][0]["rows"][0]["needLabel"], "No answer yet")
+        with self.assertRaises(save.SaveBlocked):
+            save.back_up(self.store, self.book, [h])
+
+    def test_a_cloze_hiding_nothing_blocks_the_save(self):
+        for front in ("A plain sentence.", "Empty {{c1::  }} gap.", "{{{{c2::c1::Senten}}ce}} broken."):
+            with self.subTest(front=front):
+                key = f"key {front}"
+                h = self.add_highlight(key, cards=(("cloze", front, ""),))
+                p = save.preview(self.store, self.book, [h])
+                self.assertTrue(p["blocked"])
+                self.assertEqual(p["groups"][0]["rows"][0]["needLabel"], "No words hidden")
+                self.assertIn("1 cloze card still needs words hidden correctly.", p["need_text"])
+                self.store.remove_card(self.store.list_cards(self.book_id, h["hid"])[0]["id"])
+
+    def test_good_cards_and_blank_ones_dont_block(self):
+        h = self.add_highlight("k1", cards=(("qa", "Q", "A"), ("cloze", "{{c1::x}} y {{c2::z}}", ""), ("qa", "", ""), ("cloze", "  ", "")))
+        p = save.preview(self.store, self.book, [h])
+        self.assertFalse(p["blocked"])
+        self.assertEqual(p["count"], 2)
+
+    def test_a_question_written_as_a_cloze_needs_no_back(self):
+        h = self.add_highlight("k1", cards=(("qa", "{{c1::x}} y", ""),))
+        self.assertFalse(save.preview(self.store, self.book, [h])["blocked"])
+
+    def test_a_connection_or_idea_with_no_answer_blocks_the_save(self):
+        h = self.add_highlight("k1")
+        connection = self.store.add_connection(self.book_id, "T", "F?", "", [h["hid"]])
+        self.store.open_connection(connection["id"])
+        idea = self.store.add_idea(self.book_id, "E", "IT", "", "", "I?", " ")
+        self.store.open_idea(idea["id"])
+        p = save.preview(self.store, self.book, [h])
+        self.assertTrue(p["blocked"])
+        self.assertEqual(p["need_connections"], [connection["id"]])
+        self.assertEqual(p["need_ideas"], [idea["id"]])
+        self.assertEqual(p["need_text"], "2 questions still need answers. Answer or remove before saving.")
+
+
 class PreviewTests(SaveCase):
     def test_only_what_was_opened_is_included(self):
         opened = self.add_highlight("k1", cards=(("qa", "Q1", "A1"),), pageno=5, chapter="C", chapter_number=3)

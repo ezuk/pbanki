@@ -46,6 +46,7 @@ DEFAULT_SETTINGS = {
     "kind": "qa",
     "count": 3,
     "last_prompt": "Standard",
+    "book_prompts": {},
     "suggest_connections": True,
     "suggest_ideas": True,
     "mark_connection_sources": True,

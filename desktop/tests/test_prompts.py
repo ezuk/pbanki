@@ -1,6 +1,7 @@
 """prompts.py: normalize parity with prompts.lua, seeding, listing and the watcher."""
 
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -189,6 +190,21 @@ class FolderTest(unittest.TestCase):
         self.assertEqual(launch.call_args_list[0].args[0], ["open", "-t", str(self.root / "Self Help" / "questions.md")])
         self.assertEqual(launch.call_args_list[1].args[0], ["open", "-R", str(self.root / "Standard" / "cloze.md")])
         self.assertEqual(launch.call_count, 2)
+
+    def test_a_repo_prompt_the_user_deleted_stays_deleted(self):
+        prompts.seed()
+        shutil.rmtree(self.root / "Self Help")
+        prompts.seed()
+        self.assertFalse((self.root / "Self Help").exists())
+        self.assertNotIn(prompts.COPIED_FILE, prompts.folder_names())
+
+    def test_a_folder_already_there_counts_as_copied(self):
+        prompts.seed()
+        (self.root / prompts.COPIED_FILE).unlink()
+        prompts.seed()
+        shutil.rmtree(self.root / "Self Help")
+        prompts.seed()
+        self.assertFalse((self.root / "Self Help").exists())
 
 
 class WatcherTest(unittest.TestCase):

@@ -1,7 +1,8 @@
 // Connections: the cards that take several highlights, and Find connections.
 
 import { useCallback, useEffect, useRef, useState } from "../../vendor/preact-htm.js";
-import { useStore, store, mutate, setUi, here, go, replace, refreshBook, openDrawer, saveSettings, useEvent, showError } from "../store.js";
+import { useStore, store, mutate, removeRecord, setUi, here, go, replace, refreshBook, openDrawer, saveSettings, useEvent, showError } from "../store.js";
+import { currentOptions, setOption } from "./working-options.js";
 import { html, WorkTop, Field, EinkBar, Opt, Select, Stepper, PromptLine, Running, plural, useReloadAgo } from "../ui.js";
 
 // The item a screen shows: the one in the route, else the last one picked there, else the first.
@@ -44,11 +45,9 @@ export function StageNote({ book, title, failure, retry = false }) {
   return null;
 }
 
-const save = (id, field) => (text) => mutate("PATCH", `/api/connections/${id}`, { [field]: text }, { quiet: true });
-
 function ConnectionPage({ book, item, rest }) {
   const remove = async () => {
-    const answer = await mutate("DELETE", `/api/connections/${item.id}`);
+    const answer = await removeRecord(`/api/connections/${item.id}`);
     if (answer) replace(here("connections", rest.length ? rest[0].id : "find"));
   };
   return html`
@@ -61,8 +60,8 @@ function ConnectionPage({ book, item, rest }) {
       <div class="fl" style="gap:22px;min-width:0">
         <div class="card" style="background:var(--sheet)">
           <div class="chd"><span class="ckind">Connection card</span><span>${item.src}</span></div>
-          <${Field} key=${`${item.id}-front`} class="ta f" rows="1" value=${item.front} placeholder="Question" onSave=${save(item.id, "front")} />
-          <${Field} key=${`${item.id}-back`} class="ta b" rows="1" value=${item.back} placeholder="Answer" onSave=${save(item.id, "back")} />
+          <${Field} key=${`${item.id}-front`} class="ta f" rows="1" value=${item.front} placeholder="Question" path=${`/api/connections/${item.id}`} field="front" />
+          <${Field} key=${`${item.id}-back`} class="ta b" rows="1" value=${item.back} placeholder="Answer" path=${`/api/connections/${item.id}`} field="back" />
         </div>
         <div class="fl" style="gap:0">
           <div class="sech"><span class="sect">Drawn from these highlights</span></div>
@@ -96,7 +95,7 @@ function ConnectionPage({ book, item, rest }) {
 function useFindChoices() {
   const { ui, route } = useStore();
   const all = ui.find || {};
-  const choices = { off: {}, scope: "pending", hint: "", prompt: null, nothing: false, ...all[route.bookId] };
+  const choices = { off: {}, scope: "pending", hint: "", nothing: false, ...all[route.bookId] };
   const change = (patch) => {
     const latest = store.ui.find || {};
     setUi({ find: { ...latest, [route.bookId]: { ...latest[route.bookId], ...patch } } });
@@ -115,7 +114,7 @@ function FindPage({ book, choices, change }) {
   const inScope = (pick) => (choices.scope === "all" ? pick.all : pick.pending);
   const reading = picked.reduce((sum, pick) => sum + inScope(pick), 0);
   const names = state.prompts.names;
-  const prompt = names.includes(choices.prompt) ? choices.prompt : book.options.prompt;
+  const { prompt } = currentOptions(book);
   const model = state.settings.meta_model;
   const count = state.settings.count;
   const reloadAgo = useReloadAgo();
@@ -124,10 +123,7 @@ function FindPage({ book, choices, change }) {
   const toggle = (pick) => change({ off: { ...choices.off, [pickKey(pick)]: !choices.off[pickKey(pick)] } });
   const all = () => change({ off: {} });
   const none = () => change({ off: Object.fromEntries(find.picks.map((pick) => [pickKey(pick), true])) });
-  const choosePrompt = (name) => {
-    change({ prompt: name });
-    saveSettings({ last_prompt: name });
-  };
+  const choosePrompt = (name) => setOption(book, "prompt", name);
   const start = async () => {
     setSending(true);
     change({ nothing: false });
