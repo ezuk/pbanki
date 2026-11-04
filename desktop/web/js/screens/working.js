@@ -36,10 +36,13 @@ function SuggestForm({ book }) {
   const { state, ui } = useStore();
   const options = currentOptions(book);
   const have = book.companion.have;
-  const { due, canConnect, sugBtn } = book.suggest;
+  const { due, redo, canConnect, sugBtn, againBtn } = book.suggest;
+  // Suggest again replaces suggestions; choices shown for waiting highlights only add to them
+  const fresh = ui.suggestAgain === book.id;
+  const writes = fresh ? redo : due;
   // With no highlight waiting, the button says which other steps it will run
   const steps = [options.connections && canConnect && "connections", options.ideas && have && "key ideas"].filter(Boolean);
-  const label = due || !steps.length ? sugBtn : `Look for ${steps.join(" and ")}`;
+  const label = writes || !steps.length ? (fresh ? againBtn : sugBtn) : `Look for ${steps.join(" and ")}`;
   const again = book.run.phase === "done";
   return html`
     <section class="comp">
@@ -62,7 +65,7 @@ function SuggestForm({ book }) {
     ${have && html`<section class="comp">
       <label class="cbx"><input type="checkbox" checked=${options.ideas} onChange=${(e) => setOption(book, "ideas", e.target.checked)} /><span><span class="compt">Key ideas you didn't highlight</span><br />Important points in the Book Companion that your highlights miss. Kept apart from your highlight cards.</span></label>
     </section>`}
-    <div class="rowg"><button class="btn pri" style="padding:11px 16px" onClick=${() => runAction(book, "start", options)} disabled=${!due && !steps.length}>${label}</button>${again
+    <div class="rowg"><button class="btn pri" style="padding:11px 16px" onClick=${() => runAction(book, "start", fresh ? { ...options, fresh: true } : options)} disabled=${!writes && !steps.length}>${label}</button>${again
       ? html`<button class="lnk" onClick=${() => setUi({ suggestAgain: null, lastRun: book.id })}>Back to the last run</button>`
       : html`<button class="lnk" onClick=${() => go(here("highlights"))}>Skip, write them myself</button>`}</div>
   `;
@@ -96,7 +99,7 @@ export function Suggest() {
   // A finished run gives way to the choices when asked, or when highlights are waiting
   const wantsChoices = ui.suggestAgain === book.id || (suggest.due > 0 && ui.lastRun !== book.id);
   const phase = run.phase === "done" && wantsChoices ? "idle" : run.phase;
-  const lede = phase === "idle" ? suggest.formLede : suggest.lede;
+  const lede = phase === "idle" ? (ui.suggestAgain === book.id ? suggest.againLede : suggest.formLede) : suggest.lede;
   // Leaving forgets which of the two was asked for
   useEffect(() => () => {
     if (store.ui.suggestAgain || store.ui.lastRun) setUi({ suggestAgain: null, lastRun: null });

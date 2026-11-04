@@ -171,6 +171,13 @@ MIGRATIONS = [
 _CLOZE = re.compile(r"\{\{c\d+::")
 
 
+def is_pending_card(card):
+    """Whether `card` is an AI suggestion exactly as the AI wrote it."""
+    suggested = card.get("suggested")
+    return (card["source"] == SOURCE_AI and suggested is not None
+            and card["front"] == suggested.get("front") and card["back"] == (suggested.get("back") or ""))
+
+
 class StoreError(Exception):
     """The database can't be used. The message is shown to the user."""
 
@@ -487,6 +494,27 @@ class Store:
                 ),
             )
         return self.get_card(card_id)
+
+    def clear_suggested_cards(self, book_id, hids):
+        """Deletes the AI cards nobody has changed from these highlights. Returns how many."""
+        cleared = 0
+        with self.transaction():
+            for hid in hids:
+                for card in self.list_cards(book_id, hid):
+                    if is_pending_card(card):
+                        self._write("DELETE FROM cards WHERE id = ?", (card["id"],))
+                        cleared += 1
+        return cleared
+
+    def clear_suggested_connections(self, book_id):
+        """Deletes the AI connections nobody has opened or changed."""
+        self._write("DELETE FROM connections WHERE book_id = ? AND state = ? AND source = ? AND opened = 0",
+                    (book_id, DRAFT, SOURCE_AI))
+
+    def clear_suggested_ideas(self, book_id):
+        """Deletes the key ideas nobody has opened or changed."""
+        self._write("DELETE FROM ideas WHERE book_id = ? AND state = ? AND source = ? AND opened = 0",
+                    (book_id, DRAFT, SOURCE_COMPANION))
 
     def get_card(self, card_id):
         row = self._one("SELECT * FROM cards WHERE id = ?", (card_id,))

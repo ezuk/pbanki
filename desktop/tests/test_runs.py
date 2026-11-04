@@ -1384,6 +1384,86 @@ class EventTest(Base):
         self.assertEqual(self.run_all(self.runner(on_event=None), book, {"connections": False})["status"], "done")
 
 
+class SuggestAgainTest(Base):
+    OFF = {"connections": False, "ideas": False}
+
+    def test_fresh_replaces_suggestions_with_the_new_options(self):
+        book = self.add_book(2)
+        runner = self.runner()
+        self.run_all(runner, book, {**self.OFF, "kind": "qa"})
+        before = {card["id"] for number in (1, 2) for card in self.cards_of(book, number)}
+        self.assertTrue(before)
+        self.ai.calls.clear()
+        status = self.run_all(runner, book, {**self.OFF, "kind": "qonly", "fresh": True})
+        after = [card for number in (1, 2) for card in self.cards_of(book, number)]
+        self.assertTrue(after)
+        self.assertFalse(before & {card["id"] for card in after})
+        self.assertTrue(all(card["back"] == "" for card in after))
+        self.assertEqual(status["progress"]["highlights"]["total"], 2)
+        self.assertEqual(len(self.ai.calls), 2)
+
+    def test_without_fresh_suggestions_stay(self):
+        book = self.add_book(2)
+        runner = self.runner()
+        self.run_all(runner, book, self.OFF)
+        before = {card["id"] for card in self.cards_of(book, 1)}
+        self.ai.calls.clear()
+        status = self.run_all(runner, book, self.OFF)
+        self.assertEqual({card["id"] for card in self.cards_of(book, 1)}, before)
+        self.assertEqual(status["progress"]["highlights"]["total"], 0)
+        self.assertEqual(self.ai.calls, [])
+
+    def test_fresh_keeps_what_the_reader_touched(self):
+        book = self.add_book(4)
+        runner = self.runner()
+        self.run_all(runner, book, self.OFF)
+        self.store.set_opened(book, self.hid(book, 1))
+        opened = {card["id"] for card in self.cards_of(book, 1)}
+        edited = self.cards_of(book, 2)[0]
+        self.store.update_card(edited["id"], front="My own wording")
+        self.store.add_card(book, self.hid(book, 3), front="By hand", back="Mine")
+        self.ai.calls.clear()
+        status = self.run_all(runner, book, {**self.OFF, "fresh": True})
+        self.assertEqual({card["id"] for card in self.cards_of(book, 1)}, opened)
+        self.assertEqual([card["front"] for card in self.cards_of(book, 2)], ["My own wording"])
+        self.assertIn("By hand", [card["front"] for card in self.cards_of(book, 3)])
+        self.assertEqual(len(self.cards_of(book, 3)), 1)
+        self.assertEqual(status["progress"]["highlights"]["total"], 1)
+        self.assertEqual(len(self.ai.calls), 1)
+
+    def test_fresh_keeps_reviewed_and_skipped_highlights(self):
+        book = self.add_book(2)
+        runner = self.runner()
+        self.run_all(runner, book, self.OFF)
+        self.store.set_skipped(book, self.hid(book, 1))
+        skipped = {card["id"] for card in self.cards_of(book, 1)}
+        self.store.set_reader_reviewed(book, [self.store.get_book(book)["data"]["highlights"][1]["key"]])
+        reviewed = {card["id"] for card in self.cards_of(book, 2)}
+        self.ai.calls.clear()
+        self.run_all(runner, book, {**self.OFF, "fresh": True})
+        self.assertEqual({card["id"] for card in self.cards_of(book, 1)}, skipped)
+        self.assertEqual({card["id"] for card in self.cards_of(book, 2)}, reviewed)
+        self.assertEqual(self.ai.calls, [])
+
+    def test_fresh_replaces_only_connections_not_opened_and_only_when_asked(self):
+        book = self.add_book(1)
+        runner = self.runner()
+        kept = self.store.add_connection(book, "Kept", "Q", "A", [])
+        gone = self.store.add_connection(book, "Gone", "Q2", "A2", [])
+        self.store.open_connection(kept["id"])
+        self.run_all(runner, book, {**self.OFF, "fresh": True})
+        self.assertIsNotNone(self.store.get_connection(gone["id"]))
+        self.run_all(runner, book, {"connections": True, "ideas": False, "fresh": True})
+        self.assertIsNotNone(self.store.get_connection(kept["id"]))
+        self.assertIsNone(self.store.get_connection(gone["id"]))
+
+    def test_fresh_is_not_kept_for_a_restart(self):
+        book = self.add_book(1)
+        status = self.run_all(self.runner(), book, {**self.OFF, "fresh": True})
+        self.assertNotIn("fresh", status["options"])
+        self.assertNotIn("fresh", self.store.get_run(book)["options"])
+
+
 class NotCachedTest(Base):
     def test_a_book_not_cached_is_a_plain_error(self):
         with self.assertRaisesRegex(runs.RunError, "isn't on this computer"):

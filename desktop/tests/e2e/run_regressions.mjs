@@ -615,6 +615,27 @@ check("A finished run gives way to the options while highlights are waiting", as
   await page.locator(".opt", { hasText: "AI reads" }).waitFor();
 });
 
+check("Suggest again replaces suggestions instead of finding nothing waiting", async () => {
+  const id = PRIDE;
+  const book = await bookOf(id);
+  await until(async () => !(await call("GET", `/api/books/${id}`)).data.run.active, "No run going", 30000);
+  const page = await fresh(`#/book/${id}/suggest`);
+  const again = button(page, "Suggest again");
+  if (await again.count()) await again.click();
+  const start = page.locator(".rowg .btn.pri");
+  await start.waitFor();
+  ok((await start.innerText()).startsWith("Suggest again for"), `The button says ${await start.innerText()}`);
+  await page.getByText("replaces the suggestions").waitFor();
+  await start.click();
+  await until(async () => {
+    const run = (await call("GET", `/api/books/${id}`)).data.run;
+    return !run.active && run.phase === "done";
+  }, "The run ends", 30000);
+  const rows = (await call("GET", `/api/books/${id}`)).data.run.rows;
+  ok(!rows[0].path.includes("No highlights were waiting"), rows[0].path);
+  ok(book.highlights.length > 0, "The book has highlights");
+});
+
 check("Key ideas can be started on a finished book, and don't claim nothing's left before looking", async () => {
   const page = await fresh(`#/book/${TIME}/ideas`);
   const book = await bookOf(TIME);

@@ -74,7 +74,7 @@ _REMEMBERED = {
     "ideas": "suggest_ideas",
 }
 
-_RUN_KEYS = ("count", "kind", "model", "prompt", "sees", "companion", "hint", "highlights", "connections", "meta_model", "ideas")
+_RUN_KEYS = ("count", "kind", "model", "prompt", "sees", "companion", "hint", "highlights", "connections", "meta_model", "ideas", "fresh")
 _SUGGEST_KEYS = ("count", "kind", "model", "prompt", "sees", "companion", "hint")
 _SETTING_KEYS = (
     "mount", "assistants", "model", "meta_model", "companion_send", "sees", "kind", "count",
@@ -946,6 +946,7 @@ class Service:
         have = companion_view["have"]
         pending = counts["todo"]
         due = self._due_count(context)
+        redo = self._redo_count(context)
         if not due:
             form_lede = "No highlight is waiting for cards. The AI can still look for connections and key ideas."
         elif due == 1 and pending == 1:
@@ -1000,6 +1001,13 @@ class Service:
                 "lede": "Only the cards you open get saved." if run_view["phase"] != "idle" else form_lede,
                 "formLede": form_lede,
                 "sugBtn": f"Suggest cards for {_plural(due, 'highlight')}",
+                "redo": redo,
+                "againLede": (
+                    "This replaces the suggestions on highlights you haven't opened. Cards on highlights you've opened stay."
+                    if redo else
+                    "You've opened or finished every highlight, so their cards stay. The AI can still replace connections and key ideas you haven't opened."
+                ),
+                "againBtn": f"Suggest again for {_plural(redo, 'highlight')}",
             },
             "find": self._find_view(context),
             "ideaEmptyText": (
@@ -1026,6 +1034,23 @@ class Service:
                     if card["suggested"] is not None}
         return sum(1 for h in context.highlights if h["status"] != "reviewed" and not context.is_skipped(h)
                    and not context.drafts.get(h["hid"]) and h["hid"] not in rejected)
+
+    def _redo_count(self, context):
+        # Highlights a fresh run would ask for, once it has cleared the suggestions not opened
+        book_id = context.book["id"]
+        rejected = {card["hid"] for card in self._store.list_cards(book_id, None, (store_module.REMOVED,))
+                    if card["suggested"] is not None}
+        total = 0
+        for h in context.highlights:
+            if h["status"] == "reviewed" or context.is_skipped(h) or h["hid"] in rejected:
+                continue
+            drafts = context.drafts.get(h["hid"]) or []
+            opened = (context.states.get(h["hid"]) or {}).get("opened")
+            if opened and drafts:
+                continue
+            if all(store_module.is_pending_card(card) for card in drafts):
+                total += 1
+        return total
 
     def _ai_note(self, context):
         # When the "AI reads" choice can't be honoured

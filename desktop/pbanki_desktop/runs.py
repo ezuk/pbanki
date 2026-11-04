@@ -196,7 +196,9 @@ class Runner:
         alone. `options` overrides default_options(): count, kind, model, prompt, sees, companion,
         hint, highlights (false to write no highlight cards), connections, meta_model, ideas. A run
         carrying on from an unfinished one skips the steps that one finished; after a finished run,
-        every step asked for runs again. Raises RunError with a plain sentence."""
+        every step asked for runs again. `fresh`, true to first delete the suggestions nobody has
+        opened or changed for the steps asked for, applies to this start only and isn't kept.
+        Raises RunError with a plain sentence."""
         with self._cond:
             if self._closed:
                 raise RunError("pbAnki is closing.")
@@ -211,11 +213,14 @@ class Runner:
         chosen = self._checked_options(book, options)
         highlights = self._highlights(book)
         reviewed = self._reviewed(book_id)
+        has_companion = self._companion_text(book) is not None
+        fresh = (options or {}).get("fresh") is True
+        if fresh:
+            self._clear_suggestions(book_id, highlights, reviewed, chosen, has_companion)
         queue = [h for h in highlights if self._due(book_id, h, reviewed)] if chosen["highlights"] else []
         stored = self.store.get_run(book_id)
         previous = stored["progress"] if stored else {}
-        finished = (previous.get("finished") or []) if stored and stored["status"] != DONE else []
-        has_companion = self._companion_text(book) is not None
+        finished = (previous.get("finished") or []) if stored and stored["status"] != DONE and not fresh else []
         progress = _new_progress(len(queue), finished, chosen["connections"], chosen["ideas"] and has_companion, previous)
         run = _Run(book_id, chosen, progress, queue)
 
@@ -810,6 +815,19 @@ class Runner:
 
     def _reviewed(self, book_id):
         return self.store.reader_reviewed(book_id) | self.store.unverified_reviewed_keys(book_id)
+
+    def _clear_suggestions(self, book_id, highlights, reviewed, chosen, has_companion):
+        if chosen["highlights"]:
+            hids = []
+            for h in highlights:
+                state = self.store.get_highlight(book_id, h["hid"]) or {}
+                if not (h.get("status") == "reviewed" or h["key"] in reviewed or state.get("skipped") or state.get("opened")):
+                    hids.append(h["hid"])
+            self.store.clear_suggested_cards(book_id, hids)
+        if chosen["connections"]:
+            self.store.clear_suggested_connections(book_id)
+        if chosen["ideas"] and has_companion:
+            self.store.clear_suggested_ideas(book_id)
 
     def _due(self, book_id, h, reviewed):
         # A highlight the reader went through, by keeping or removing suggestions, isn't asked again

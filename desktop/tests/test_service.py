@@ -563,6 +563,24 @@ class Runs(Base):
         self.assertTrue(again["connections"])
         self.assertEqual(again["suggest"]["due"], 0)
 
+    def test_suggest_again_counts_and_replaces_what_is_not_opened(self):
+        self.opened()
+        self.svc.run(self.pride, "start", {"connections": False})
+        self.wait_run(self.pride)
+        view = self.svc.book(self.pride)
+        self.assertEqual((view["suggest"]["due"], view["suggest"]["redo"]), (0, 7))
+        hid = self.first_hid(view)
+        self.svc.open_highlight(self.pride, hid)
+        view = self.svc.book(self.pride)
+        self.assertEqual(view["suggest"]["redo"], 6)
+        self.assertEqual(view["suggest"]["againBtn"], "Suggest again for 6 highlights")
+        kept = [card["id"] for card in view["highlights"][0]["cards"]]
+        self.svc.run(self.pride, "start", {"connections": False, "fresh": True})
+        self.wait_run(self.pride)
+        after = self.svc.book(self.pride)
+        self.assertEqual([card["id"] for card in after["highlights"][0]["cards"]], kept)
+        self.assertEqual(after["run"]["rows"][0]["path"], "Done · 6 of 6 highlights")
+
     def test_start_pause_resume_stop(self):
         self.opened()
         gate = self.ai.hold("connections")

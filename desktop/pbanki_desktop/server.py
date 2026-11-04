@@ -132,7 +132,7 @@ def _topics(query):
 _RUN_FIELDS = {"action": str, "options": dict}
 _RUN_OPTIONS = {
     "count": int, "kind": str, "model": str, "prompt": str, "sees": str, "companion": str, "hint": str,
-    "highlights": bool, "connections": bool, "meta_model": str, "ideas": bool,
+    "highlights": bool, "connections": bool, "meta_model": str, "ideas": bool, "fresh": bool,
 }
 _SUGGEST_FIELDS = {"count": int, "kind": str, "model": str, "prompt": str, "sees": str, "companion": str, "hint": str}
 _FIND_FIELDS = {"chapters": list, "scope": str, "count": int, "model": str, "prompt": str, "hint": str}
