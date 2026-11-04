@@ -12,7 +12,7 @@ import shutil
 import threading
 from collections import deque
 
-from . import ai, cardgen, companion, epub, paths, prompts, reader
+from . import ai, cardgen, clashes, companion, epub, paths, prompts, reader
 from .store import DRAFT, REMOVED, SAVED
 
 _log = logging.getLogger(__name__)
@@ -42,6 +42,8 @@ NOTHING_TO_DO = "skipped"
 
 SCOPE_PENDING = "pending"
 SCOPE_ALL = "all"
+
+_COVERED = "Your existing cards already cover this highlight, so no new card was written. Suggest cards again to ask for one anyway."
 
 CARD_KINDS = ("qa", "cloze", "qonly")
 _OPTION_KEYS = ("count", "kind", "model", "prompt", "sees", "companion", "hint", "highlights", "connections", "meta_model", "ideas")
@@ -642,6 +644,9 @@ class Runner:
         cards, error = cardgen.parse_reply(answer, request, about)
         if error:
             raise ai.AIError(error)
+        if not cards:
+            self.store.set_highlight_error(book["id"], h["hid"], _COVERED)
+            return []
         later = cardgen.parse_later_research(answer) if notes else None
         added = []
         book_id, hid = book["id"], h["hid"]
@@ -671,6 +676,9 @@ class Runner:
             "rejected": self.store.rejected_cards(book_id, hid),
             "guidance": options.get("hint") or None,
         }
+        collection = clashes.closest(self.store.collection_notes(), " ".join((h["text"], h.get("note") or "")))
+        if collection:
+            request["collection"] = collection
         before, after = self._around(book, h, options["sees"])
         about = {
             **_book_about(book),

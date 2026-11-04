@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "../../vendor/preact-htm.js";
 import { useStore, store, mutate, removeRecord, setUi, here, go, replace, refreshBook, openDrawer, saveSettings, useEvent, showError } from "../store.js";
 import { currentOptions, setOption } from "./working-options.js";
+import { ClashNote } from "./clash-note.js";
 import { html, WorkTop, Field, EinkBar, Opt, Select, Stepper, PromptLine, Running, plural, useReloadAgo } from "../ui.js";
 
 // The item a screen shows: the one in the route, else the last one picked there, else the first.
@@ -62,6 +63,7 @@ function ConnectionPage({ book, item, rest }) {
           <div class="chd"><span class="ckind">Connection card</span><span>${item.src}</span></div>
           <${Field} key=${`${item.id}-front`} class="ta f" rows="1" value=${item.front} placeholder="Question" path=${`/api/connections/${item.id}`} field="front" />
           <${Field} key=${`${item.id}-back`} class="ta b" rows="1" value=${item.back} placeholder="Answer" path=${`/api/connections/${item.id}`} field="back" />
+          <${ClashNote} clash=${item.clash} />
         </div>
         <div class="fl" style="gap:0">
           <div class="sech"><span class="sect">Drawn from these highlights</span></div>

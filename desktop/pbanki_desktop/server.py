@@ -45,7 +45,7 @@ _NO_SUCH_ADDRESS = "pbAnki has nothing at that address."
 _NOT_ALLOWED = "pbAnki can't do that at this address."
 _CLOSING = "pbAnki is closing."
 
-_TOPIC = re.compile(r"(reader|prompts|settings|book:[^,\s]+)\Z")
+_TOPIC = re.compile(r"(reader|prompts|settings|clashes|book:[^,\s]+)\Z")
 
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -204,6 +204,10 @@ _ROUTES = (
     ("POST", "/api/reader/plugin/update", {}, lambda s, r: s.reader_plugin_update()),
     ("POST", "/api/reader/choose-folder", {}, lambda s, r: s.reader_choose_folder()),
     ("PATCH", "/api/settings", _SETTINGS_FIELDS, lambda s, r: s.update_settings(r.body)),
+    ("GET", "/api/clashes", {}, lambda s, r: s.clashes_view()),
+    ("POST", "/api/clashes/find", {}, lambda s, r: s.clashes_find()),
+    ("POST", "/api/clashes/stop", {}, lambda s, r: s.clashes_stop()),
+    ("POST", "/api/clashes/pairs/*", {"verdict": str}, lambda s, r: s.clash_verdict(*r.args, r.body.get("verdict"))),
     ("GET", "/api/prompts/*", {}, lambda s, r: s.prompt(*r.args)),
     ("POST", "/api/prompts/open", _PROMPT_FILE_FIELDS, _call_prompt_file("open_prompt")),
     ("POST", "/api/prompts/reveal", _PROMPT_FILE_FIELDS, _call_prompt_file("reveal_prompt")),

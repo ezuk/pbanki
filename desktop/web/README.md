@@ -10,7 +10,7 @@ Try it with `python3 desktop/tests/e2e/dev_server.py --port 8765`, which uses a 
 - `saveSettings({...})` is PATCH /api/settings. `showError(sentence)` and `clearError()` drive the error bar. `openBook(id, screen)` picks a book.
 - `refreshBook()`, `loadState()`, `loadBooks()` refetch by hand. A book fetched across a write is thrown away and fetched again, so never merge responses into `store.book` by hand.
 
-**Routing.** The hash: `#/plug`, `#/check`, `#/books`, `#/book/<id>/<screen>[/<sub>]`, with screens `suggest`, `highlights`, `connections`, `ideas`, `save`, `saved`. `route` is `{name, bookId, sub, query}`. Use `sub` for the selected highlight, connection or idea (`find` for Find connections), so a reload keeps it. Move with `go(here("highlights", hid))` or `go(bookPath(id, "save"))`. `app.js` only shows a book screen once `store.book` is that book, so screens can read it without checks. Keep a screen's own export names, as `app.js` imports them.
+**Routing.** The hash: `#/plug`, `#/check`, `#/books`, `#/clashes`, `#/book/<id>/<screen>[/<sub>]`, with screens `suggest`, `highlights`, `connections`, `ideas`, `save`, `saved`. `route` is `{name, bookId, sub, query}`. Use `sub` for the selected highlight, connection or idea (`find` for Find connections), so a reload keeps it. Move with `go(here("highlights", hid))` or `go(bookPath(id, "save"))`. `app.js` only shows a book screen once `store.book` is that book, so screens can read it without checks. Keep a screen's own export names, as `app.js` imports them.
 
 **Drawers.** `openDrawer("prompt", { name, file })` and `closeDrawer()`. Parameters arrive in `route.query`, and any drawer can open over any screen. Each open is one step of browser history, so Back closes it.
 

@@ -139,6 +139,14 @@ def questions_only(request):
     return request.get("questions_only") is True and request_kind(request) == "questions"
 
 
+_COLLECTION_INSTRUCTION = (
+    "The reader already studies these cards, which look closest to this highlight. A new question must not read "
+    "like any of them unless it has the same answer, because during review they would not know which answer it "
+    "wants. Name the specific situation in each question, so it can't be mistaken for one of these. If these "
+    "cards already cover what this highlight says, reply with {\"cards\":[]} instead of writing a weak card:"
+)
+
+
 def build_messages(h, request, companion=None, position_note=None):
     """Messages for the AI: the Book Companion first, then the instructions, then the
     highlight and the task. See cardgen.lua's buildMessages for the fields.
@@ -206,6 +214,9 @@ def build_messages(h, request, companion=None, position_note=None):
                              "The reader removed these suggested cards. Do not write them again or close "
                              "variants of them. Notice what they have in common (for example too easy, too long, "
                              "or about a side detail) and avoid that, while still basing new cards on the highlight:"))
+    if request.get("collection") and not _is_set(request.get("definition")):
+        lines = ["- " + _card_line(card) for card in request["collection"]]
+        parts.append(_tagged("reader_collection", "\n".join(lines), _COLLECTION_INSTRUCTION))
     if request.get("guidance"):
         parts.append(_tagged("reader_request", request["guidance"], "The reader asked for these cards:")
                      + "\nFollow it, within the rules above.")
@@ -441,12 +452,23 @@ def parse_definition(text, decode=json.loads):
     ], None
 
 
+def _says_no_cards(text, decode):
+    found = extract_json(text)
+    try:
+        data = decode(found) if found is not None else None
+    except Exception:
+        return False
+    return isinstance(data, dict) and data.get("cards") == []
+
+
 def parse_reply(text, request, h, decode=json.loads):
     """Cards from a reply to `request` for highlight `h`. Cloze cards that do not quote
     the book are dropped; the rest cover the whole highlight. Questions-only cards come
     without answers."""
     if _is_set(request.get("definition")):
         return parse_definition(text, decode)
+    if request.get("collection") and _says_no_cards(text, decode):
+        return [], None
     limit = card_limit(request)
     if not _is_set(request.get("cloze")):
         cards, err = parse_cards(text, limit, decode)

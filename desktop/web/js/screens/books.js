@@ -1,7 +1,7 @@
 // Pick a book.
 
 import { useEffect } from "../../vendor/preact-htm.js";
-import { useStore, openBook, loadBooks } from "../store.js";
+import { useStore, openBook, loadBooks, go } from "../store.js";
 import { html, Top, Running } from "../ui.js";
 
 function BookRow({ book, opening }) {
@@ -44,7 +44,7 @@ export function PickBook() {
   return html`
     <${Top} />
     <div class="center centertop"><div class="wide">
-      <div><h1 class="h1">Pick a book</h1><p class="lede" style="margin-top:6px">From your KOReader history, most recent first.</p></div>
+      <div><h1 class="h1">Pick a book</h1><p class="lede" style="margin-top:6px">From your KOReader history, most recent first. <button class="lnk" onClick=${() => go("#/clashes")}>Find clashes in your cards</button></p></div>
       ${list}
     </div></div>
   `;

@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef } from "../../vendor/preact-htm.js";
 import { store, useStore, setUi, mutate, removeRecord, showError, useEvent } from "../store.js";
+import { ClashNote } from "./clash-note.js";
 import { html, Field, Pulse, EinkBar } from "../ui.js";
 
 const cardPath = (card) => `/api/cards/${card.id}`;
@@ -100,6 +101,7 @@ function Card({ card, highlight, book }) {
     </div>
     ${card.isCloze ? html`<${ClozeFields} card=${card} />` : html`<${PlainFields} card=${card} />`}
     ${card.warn && html`<div class="warn"><span>${card.warn}</span></div>`}
+    <${ClashNote} clash=${card.clash} />
     ${open.rw && html`<${RewritePanel} card=${card} />`}
     ${open.prev && html`<${Preview} card=${card} highlight=${highlight} book=${book} />`}
   </div>`;

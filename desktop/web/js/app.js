@@ -5,6 +5,7 @@ import { useStore, start, useBookLoader, replace, go, bookPath } from "./store.j
 import { html, ErrorBar, Waiting } from "./ui.js";
 import { PlugIn, ReaderCheck } from "./screens/reader.js";
 import { PickBook } from "./screens/books.js";
+import { Clashes } from "./screens/clashes.js";
 import { Suggest, Highlights } from "./screens/working.js";
 import { Connections } from "./screens/connections.js";
 import { Ideas } from "./screens/ideas.js";
@@ -17,7 +18,7 @@ import { CreateDrawer } from "./drawers/create.js";
 const table = (entries) => Object.assign(Object.create(null), entries);
 
 // Screens with no book
-const SCREENS = table({ plug: PlugIn, check: ReaderCheck, books: PickBook });
+const SCREENS = table({ plug: PlugIn, check: ReaderCheck, books: PickBook, clashes: Clashes });
 // Screens of the open book. They can count on store.book being there.
 const BOOK_SCREENS = table({ suggest: Suggest, highlights: Highlights, connections: Connections, ideas: Ideas, save: SaveCards, saved: Saved });
 const DRAWERS = table({ prompt: PromptDrawer, settings: SettingsDrawer, create: CreateDrawer });

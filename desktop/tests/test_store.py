@@ -51,7 +51,7 @@ class SchemaTests(StoreCase):
         again = Store(self.path)
         self.addCleanup(again.close)
         self.assertEqual(again.get_card(card["id"])["front"], "F")
-        self.assertEqual(again.schema_version(), 1)
+        self.assertEqual(again.schema_version(), len(store_module.MIGRATIONS))
 
     def test_a_later_migration_upgrades_in_place(self):
         card = self.store.add_card(self.book_id, self.hid, front="F")
@@ -60,7 +60,7 @@ class SchemaTests(StoreCase):
         with mock.patch.object(store_module, "MIGRATIONS", steps):
             again = Store(self.path)
             self.addCleanup(again.close)
-            self.assertEqual(again.schema_version(), 2)
+            self.assertEqual(again.schema_version(), len(store_module.MIGRATIONS))
             self.assertEqual(again.get_book(self.book_id)["extra"], "x")
             self.assertEqual(again.get_card(card["id"])["front"], "F")
 
@@ -72,7 +72,7 @@ class SchemaTests(StoreCase):
                 Store(self.path)
         conn = sqlite3.connect(self.path)
         self.addCleanup(conn.close)
-        self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 1)
+        self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], len(store_module.MIGRATIONS))
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'half'").fetchone()[0], 0)
 
     def test_a_database_from_a_newer_app_is_refused_in_plain_words(self):
@@ -561,7 +561,7 @@ class ThreadTests(StoreCase):
         self.run_threads(work)
         store = Store(path)
         self.addCleanup(store.close)
-        self.assertEqual(store.schema_version(), 1)
+        self.assertEqual(store.schema_version(), len(store_module.MIGRATIONS))
 
 
 class OddTextTests(StoreCase):

@@ -166,6 +166,37 @@ MIGRATIONS = [
             PRIMARY KEY (book_id, key)
         )""",
     ),
+    (
+        """CREATE TABLE collection_notes(
+            nid INTEGER PRIMARY KEY,
+            deck TEXT NOT NULL DEFAULT '',
+            front TEXT NOT NULL,
+            back TEXT NOT NULL DEFAULT ''
+        )""",
+        """CREATE TABLE clash_pairs(
+            a INTEGER NOT NULL,
+            b INTEGER NOT NULL,
+            fingerprint TEXT NOT NULL,
+            front_a TEXT NOT NULL,
+            back_a TEXT NOT NULL,
+            front_b TEXT NOT NULL,
+            back_b TEXT NOT NULL,
+            state TEXT NOT NULL,
+            score REAL,
+            why TEXT NOT NULL DEFAULT '',
+            found_at REAL,
+            decided_at REAL,
+            PRIMARY KEY (a, b)
+        )""",
+        """CREATE TABLE card_clashes(
+            record TEXT PRIMARY KEY,
+            question TEXT NOT NULL,
+            other_front TEXT,
+            other_back TEXT,
+            why TEXT,
+            score REAL
+        )""",
+    ),
 ]
 
 _CLOZE = re.compile(r"\{\{c\d+::")
@@ -929,3 +960,49 @@ class Store:
 
     def list_runs(self):
         return [_run(r) for r in self._all("SELECT * FROM runs ORDER BY updated_at")]
+
+    # The reader's collection and clashes
+
+    def collection_notes(self):
+        return [dict(r) for r in self._all("SELECT nid, deck, front, back FROM collection_notes ORDER BY nid")]
+
+    def replace_collection_notes(self, notes, read_at):
+        with self.transaction():
+            self._write("DELETE FROM collection_notes")
+            for note in notes:
+                self._write("INSERT INTO collection_notes(nid, deck, front, back) VALUES (?, ?, ?, ?)",
+                            (note["nid"], note["deck"], note["front"], note["back"]))
+            self.set_setting("collection_read_at", read_at)
+
+    def clash_pairs(self, states=None):
+        if states is None:
+            return [dict(r) for r in self._all("SELECT * FROM clash_pairs")]
+        return [dict(r) for r in self._all(f"SELECT * FROM clash_pairs WHERE state IN ({_marks(states)})", states)]
+
+    def set_clash_pair(self, pair):
+        columns = ("a", "b", "fingerprint", "front_a", "back_a", "front_b", "back_b", "state", "score", "why",
+                   "found_at", "decided_at")
+        values = {"score": None, "why": "", "found_at": None, "decided_at": None, **pair}
+        self._write(f"INSERT OR REPLACE INTO clash_pairs({', '.join(columns)}) VALUES ({_marks(columns)})",
+                    [values[column] for column in columns])
+
+    def set_clash_verdict(self, a, b, state, at):
+        """Whether the pair was there to change."""
+        with self.transaction():
+            found = self._one("SELECT 1 FROM clash_pairs WHERE a = ? AND b = ?", (a, b))
+            if found:
+                self._write("UPDATE clash_pairs SET state = ?, decided_at = ? WHERE a = ? AND b = ?", (state, at, a, b))
+        return bool(found)
+
+    def set_card_clash(self, record, question, found=None):
+        found = found or {}
+        self._write(
+            "INSERT OR REPLACE INTO card_clashes(record, question, other_front, other_back, why, score) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (record, question, found.get("front"), found.get("back"), found.get("why"), found.get("score")),
+        )
+
+    def card_clash(self, record, question):
+        """What was found for this record, while its question still reads the same, else None."""
+        row = self._one("SELECT * FROM card_clashes WHERE record = ? AND question = ?", (record, question))
+        return dict(row) if row else None

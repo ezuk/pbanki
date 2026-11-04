@@ -6,6 +6,7 @@ import { api, listen, NO_ANSWER } from "./api.js";
 export const store = {
   state: null, // GET /api/state
   books: null, // GET /api/books, the rows
+  clashes: null, // GET /api/clashes
   book: null, // GET /api/books/<id>, the open book
   bookError: null, // Why the open book couldn't load
   route: parseRoute(location.hash),
@@ -149,6 +150,10 @@ export const loadState = coalesced(async () => {
 export const loadBooks = coalesced(async () => {
   const { books } = await api.get("/api/books");
   update({ books });
+});
+
+export const loadClashes = coalesced(async () => {
+  update({ clashes: await api.get("/api/clashes") });
 });
 
 // Writes under way, and a count that moves with each one. A book fetched across a write is stale.
@@ -522,6 +527,8 @@ function refetchForEvent(event) {
     }
   } else if (topic === "settings" || topic === "prompts") {
     quietly(loadState());
+  } else if (topic === "clashes") {
+    if (store.route.name === "clashes") quietly(loadClashes());
   } else if (topic.startsWith("book:")) {
     if (store.route.bookId === topic.slice(5)) quietly(refreshBook());
     if (store.route.name === "books") quietly(loadBooks());

@@ -268,6 +268,10 @@ POST /api/books/<id>/companion/create
 POST /api/books/<id>/companion/copy
 POST /api/books/<id>/companion/keep
 POST /api/books/<id>/companion/forget   stops treating a Create as running, after Terminal was closed
+GET  /api/clashes                    the cards read, search progress and pairs, grouped
+POST /api/clashes/find               reads the reader if it's there, then searches in the background
+POST /api/clashes/stop
+POST /api/clashes/pairs/<id>         {verdict: "real"|"no"|"new"}
 ```
 
 The server watches the mount every 2 s in one background thread and pushes `reader` events.
@@ -305,9 +309,18 @@ The app routes by URL hash so reload keeps your place. Layout works from 1100 px
 5. Independent reviews, then fixes.
 6. End-to-end run, visual comparison with the mock, real AI smoke, proof page, READMEs (`desktop/web/README.md`, `desktop/tests/e2e/README.md`; the project's own README doesn't cover the desktop app yet).
 
+## 14a. Clashes (`clashes.py`, `web/js/screens/clashes.js`)
+
+A clash is two cards whose questions read alike and whose answers differ, so a review can't tell which answer it wants. Same-answer repeats aren't clashes. The screen is `#/clashes`, linked from Pick a book.
+
+- **Cards.** `collection.anki2` and its `-wal` are read from a copy on the Mac, each time the reader appears and at the start of a search, and kept in `collection_notes` so everything works unplugged. The reader is never written.
+- **Search.** Three reads of the whole collection with the Companion model (`meta_model`), shuffled, split at 1500 cards a read. Then a checker scores each new candidate, 60 pairs a request, and pairs at 0.3 or more are kept. A real verdict is sent to reads as an example, and up to 30 of each verdict go to the checker. Pairs aren't filtered by how many reads flagged them, because in testing that didn't predict the user's verdict.
+- **Verdicts.** `clash_pairs` keeps each pair's text and a fingerprint of it. A pair whose text has changed no longer shows, and a real one counts as fixed. Connected pairs are shown together, because rewording one question may fix several.
+- **New cards.** The 25 existing questions sharing the most words with a highlight go into its request as `reader_collection`, and the AI may reply `{"cards":[]}` when they already cover it. After a run, Suggest cards, Define or Find connections, unchecked drafts are compared with the whole collection, and any at 0.3 or more show a note on the card. A note goes away when the question changes. Warnings never block a save. Connections and key ideas get the check, not the `reader_collection` section.
+
 ## 15. Not in this version
 
-- Editing cards already in pbAnki's collection.
+- Editing cards already in pbAnki's collection. The Clashes screen says which cards to reword, and that's done on the reader.
 - Writing to `.sdr` files, even though it would make reviewed status take effect immediately.
 - Cards with images.
 - Finding a reader mounted anywhere other than the configured path, beyond a Choose folder field.

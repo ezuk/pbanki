@@ -1,6 +1,7 @@
 // Key ideas: points in the Book Companion that none of the highlights cover.
 
 import { useStore, mutate, removeRecord, here, go, replace, openDrawer } from "../store.js";
+import { ClashNote } from "./clash-note.js";
 import { html, WorkTop, Field, EinkBar, Running } from "../ui.js";
 import { useSelected, useOpenShown, StageNote } from "./connections.js";
 import { currentOptions } from "./working-options.js";
@@ -25,6 +26,7 @@ function IdeaPage({ book, idea, rest }) {
         <div class="chd"><span class="ckind">Key idea card</span><span>${idea.src}</span></div>
         <${Field} key=${`${idea.id}-front`} class="ta f" rows="1" value=${idea.front} placeholder="Question" path=${`/api/ideas/${idea.id}`} field="front" />
         <${Field} key=${`${idea.id}-back`} class="ta b" rows="1" value=${idea.back} placeholder="Answer" path=${`/api/ideas/${idea.id}`} field="back" />
+        <${ClashNote} clash=${idea.clash} />
       </div>
       <div class="pf">
         <span class="lab">Context on the reader</span>

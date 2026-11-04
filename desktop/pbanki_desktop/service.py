@@ -24,7 +24,7 @@ from datetime import datetime
 from functools import wraps
 from pathlib import Path
 
-from . import ai, cardgen, checks, companion, device, epub, paths, prompts, reader, runs, save
+from . import ai, cardgen, checks, clashes, companion, device, epub, paths, prompts, reader, runs, save
 from . import store as store_module
 from .store import DRAFT, Store, VERIFIED, book_id_for, hid_for
 
@@ -36,6 +36,8 @@ EVENT_BACKLOG = 512
 MAX_MORE = 20
 MAX_TERM_WORDS = 3
 NOTES_MEMO_SIZE = 4096
+
+_WRITES_CARDS = ("suggest", "define", "find")
 
 READER = "reader"
 PROMPTS = "prompts"
@@ -397,7 +399,10 @@ class Service:
         self._hub = _Hub()
         prompts.seed()
         self._prompt_watcher = prompts.PromptWatcher(on_change=self._prompts_changed)
-        self.runner = runs.Runner(self._store, query=query, on_event=self._hub.publish)
+        self.runner = runs.Runner(self._store, query=query, on_event=self._runner_event)
+        self.clashes = clashes.Finder(self._store, query=query, on_event=self._hub.publish,
+                                      model=lambda: self._store.get_settings()["meta_model"], now=self._now)
+        self.clashes.import_trial_file()
 
         self._stop_event = threading.Event()
         self._thread = None
@@ -449,6 +454,7 @@ class Service:
         for job in jobs:
             job["thread"].join(wait)
         self.runner.shutdown(wait=wait)
+        self.clashes.shutdown(wait=wait)
         self.release_thread()
 
     def release_thread(self):
@@ -870,6 +876,7 @@ class Service:
 
     def _refresh_all(self):
         try:
+            self._read_reader(self.clashes.refresh)
             rows = self._read_reader(reader.list_books)
             if not rows:
                 return
@@ -892,6 +899,66 @@ class Service:
 
     def _publish_book(self, book_id, kind, **fields):
         self._hub.publish({"topic": f"book:{book_id}", "type": kind, "book_id": book_id, **fields})
+        if kind in _WRITES_CARDS:
+            self._check_new_cards(book_id)
+
+    def _runner_event(self, event):
+        self._hub.publish(event)
+        if event.get("type") == "run" and event.get("status") in (runs.DONE, runs.STOPPED):
+            self._check_new_cards(event["book_id"])
+
+    # Clashes
+
+    def _check_new_cards(self, book_id):
+        """Starts comparing the book's unchecked draft cards with the collection."""
+        try:
+            if not self._store.collection_notes():
+                return
+            self._check_model(self._store.get_settings()["meta_model"])
+            records = [(f"card:{card['id']}", card) for card in self._store.list_cards(book_id)]
+            records += [(f"connection:{item['id']}", item) for item in self._store.list_connections(book_id)]
+            records += [(f"idea:{item['id']}", item) for item in self._store.list_ideas(book_id)]
+            cards = [{"record": record, "question": item["front"], "front": clashes.plain(item["front"]), "back": item["back"]}
+                     for record, item in records
+                     if item["front"].strip() and self._store.card_clash(record, item["front"]) is None]
+            self.clashes.check_new_cards(book_id, cards, on_done=lambda: self._publish_book(book_id, "clash_check"))
+        except ServiceError:
+            pass
+        except Exception:
+            _log.exception("New cards could not be checked")
+
+    def _clash_note(self, record, front):
+        found = self._store.card_clash(record, front)
+        if not found or not found["other_front"]:
+            return None
+        return {"front": found["other_front"], "back": found["other_back"] or "", "why": found["why"] or ""}
+
+    @_route
+    def clashes_view(self):
+        return self.clashes.view()
+
+    @_route
+    def clashes_find(self):
+        self._check_model(self._store.get_settings()["meta_model"])
+        self._read_reader(self.clashes.refresh)
+        if not self._store.collection_notes():
+            raise ServiceError(409, "Plug in your reader so pbAnki can read your cards.")
+        try:
+            self.clashes.start_search()
+        except clashes.SearchBusy as e:
+            raise ServiceError(409, str(e)) from None
+        return self.clashes.view()
+
+    @_route
+    def clashes_stop(self):
+        self.clashes.stop_search()
+        return self.clashes.view()
+
+    @_route
+    def clash_verdict(self, pair_id, verdict):
+        if not self.clashes.set_verdict(pair_id, verdict):
+            raise ServiceError(404, "That pair of cards isn't on this computer.")
+        return self.clashes.view()
 
     # Looking things up
 
@@ -1129,7 +1196,8 @@ class Service:
             "error": state.get("error"),
             "later": later if have else "",
             "cards": [
-                _card_view(card, warn, context.jobs.get(f"card:{card['id']}"))
+                {**_card_view(card, warn, context.jobs.get(f"card:{card['id']}")),
+                 "clash": self._clash_note(f"card:{card['id']}", card["front"])}
                 for card, warn in zip(drafts, warnings)
             ],
             "saved": saved,
@@ -1233,6 +1301,7 @@ class Service:
             "sources": sources,
             "chapters": chapters,
             "srcCount": src_count,
+            "clash": self._clash_note(f"connection:{item['id']}", item["front"]),
             "meta": " · ".join(part for part in (chapters, src_count, "" if item["opened"] else "Not opened") if part),
         }
 
@@ -1249,6 +1318,7 @@ class Service:
             "back": item["back"],
             "opened": item["opened"],
             "state": item["state"],
+            "clash": self._clash_note(f"idea:{item['id']}", item["front"]),
             "meta": " · ".join(part for part in (item["chapter"], "" if item["opened"] else "Not opened") if part),
         }
 
