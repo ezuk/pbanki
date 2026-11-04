@@ -37,7 +37,6 @@ SOURCE_COMPANION = "From the Book Companion"
 SOURCE_COMPANION_EDITED = "From the Book Companion, edited"
 
 DEFAULT_SETTINGS = {
-    "auto_suggest": True,
     "assistants": {"claude": True, "codex": True},
     "model": "claude-sonnet-5-5",
     "meta_model": "claude-opus-5-5",

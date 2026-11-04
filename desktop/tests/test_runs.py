@@ -1178,28 +1178,6 @@ class SlowReplyTest(Base):
         self.assertIn("took longer", self.store.get_highlight(book, self.hid(book, 1))["error"])
 
 
-class AutoStartTest(Base):
-    def test_a_finished_book_with_a_companion_still_looks_for_key_ideas(self):
-        book = self.add_book(2, COMPANION)
-        self.store.set_reader_reviewed(book, [h["key"] for h in self.store.get_book(book)["data"]["highlights"]])
-        runner = self.runner()
-        self.assertIsNotNone(runner.auto_start(book))
-        status = self.finish(runner, book)
-        self.assertEqual([call["kind"] for call in self.ai.calls], ["ideas"])
-        self.assertEqual(status["progress"]["ideas"]["state"], "done")
-
-    def test_a_finished_book_with_no_companion_doesnt_start(self):
-        book = self.add_book(2)
-        self.store.set_reader_reviewed(book, [h["key"] for h in self.store.get_book(book)["data"]["highlights"]])
-        self.assertIsNone(self.runner().auto_start(book))
-
-    def test_a_finished_book_doesnt_start_with_key_ideas_turned_off(self):
-        book = self.add_book(2, COMPANION)
-        self.store.set_reader_reviewed(book, [h["key"] for h in self.store.get_book(book)["data"]["highlights"]])
-        self.store.set_settings({"suggest_ideas": False})
-        self.assertIsNone(self.runner().auto_start(book))
-
-
 class ConnectionsTest(Base):
     def reply(self, *items):
         self.ai.reply("connections", json.dumps({"connections": list(items)}))
@@ -1406,36 +1384,7 @@ class EventTest(Base):
         self.assertEqual(self.run_all(self.runner(on_event=None), book, {"connections": False})["status"], "done")
 
 
-class AutoStartTest(Base):
-    def test_starts_when_on_and_nothing_has_run(self):
-        book = self.add_book(2)
-        runner = self.runner()
-        self.assertEqual(runner.auto_start(book)["status"], "running")
-        self.finish(runner, book)
-        self.ai.calls.clear()
-        self.assertIsNone(runner.auto_start(book))
-        self.assertEqual(self.ai.calls, [])
-
-    def test_stays_off_when_the_setting_is_off(self):
-        book = self.add_book(2)
-        self.store.set_setting("auto_suggest", False)
-        self.assertIsNone(self.runner().auto_start(book))
-        self.assertIsNone(self.store.get_run(book))
-
-    def test_stays_off_for_an_interrupted_run(self):
-        book = self.add_book(2)
-        self.store.set_run(book, "running", {"count": 2})
-        runner = self.runner()
-        self.assertIsNone(runner.auto_start(book))
-        self.assertEqual(runner.status(book)["status"], "interrupted")
-        self.assertEqual(self.ai.calls, [])
-
-    def test_stays_off_with_nothing_waiting(self):
-        book = self.add_book(1)
-        self.store.set_skipped(book, self.hid(book, 1))
-        self.assertIsNone(self.runner().auto_start(book))
-        self.assertIsNone(self.runner().auto_start("no-such-book"))
-
+class NotCachedTest(Base):
     def test_a_book_not_cached_is_a_plain_error(self):
         with self.assertRaisesRegex(runs.RunError, "isn't on this computer"):
             self.runner().start("no-such-book")

@@ -370,8 +370,8 @@ class SettingsAndRunTests(StoreCase):
         self.assertEqual(self.store.get_setting("unknown", "fallback"), "fallback")
         self.store.set_setting("model", "claude-opus-5-5")
         self.assertEqual(self.store.get_setting("model"), "claude-opus-5-5")
-        self.store.set_setting("auto_suggest", False)
-        self.assertIs(self.store.get_setting("auto_suggest", True), False)
+        self.store.set_setting("suggest_ideas", False)
+        self.assertIs(self.store.get_setting("suggest_ideas", True), False)
 
     def test_all_settings_merge_stored_values_over_defaults(self):
         with mock.patch.dict(os.environ, {"PBANKI_MOUNT": "/somewhere/else"}):

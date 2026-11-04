@@ -511,9 +511,13 @@ async function doubleClickWord(word) {
 
 async function pickBook(book) {
   await seeH1("Pick a book");
+  const aiBefore = aiRuns().length;
   const row = page.locator("button.bk", { hasText: book.title });
   await row.click();
   await seeH1("Suggest cards");
+  await page.waitForTimeout(500);
+  eq(aiRuns().length, aiBefore, "Opening a book starts nothing");
+  await page.locator(".rowg .btn.pri").click();
 }
 
 // The whole run shown ticked off, all rows, then on to Highlights.
@@ -523,7 +527,7 @@ async function waitForRunThenReview(rows) {
       const shown = await page.locator(".chk").evaluateAll((els) => els.map((el) => [el.querySelector(".chkg").textContent, el.querySelector(".chkt").textContent]));
       return shown.length === rows.length && shown.every(([glyph]) => glyph === "✓") && JSON.stringify(shown.map((r) => r[1])) === JSON.stringify(rows);
     },
-    `The automatic run should finish with rows ${rows}`,
+    `The run should finish with rows ${rows}`,
     60000,
   );
   await button("Review highlights").click();
@@ -600,7 +604,7 @@ async function wholeFlow() {
     ok(await page.locator("button.bk", { hasText: "On Card" }).isDisabled(), "A book on the memory card can't be opened");
   });
 
-  await step("Picking the book starts the automatic run", async () => {
+  await step("Picking the book shows the options, and the button starts the run", async () => {
     await pickBook(book);
     await waitForRunThenReview(["Highlight cards", "Connections", "Key ideas you didn't highlight"]);
     const runs = aiRuns();
@@ -832,7 +836,7 @@ async function wholeFlow() {
     book.skippedCards = shown.cards;
   });
 
-  await step("The automatic run's connections are there", async () => {
+  await step("The run's connections are there", async () => {
     await goTab("Connections");
     await page.locator(".crumbt", { hasText: "Connection ·" }).waitFor();
     eq(await page.locator(".navlist .ml").count(), 4, "Find connections and three from the run");

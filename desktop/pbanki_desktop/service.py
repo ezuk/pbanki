@@ -77,7 +77,7 @@ _REMEMBERED = {
 _RUN_KEYS = ("count", "kind", "model", "prompt", "sees", "companion", "hint", "highlights", "connections", "meta_model", "ideas")
 _SUGGEST_KEYS = ("count", "kind", "model", "prompt", "sees", "companion", "hint")
 _SETTING_KEYS = (
-    "mount", "auto_suggest", "assistants", "model", "meta_model", "companion_send", "sees", "kind", "count",
+    "mount", "assistants", "model", "meta_model", "companion_send", "sees", "kind", "count",
     "last_prompt", "suggest_connections", "suggest_ideas", "mark_connection_sources",
 )
 
@@ -997,7 +997,7 @@ class Service:
                 "pending": pending,
                 "due": due,
                 "canConnect": pending >= 2,
-                "lede": "Using your last choices. Only the cards you open get saved." if run_view["phase"] != "idle" else form_lede,
+                "lede": "Only the cards you open get saved." if run_view["phase"] != "idle" else form_lede,
                 "formLede": form_lede,
                 "sugBtn": f"Suggest cards for {_plural(due, 'highlight')}",
             },
@@ -1370,7 +1370,7 @@ class Service:
 
     @_route
     def open_book(self, book_id):
-        """Marks the book current, refreshes it from the reader and starts the automatic run if due."""
+        """Marks the book current, and refreshes it from the reader."""
         book = self._store.get_book(book_id)
         if book is None:
             self.books()
@@ -1387,18 +1387,7 @@ class Service:
             self._store.set_setting("current_book", book_id)
             self._hub.publish({"topic": SETTINGS, "type": "current_book", "book_id": book_id})
         self._settle_models()
-        started = self._auto_start(book_id)
-        return {**self._book_view(_Context(self, book)), "auto_started": started}
-
-    def _auto_start(self, book_id):
-        settings = self._store.get_settings()
-        usable = {model["id"] for model in self._usable_models(settings)}
-        if settings["model"] not in usable:
-            return False
-        try:
-            return self.runner.auto_start(book_id) is not None
-        except runs.RunError:
-            return False
+        return self._book_view(_Context(self, book))
 
     # POST /api/books/<id>/prompt
 
@@ -2120,7 +2109,7 @@ class Service:
                 new[key] = expanded.rstrip("/") or "/"
             elif key == "assistants":
                 new[key] = self._checked_assistants(value, current["assistants"])
-            elif key in ("auto_suggest", "suggest_connections", "suggest_ideas", "mark_connection_sources"):
+            elif key in ("suggest_connections", "suggest_ideas", "mark_connection_sources"):
                 if not isinstance(value, bool):
                     raise ServiceError(400, "That setting has to be on or off.")
                 new[key] = value

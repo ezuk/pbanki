@@ -396,7 +396,6 @@
             <div class="setn">Turn on both and each model menu lists them together, so you can use a different one per job.</div>
             <div class="setrow"><span>Model for highlight cards</span><select class="sel" value="{{ model }}" onChange="{{ onModel }}"><sc-for list="{{ models }}" as="o"><option value="{{ o.id }}">{{ o.label }}</option></sc-for></select></div>
             <div class="setrow"><span>Model for connections</span><select class="sel" value="{{ metaModel }}" onChange="{{ onMetaModel }}"><sc-for list="{{ models }}" as="o"><option value="{{ o.id }}">{{ o.label }}</option></sc-for></select></div>
-            <label class="setrow" style="cursor:pointer"><span class="rowg" style="gap:6px"><sc-if value="{{ showAdds }}"><span class="ad">1</span></sc-if>Start suggestions when a book opens</span><input type="checkbox" checked="{{ autoSuggest }}" onChange="{{ toggleAuto }}" style="accent-color:var(--ink)" /></label>
           </div>
           <div class="setg"><div class="setgt">Book Companion</div>
             <div class="setrow"><span>This book</span><span class="assts">{{ compStatus }}</span></div>

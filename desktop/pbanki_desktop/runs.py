@@ -236,26 +236,6 @@ class Runner:
         threading.Thread(target=self._drive, args=(run,), daemon=True, name=f"pbanki-run-{book_id}").start()
         return self.status(book_id)
 
-    def auto_start(self, book_id):
-        """Starts a run when a book is picked, if the setting is on, nothing has run for this
-        book yet and it has highlights waiting, or key ideas to look for among reviewed ones.
-        Returns status(), or None when it didn't start."""
-        settings = self.store.get_settings()
-        if not settings.get("auto_suggest"):
-            return None
-        if self.store.get_run(book_id) is not None:
-            return None
-        book = self.store.get_book(book_id)
-        if book is None:
-            return None
-        reviewed = self._reviewed(book_id)
-        highlights = self._highlights(book)
-        due = any(self._due(book_id, h, reviewed) for h in highlights)
-        ideas = highlights and settings.get("suggest_ideas") and self._whole_companion(book)
-        if not due and not ideas:
-            return None
-        return self.start(book_id)
-
     def pause(self, book_id):
         """No new AI calls start. Calls under way finish and their cards are kept."""
         with self._cond:

@@ -11,7 +11,7 @@ import { AskPanel, askForCards } from "./working-ask.js";
 const RUN_OPTIONS = ["count", "kind", "model", "prompt", "sees", "companion", "hint", "highlights", "connections", "meta_model", "ideas"];
 
 function runAction(book, action, options) {
-  if (action === "start") setUi({ suggestAgain: null });
+  if (action === "start") setUi({ suggestAgain: null, lastRun: null });
   return mutate("POST", `/api/books/${book.id}/run`, options ? { action, options } : { action });
 }
 
@@ -40,7 +40,7 @@ function SuggestForm({ book }) {
   // With no highlight waiting, the button says which other steps it will run
   const steps = [options.connections && canConnect && "connections", options.ideas && have && "key ideas"].filter(Boolean);
   const label = due || !steps.length ? sugBtn : `Look for ${steps.join(" and ")}`;
-  const again = ui.suggestAgain === book.id;
+  const again = book.run.phase === "done";
   return html`
     <section class="comp">
       <div class="compt">Highlight cards</div>
@@ -49,6 +49,7 @@ function SuggestForm({ book }) {
         <${ChoiceOpt} book=${book} label="Kind" option="kind" choices=${state.kinds} />
         <${ChoiceOpt} book=${book} label="Model" option="model" choices=${state.models} />
         <${ChoiceOpt} book=${book} label="Prompt" option="prompt" choices=${state.prompts.names} />
+        <${ChoiceOpt} book=${book} label="AI reads" option="sees" choices=${state.sees_opts} />
         ${have && html`<${ChoiceOpt} book=${book} label="Companion" option="companion" choices=${state.comp_opts} />`}
       </div>
     </section>
@@ -62,7 +63,7 @@ function SuggestForm({ book }) {
       <label class="cbx"><input type="checkbox" checked=${options.ideas} onChange=${(e) => setOption(book, "ideas", e.target.checked)} /><span><span class="compt">Key ideas you didn't highlight</span><br />Important points in the Book Companion that your highlights miss. Kept apart from your highlight cards.</span></label>
     </section>`}
     <div class="rowg"><button class="btn pri" style="padding:11px 16px" onClick=${() => runAction(book, "start", options)} disabled=${!due && !steps.length}>${label}</button>${again
-      ? html`<button class="lnk" onClick=${() => setUi({ suggestAgain: null })}>Back to the last run</button>`
+      ? html`<button class="lnk" onClick=${() => setUi({ suggestAgain: null, lastRun: book.id })}>Back to the last run</button>`
       : html`<button class="lnk" onClick=${() => go(here("highlights"))}>Skip, write them myself</button>`}</div>
   `;
 }
@@ -84,7 +85,7 @@ function SuggestDone({ book }) {
       <button class="btn pri" onClick=${() => go(here("highlights"))}>Review highlights</button>
       <button class="btn" onClick=${() => go(here("connections"))}>Review connections</button>
       ${book.companion.have && html`<button class="btn" onClick=${() => go(here("ideas"))}>Key ideas</button>`}
-      <button class="lnk" onClick=${() => setUi({ suggestAgain: book.id })}>Suggest again</button>
+      <button class="lnk" onClick=${() => setUi({ suggestAgain: book.id, lastRun: null })}>Suggest again</button>
     </div>
   `;
 }
@@ -92,12 +93,13 @@ function SuggestDone({ book }) {
 export function Suggest() {
   const { book, ui } = useStore();
   const { run, suggest } = book;
-  // Suggest again shows the choices over a finished run
-  const phase = run.phase === "done" && ui.suggestAgain === book.id ? "idle" : run.phase;
+  // A finished run gives way to the choices when asked, or when highlights are waiting
+  const wantsChoices = ui.suggestAgain === book.id || (suggest.due > 0 && ui.lastRun !== book.id);
+  const phase = run.phase === "done" && wantsChoices ? "idle" : run.phase;
   const lede = phase === "idle" ? suggest.formLede : suggest.lede;
-  // Leaving ends Suggest again, so coming back shows the finished run
+  // Leaving forgets which of the two was asked for
   useEffect(() => () => {
-    if (store.ui.suggestAgain) setUi({ suggestAgain: null });
+    if (store.ui.suggestAgain || store.ui.lastRun) setUi({ suggestAgain: null, lastRun: null });
   }, []);
   return html`
     <${Top} middle=${html`<${BookButton} book=${book} />`} />

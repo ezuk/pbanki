@@ -37,10 +37,6 @@ export function SettingsDrawer() {
       <div class="setn">Turn on both and each model menu lists them together, so you can use a different one per job.</div>
       <${SettingSelect} label="Model for highlight cards" name="model" value=${settings.model} options=${state.models} />
       <${SettingSelect} label="Model for connections" name="meta_model" value=${settings.meta_model} options=${state.models} />
-      <label class="setrow" style="cursor:pointer">
-        <span class="rowg" style="gap:6px">Start suggestions when a book opens</span>
-        <input type="checkbox" checked=${settings.auto_suggest} onChange=${(e) => saveSettings({ auto_suggest: e.target.checked })} style="accent-color:var(--ink)" />
-      </label>
     </div>
     <div class="setg">
       <div class="setgt">Book Companion</div>

@@ -356,7 +356,7 @@ It needs Python 3.11 or newer on a Mac, and nothing else to install. AI cards us
 
 ### What it adds
 
-- **Suggestions run by themselves.** Open a book and the AI starts on its highlights while you read through them. Your work stays on the Mac, so you can keep going with the reader unplugged.
+- **Suggestions run when you say so.** Open a book, choose the kind of card, how many per highlight, the model, the prompt and how much the AI reads, then start. You can read through highlights while it works. Your work stays on the Mac, so you can keep going with the reader unplugged.
 - **The passage around each highlight**, with your note, card checks, Rewrite, cloze and question-only cards, definition cards from selected words, and a preview of each card as it will look on the reader.
 - **Connections:** questions that take several highlights to answer, each naming its chapters by number and title.
 - **Key ideas:** with a Book Companion, important points your highlights missed, and a warning when later research questions a claim you highlighted.

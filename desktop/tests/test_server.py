@@ -179,7 +179,6 @@ class Base(unittest.TestCase):
         self.eject_error = None
         self.svc = Service(store=Store(self.home / "pbanki.db"), launch=self._launch, eject=self._eject,
                            poll_seconds=self.POLL)
-        self.svc._store.set_setting("auto_suggest", False)
         self.http = server.Server(self.svc, 0, web_root=self.web, heartbeat=self.HEARTBEAT)
         self.addCleanup(self.http.stop, 5)
         self.http.start()
@@ -294,14 +293,15 @@ class Routes(Base):
     def test_book_open(self):
         view = self.open_book()
         self.assertEqual(view["id"], self.pride)
-        self.assertFalse(view["auto_started"])
+        self.assertEqual(view["run"]["phase"], "idle")
         self.assertEqual(self.ok("GET", "/api/state")["current_book"], self.pride)
         self.refused(404, "POST", "/api/books/nope/open")
         self.refused(405, "GET", f"/api/books/{self.pride}/open")
 
-    def test_open_starts_the_automatic_run_when_due(self):
-        self.ok("PATCH", "/api/settings", {"auto_suggest": True})
-        self.assertTrue(self.open_book()["auto_started"])
+    def test_a_run_starts_only_when_asked(self):
+        self.assertEqual(self.open_book()["run"]["phase"], "idle")
+        self.assertFalse(self.ok("GET", f"/api/books/{self.pride}")["highlights"][0]["cards"])
+        self.ok("POST", f"/api/books/{self.pride}/run", {"action": "start"})
         self.assertTrue(self.svc.runner.wait(self.pride, LONG))
         self.assertTrue(self.ok("GET", f"/api/books/{self.pride}")["highlights"][0]["cards"])
 
@@ -1593,7 +1593,8 @@ class RunPy(unittest.TestCase):
         pride = next(book["id"] for book in books if book["title"] == "Pride and Prejudice")
         answer = fetch(f"{base}/api/books/{pride}/open", "POST")
         self.assertEqual(answer.status, 200, answer.data[:200])
-        self.assertTrue(answer.json["auto_started"])
+        started = fetch(f"{base}/api/books/{pride}/run", "POST", {"action": "start"})
+        self.assertEqual(started.status, 200, started.data[:200])
         self.assertTrue(wait_until(lambda: pids.exists() and pids.read_text().strip(), LONG))
         running = [int(pid) for pid in pids.read_text().split()]
         self.assertTrue(all(_alive(pid) for pid in running))

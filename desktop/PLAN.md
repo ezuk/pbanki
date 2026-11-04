@@ -145,7 +145,7 @@ Assistant detection reports path and version from `--version`. Models: Claude Co
 
 `runs.py` keeps one run per book, in order: highlight cards, connections, key ideas (when a Companion exists and the box is on). Highlight work runs up to 3 AI calls at a time. Requests carry the plugin's `max` semantics (the AI chooses 1 to n) for bulk runs and `count` for "Suggest N". Runs can pause, resume and stop; finished work is kept. A highlight that already has cards, or is reviewed or skipped, is not requested again. A run interrupted by quitting does not resume by itself; reopening the book offers it again. Picking a book starts a run automatically when the setting is on and nothing has run for this book yet. Each result updates SQLite and pushes an event. Cards that arrive for a highlight that has since been reviewed, skipped or removed from the reader are dropped, for runs, Suggest N and Definition alike. The first row of a run's progress says how many highlights failed, once it has gone through them all.
 
-A second run on a book asks only for the steps ticked for it, and carrying on a stopped or paused run skips steps it already finished. A run can leave out highlight cards (`highlights: false`), which is how Key ideas looks on a book with nothing pending. A book with nothing pending also starts automatically for key ideas if it has a Companion, the box is on and they haven't run. Key idea requests list the ideas already there; a reply repeating one by title adds nothing. Whether key ideas have run is kept in the run's progress, so "No key ideas left" only shows after a look that finished. AI requests read the passage from the reader, else from a copy of the book kept at `<home>/book-text/<book id>.epub` from the last time the book was read.
+A second run on a book asks only for the steps ticked for it, and carrying on a stopped or paused run skips steps it already finished. A run can leave out highlight cards (`highlights: false`), which is how Key ideas looks on a book with nothing pending. Opening a book never starts a run: the reader picks the options on Suggest cards and clicks to start. Key idea requests list the ideas already there; a reply repeating one by title adds nothing. Whether key ideas have run is kept in the run's progress, so "No key ideas left" only shows after a look that finished. AI requests read the passage from the reader, else from a copy of the book kept at `<home>/book-text/<book id>.epub` from the last time the book was read.
 
 If the chosen model's assistant isn't there and another is, the model settings move to the first usable model. A model is never changed while its assistant is present.
 
@@ -234,7 +234,7 @@ GET  /api/events                     SSE: {"topic":"reader"|"book:<id>"|"prompts
 GET  /api/books                      rows for Pick a book
 GET  /api/books/<id>                 full working state: book, chapters, highlights with status and passages,
                                      cards, connections, ideas, companion, run, counts, reader flags
-POST /api/books/<id>/open            mark current, refresh from reader, start the automatic run if due
+POST /api/books/<id>/open            mark current, refresh from reader
 POST /api/books/<id>/prompt          {prompt}, keeps the prompt picked for this book
 POST /api/books/<id>/run             {action:"start"|"pause"|"resume"|"stop", options?}
 POST /api/books/<id>/highlights/<hid>/open
@@ -260,7 +260,7 @@ POST /api/books/<id>/save/retry
 POST /api/reader/eject
 POST /api/reader/plugin/update
 POST /api/reader/choose-folder       opens the Mac's folder dialog, stores the pick as the mount
-PATCH /api/settings                  {mount?, auto_suggest?, assistants?, model?, meta_model?, companion_send?, ...}
+PATCH /api/settings                  {mount?, assistants?, model?, meta_model?, companion_send?, ...}
 GET  /api/prompts/<name>             files and text
 POST /api/prompts/open               {name, file}
 POST /api/prompts/reveal             {name, file}

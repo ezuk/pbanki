@@ -130,8 +130,7 @@ class Base(unittest.TestCase):
         if text:
             self.assertIn(text, caught.exception.sentence)
 
-    def opened(self, book_id=None, **kwargs):
-        self.svc._store.set_setting("auto_suggest", kwargs.get("auto", False))
+    def opened(self, book_id=None):
         return self.svc.open_book(book_id or self.pride)
 
     def first_hid(self, view, index=0):
@@ -240,7 +239,6 @@ class Reading(Base):
         self.assertEqual(view["filters"][1]["label"], "To do 3")
 
     def test_every_fixture_book_opens_or_is_refused_plainly_plugged_and_unplugged(self):
-        self.svc._store.set_setting("auto_suggest", True)
         self.svc.tick()
         self.assertTrue(self.svc.wait_for_refresh(LONG))
         names = sorted(self.fake.books)
@@ -250,7 +248,6 @@ class Reading(Base):
             try:
                 view = self.svc.open_book(book_id)
                 json.dumps(view, allow_nan=False)
-                self.wait_run(book_id)
             except ServiceError as e:
                 self.assertEqual(e.status, 409, name)
                 refused.add(name)
@@ -258,7 +255,7 @@ class Reading(Base):
         scan = self.svc.book(book_id_for(self.fake.books["scan"]))
         self.assertFalse(scan["is_epub"])
         self.assertTrue(all(h["passage_note"] for h in scan["highlights"]))
-        self.assertFalse(self.svc.open_book(book_id_for(self.fake.books["walden"]))["auto_started"])
+        self.assertEqual(self.svc.open_book(book_id_for(self.fake.books["walden"]))["run"]["phase"], "idle")
         self.unplug()
         self.svc.tick()
         for name in names:
@@ -540,11 +537,19 @@ class Cards(Base):
 
 
 class Runs(Base):
-    def test_open_starts_the_automatic_run_when_due_once(self):
-        self.svc._store.set_setting("auto_suggest", True)
-        gate = self.ai.hold("connections")
+    def test_open_never_starts_a_run(self):
         view = self.svc.open_book(self.pride)
-        self.assertTrue(view["auto_started"])
+        self.assertNotIn("auto_started", view)
+        self.assertEqual(view["run"]["phase"], "idle")
+        self.assertIsNone(self.svc._store.get_run(self.pride))
+        self.assertEqual(self.svc.open_book(self.pride)["run"]["phase"], "idle")
+        self.assertIsNone(self.svc._store.get_run(self.pride))
+
+    def test_a_started_run_shows_as_busy_then_done(self):
+        gate = self.ai.hold("connections")
+        self.svc.open_book(self.pride)
+        self.svc.run(self.pride, "start")
+        view = self.svc.book(self.pride)
         self.assertTrue(view["run"]["active"])
         self.assertEqual(view["run"]["phase"], "busy")
         self.assertTrue(view["run"]["bg"]["show"])
@@ -552,19 +557,11 @@ class Runs(Base):
         gate.set()
         self.wait_run(self.pride)
         again = self.svc.open_book(self.pride)
-        self.assertFalse(again["auto_started"])
         self.assertEqual(again["run"]["phase"], "done")
         self.assertEqual(again["run"]["rows"][0]["path"], "Done · 7 of 7 highlights")
         self.assertIn("Done · ", again["run"]["rows"][1]["path"])
         self.assertTrue(again["connections"])
-        self.assertIn("Using your last choices", again["suggest"]["lede"])
-
-    def test_open_does_not_start_when_setting_is_off_or_no_assistant_is_usable(self):
-        self.svc._store.set_setting("auto_suggest", False)
-        self.assertFalse(self.svc.open_book(self.pride)["auto_started"])
-        self.svc._store.set_setting("auto_suggest", True)
-        with mock.patch.object(ai, "find_binary", return_value=None):
-            self.assertFalse(self.svc.open_book(self.pride)["auto_started"])
+        self.assertEqual(again["suggest"]["due"], 0)
 
     def test_start_pause_resume_stop(self):
         self.opened()
@@ -589,7 +586,6 @@ class Runs(Base):
         self.assert_refused(400, lambda: self.svc.run(self.pride, "start", "not a dict"))
 
     def test_run_writes_key_ideas_with_a_companion_and_covered_points(self):
-        self.svc._store.set_setting("auto_suggest", False)
         view = self.svc.open_book(self.mostly)
         self.assertTrue(view["companion"]["have"])
         self.svc.run(self.mostly, "start", {"ideas": True, "connections": False})
@@ -742,9 +738,8 @@ class Saving(Base):
     def test_whole_flow_from_open_to_verified_save_changes_only_the_inbox_files(self):
         before = self.fake.snapshot()
         self.svc.start()
-        self.svc._store.set_setting("auto_suggest", True)
-        view = self.svc.open_book(self.pride)
-        self.assertTrue(view["auto_started"])
+        self.svc.open_book(self.pride)
+        self.svc.run(self.pride, "start")
         self.wait_run(self.pride)
         view = self.svc.book(self.pride)
         hid = self.first_hid(view)
@@ -1009,7 +1004,7 @@ class Unplugged(Base):
         self.assertEqual(self.svc.save_preview(self.pride)["saveBtn"], "Back up and wait for reader")
         self.assertEqual(self.svc.save_book(self.pride)["status"], "waiting")
         self.assertEqual(self.svc.save_retry(self.pride)["status"], "waiting")
-        self.assertIsNotNone(self.svc.update_settings({"auto_suggest": False})["settings"])
+        self.assertIsNotNone(self.svc.update_settings({"suggest_ideas": False})["settings"])
         self.assertTrue(self.svc.prompt("Standard")["files"])
         self.svc.open_prompt("Standard", "questions.md")
         self.svc.reveal_prompt("Standard", "questions.md")
@@ -1157,7 +1152,7 @@ class Watching(Base):
     def test_subscribe_filters_topics_and_drops_oldest_when_full(self):
         listener = self.svc.subscribe({"settings"})
         self.addCleanup(listener.close)
-        self.svc.update_settings({"auto_suggest": False})
+        self.svc.update_settings({"suggest_ideas": False})
         self.assertEqual(listener.get(timeout=LONG)["topic"], "settings")
         with self.svc.subscribe() as full:
             for n in range(service.EVENT_BACKLOG + 3):
@@ -1227,12 +1222,12 @@ class Settings(Base):
     def test_settings_change_and_persist(self):
         self.drain()
         state = self.svc.update_settings({
-            "auto_suggest": False, "model": "claude-opus-5-5", "meta_model": "claude-haiku-5-5",
+            "model": "claude-opus-5-5", "meta_model": "claude-haiku-5-5",
             "companion_send": companion.OFF, "count": 3, "kind": "cloze", "sees": "The chapter",
             "suggest_connections": False, "suggest_ideas": False, "mark_connection_sources": False,
             "last_prompt": "Standard",
         })
-        self.assertFalse(state["settings"]["auto_suggest"])
+        self.assertNotIn("auto_suggest", state["settings"])
         self.assertEqual(state["settings"]["model"], "claude-opus-5-5")
         self.assertEqual(self.next_event("changed", "settings")["topic"], "settings")
         self.svc.stop(wait=LONG)
@@ -1250,7 +1245,7 @@ class Settings(Base):
 
     def test_bad_settings_are_refused(self):
         for bad in (
-            {"mystery": 1}, {"mount": ""}, {"mount": "relative/path"}, {"mount": 3}, {"auto_suggest": "yes"},
+            {"mystery": 1}, {"mount": ""}, {"mount": "relative/path"}, {"mount": 3}, {"auto_suggest": True}, {"suggest_ideas": "yes"},
             {"model": "nope"}, {"companion_send": "x"}, {"sees": "x"}, {"kind": "x"}, {"count": "x"},
             {"assistants": "x"}, {"assistants": {"gemini": True}}, {"assistants": {"claude": 1}},
         ):
@@ -1348,9 +1343,9 @@ class Companions(Base):
         self.assertEqual(have["status"], "Book Companion on the reader")
 
     def test_never_created_automatically(self):
-        self.svc._store.set_setting("auto_suggest", True)
         with mock.patch.object(companion, "create") as create:
             self.svc.open_book(self.pride)
+            self.svc.run(self.pride, "start")
             self.wait_run(self.pride)
             self.svc.tick()
         create.assert_not_called()
@@ -1962,7 +1957,6 @@ class RegressionFindings(Base):
         self.svc._store.set_reader_reviewed(book_id, [h["key"] for h in book["highlights"]])
 
     def test_a_finished_book_can_start_key_ideas_alone(self):
-        self.svc._store.set_setting("auto_suggest", False)
         self.all_reviewed(self.mostly)
         book = self.svc.book(self.mostly)
         self.assertEqual(book["suggest"]["due"], 0)
@@ -1977,7 +1971,6 @@ class RegressionFindings(Base):
         self.assertEqual(self.svc._store.get_settings()["suggest_connections"], True)
 
     def test_key_ideas_say_nothing_is_left_only_after_looking(self):
-        self.svc._store.set_setting("auto_suggest", False)
         book = self.svc.open_book(self.mostly)
         self.assertNotIn("No key ideas left", book["ideaEmptyText"])
         self.svc.run(self.mostly, "start", {"connections": False})
@@ -2000,7 +1993,6 @@ class RegressionFindings(Base):
         self.assertTrue(self.svc.save_preview(self.mostly)["last_saved"]["done"])
 
     def test_reading_further_is_noticed(self):
-        self.svc._store.set_setting("auto_suggest", False)
         self.svc.open_book(self.mostly)
         self.svc.run(self.mostly, "start", {"connections": False})
         self.wait_run(self.mostly)
@@ -2011,7 +2003,6 @@ class RegressionFindings(Base):
         self.assertIn("read further", self.svc.book(self.mostly)["ideaLook"]["note"])
 
     def test_the_due_count_matches_what_a_run_asks_for(self):
-        self.svc._store.set_setting("auto_suggest", False)
         book = self.svc.open_book(self.pride)
         hids = [h["id"] for h in book["highlights"]]
         pending = book["counts"]["todo"]
@@ -2030,7 +2021,6 @@ class RegressionFindings(Base):
         self.assertEqual(self.svc.runner.status(self.pride)["progress"]["highlights"]["total"], pending - 3)
 
     def test_a_run_with_nothing_waiting_says_so(self):
-        self.svc._store.set_setting("auto_suggest", False)
         self.svc.open_book(self.pride)
         self.svc.run(self.pride, "start", {"connections": False, "ideas": False})
         self.wait_run(self.pride)
@@ -2041,7 +2031,6 @@ class RegressionFindings(Base):
         self.assertTrue(row["ok"])
 
     def test_a_prompt_picked_for_a_book_beats_the_one_on_the_reader(self):
-        self.svc._store.set_setting("auto_suggest", False)
         record = self.svc._store.get_book(self.svc.open_book(self.mostly)["id"])
         self.svc._store.upsert_book({**record, "data": {**record["data"], "pbanki_prompt": "Self Help"}})
         self.assertEqual(self.svc.book(self.mostly)["options"]["prompt"], "Self Help")
@@ -2053,7 +2042,6 @@ class RegressionFindings(Base):
             self.svc.choose_prompt(self.mostly, "Nothing Called This")
 
     def test_a_picked_prompt_that_was_deleted_falls_back(self):
-        self.svc._store.set_setting("auto_suggest", False)
         record = self.svc._store.get_book(self.svc.open_book(self.mostly)["id"])
         self.svc._store.upsert_book({**record, "data": {**record["data"], "pbanki_prompt": "Standard"}})
         self.svc.choose_prompt(self.mostly, "Self Help")
@@ -2065,7 +2053,8 @@ class RegressionFindings(Base):
             settings = self.svc.state()["settings"]
             self.assertEqual(settings["model"], "gpt-6.1-sol")
             self.assertEqual(settings["meta_model"], "gpt-6.1-sol")
-            self.assertTrue(self.svc.open_book(self.pride)["auto_started"])
+            self.svc.open_book(self.pride)
+            self.svc.run(self.pride, "start")
             self.wait_run(self.pride)
 
     def test_models_stay_when_no_assistant_is_there(self):
@@ -2083,7 +2072,6 @@ class RegressionFindings(Base):
         self.assertEqual(caught.exception.sentence, companion.NOT_ON_READER)
 
     def test_the_ai_note_shows_only_when_the_choice_cant_be_honoured(self):
-        self.svc._store.set_setting("auto_suggest", False)
         book = self.svc.open_book(self.pride)
         self.assertEqual(book["aiNote"], "")
         self.unplug()
@@ -2094,7 +2082,6 @@ class RegressionFindings(Base):
         self.replug()
 
     def test_a_waiting_save_says_what_it_leaves_out(self):
-        self.svc._store.set_setting("auto_suggest", False)
         book = self.svc.open_book(self.pride)
         hid = book["highlights"][0]["id"]
         self.svc.open_highlight(self.pride, hid)
@@ -2115,7 +2102,6 @@ class RegressionFindings(Base):
         self.replug()
 
     def test_need_link_goes_to_the_first_thing_lacking(self):
-        self.svc._store.set_setting("auto_suggest", False)
         book = self.svc.open_book(self.pride)
         hid = book["highlights"][0]["id"]
         self.svc.open_highlight(self.pride, hid)

@@ -140,7 +140,7 @@ _EDIT_FIELDS = {"front": str, "back": str}
 _SAVE_FIELDS = {"mark_connection_sources": bool}
 _PROMPT_FILE_FIELDS = {"name": str, "file": str}
 _SETTINGS_FIELDS = {
-    "mount": str, "auto_suggest": bool, "assistants": dict, "model": str, "meta_model": str, "companion_send": str,
+    "mount": str, "assistants": dict, "model": str, "meta_model": str, "companion_send": str,
     "sees": str, "kind": str, "count": int, "last_prompt": str, "suggest_connections": bool, "suggest_ideas": bool,
     "mark_connection_sources": bool,
 }

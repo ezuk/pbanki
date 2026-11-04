@@ -124,7 +124,6 @@ function ok(value, message) {
 }
 
 await startServer();
-await call("PATCH", "/api/settings", { auto_suggest: false });
 const browser = await chromium.launch({ headless: true });
 const listed = (await call("GET", "/api/books")).data.books;
 const idOf = (pattern) => listed.find((row) => pattern.test(row.title)).id;
@@ -593,6 +592,27 @@ check("Suggest again can be left, and comes back to the finished run", async () 
   await page.goBack();
   await button(page, "Review highlights").waitFor();
   ok(book.highlights.length > 0, "The book has highlights");
+});
+
+check("A finished run gives way to the options while highlights are waiting", async () => {
+  let id = null;
+  for (const row of listed.filter((item) => !item.none)) {
+    const opened = await call("POST", `/api/books/${row.id}/open`);
+    if (opened.data?.suggest?.due > 0) {
+      id = row.id;
+      break;
+    }
+  }
+  ok(id, "A book has highlights waiting");
+  await call("POST", `/api/books/${id}/run`, { action: "start", options: { highlights: false, connections: true, ideas: false } });
+  await until(async () => (await call("GET", `/api/books/${id}`)).data.run.phase === "done", "The run ends", 30000);
+  ok((await call("GET", `/api/books/${id}`)).data.suggest.due > 0, "Highlights are still waiting");
+  const page = await fresh(`#/book/${id}/suggest`);
+  await page.locator(".opt", { hasText: "AI reads" }).waitFor();
+  await button(page, "Back to the last run").click();
+  await button(page, "Review highlights").waitFor();
+  await button(page, "Suggest again").click();
+  await page.locator(".opt", { hasText: "AI reads" }).waitFor();
 });
 
 check("Key ideas can be started on a finished book, and don't claim nothing's left before looking", async () => {
