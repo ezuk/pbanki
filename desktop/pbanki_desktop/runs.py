@@ -46,7 +46,7 @@ SCOPE_ALL = "all"
 _COVERED = "Your existing cards already cover this highlight, so no new card was written. Suggest cards again to ask for one anyway."
 
 CARD_KINDS = ("qa", "cloze", "qonly")
-_OPTION_KEYS = ("count", "kind", "model", "prompt", "sees", "companion", "hint", "highlights", "connections", "meta_model", "ideas")
+_OPTION_KEYS = ("count", "kind", "model", "prompt", "sees", "companion", "hint", "focus", "highlights", "connections", "meta_model", "ideas")
 
 # In a run's progress: percent_finished when key ideas last ran, kept from run to run
 IDEAS_LOOKED = "ideas_looked"
@@ -675,6 +675,7 @@ class Runner:
             "existing": self.store.existing_cards(book_id, hid),
             "rejected": self.store.rejected_cards(book_id, hid),
             "guidance": options.get("hint") or None,
+            "focus": options.get("focus") or None,
         }
         collection = clashes.closest(self.store.collection_notes(), " ".join((h["text"], h.get("note") or "")))
         if collection:
@@ -846,7 +847,7 @@ class Runner:
             return False
         if self.store.list_cards(book_id, h["hid"], (DRAFT,)):
             return False
-        return not self.store.rejected_cards(book_id, h["hid"])
+        return bool(state and state.get("redo")) or not self.store.rejected_cards(book_id, h["hid"])
 
     def _mount(self):
         return self._mount_override or self.store.get_settings()["mount"]

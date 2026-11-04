@@ -42,9 +42,9 @@ export function PickBook() {
   }
 
   return html`
-    <${Top} />
+    <${Top}><button class="lnk" onClick=${() => go("#/start")}>Back</button><//>
     <div class="center centertop"><div class="wide">
-      <div><h1 class="h1">Pick a book</h1><p class="lede" style="margin-top:6px">From your KOReader history, most recent first. <button class="lnk" onClick=${() => go("#/clashes")}>Find clashes in your cards</button></p></div>
+      <div><h1 class="h1">Pick a book</h1><p class="lede" style="margin-top:6px">From your KOReader history, most recent first.</p></div>
       ${list}
     </div></div>
   `;

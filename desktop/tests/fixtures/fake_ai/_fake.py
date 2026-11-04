@@ -155,7 +155,18 @@ def believable_reply(prompt):
     return {"front": "Put another way, what does the passage ask you to do?", "back": "Act on it today, in a small way."}
 
 
+def clash_reply(prompt):
+    """Flags each new card naming Zanzibar against the first existing card that does."""
+    existing = re.search(r"^E(-?\d+)\. Q: .*Zanzibar", prompt, re.M)
+    new = re.findall(r"^N(\d+)\. Q: .*Zanzibar", prompt, re.M)
+    if not existing:
+        return {"clashes": []}
+    return {"clashes": [{"new": int(n), "other": f"E{existing.group(1)}", "p": 0.95, "why": "Both ask about Zanzibar."} for n in new]}
+
+
 def valid_reply(prompt, mode="valid"):
+    if "Existing cards:" in prompt and "New cards:" in prompt:
+        return clash_reply(prompt)
     if mode == "believable":
         return believable_reply(prompt)
     if mode == "no_connections" and '{"connections":' in prompt:

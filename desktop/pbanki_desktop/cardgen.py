@@ -134,6 +134,13 @@ _QUESTIONS_ONLY_INSTRUCTION = (
 )
 
 
+_FOCUS_INSTRUCTION = (
+    "Every card must ask specifically about what these words say, even if the highlight's main point is something else. "
+    "Keep their wording: use the same terms and phrasing in the card instead of paraphrasing them. "
+    "Use the highlight and passage only to understand them. This overrides any instruction above about what to pick."
+)
+
+
 def questions_only(request):
     """Whether `request` asks for questions without answers."""
     return request.get("questions_only") is True and request_kind(request) == "questions"
@@ -220,6 +227,9 @@ def build_messages(h, request, companion=None, position_note=None):
     if request.get("guidance"):
         parts.append(_tagged("reader_request", request["guidance"], "The reader asked for these cards:")
                      + "\nFollow it, within the rules above.")
+    if request.get("focus"):
+        parts.append(_tagged("reader_selection", request["focus"], "The reader selected these exact words in the book:")
+                     + "\n" + _FOCUS_INSTRUCTION)
     if questions_only(request):
         parts.append(_QUESTIONS_ONLY_INSTRUCTION)
     if not _is_set(request.get("definition")):
@@ -479,11 +489,12 @@ def parse_reply(text, request, h, decode=json.loads):
     cards, err = parse_cards(text, None, decode)
     if not cards:
         return None, err
-    source = " ".join([h.get("before") or "", h.get("text") or "", h.get("after") or ""])
+    focus = request.get("focus")
+    source = " ".join([h.get("before") or "", h.get("text") or "", h.get("after") or "", focus or ""])
     kept = []
     for card in cards:
         if is_cloze(card["front"]) and quotes_text(card["front"], source):
-            card["front"] = expand_cloze(card["front"], h.get("text") or "")
+            card["front"] = expand_cloze(card["front"], focus or h.get("text") or "")
             kept.append(card)
         if limit is not None and len(kept) >= limit:
             break

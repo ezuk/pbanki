@@ -86,7 +86,7 @@ export function ReaderCheck() {
       </div>
       <div class="rowg" style="margin-top:12px">
         ${reader.ready
-          ? html`<button class="btn pri" onClick=${() => go("#/books")}>Show my books</button>`
+          ? html`<button class="btn pri" onClick=${() => go("#/start")}>Continue</button>`
           : html`<button class="btn pri" onClick=${checkAgain}>Check again</button>`}
       </div>
     </div></div>

@@ -77,7 +77,7 @@ _REMEMBERED = {
 }
 
 _RUN_KEYS = ("count", "kind", "model", "prompt", "sees", "companion", "hint", "highlights", "connections", "meta_model", "ideas", "fresh")
-_SUGGEST_KEYS = ("count", "kind", "model", "prompt", "sees", "companion", "hint")
+_SUGGEST_KEYS = ("count", "kind", "model", "prompt", "sees", "companion", "hint", "focus")
 _SETTING_KEYS = (
     "mount", "assistants", "model", "meta_model", "companion_send", "sees", "kind", "count",
     "last_prompt", "suggest_connections", "suggest_ideas", "mark_connection_sources",
@@ -330,6 +330,38 @@ def _passage_fields(h):
     }
 
 
+def _clash_is_stale(found, fronts):
+    # Whether the question it clashed with is gone. `fronts` of None doesn't look.
+    return fronts is not None and bool(found["other_front"]) and found["other_front"] not in fronts
+
+
+def _row_record(path):
+    # "/api/cards/7" to "card:7"
+    base, record_id = path.split("/")[-2:]
+    return f"{base.removesuffix('s')}:{record_id}"
+
+
+def _companion_copy(found):
+    """Where a Companion from companion.find() is, with its size and date."""
+    if not found["found"]:
+        return None
+    if found["cached"]:
+        where = "Copied from the reader to this computer"
+    elif found["where"] == "reader":
+        where = "On the reader, with a copy on this computer"
+    else:
+        where = "On this computer"
+    try:
+        info = os.stat(found["path"])
+    except OSError:
+        return {"where": where, "size": "", "date": ""}
+    return {
+        "where": where,
+        "size": f"{round(info.st_size / 1024)} KB",
+        "date": time.strftime("%b %-d", time.localtime(info.st_mtime)),
+    }
+
+
 def _where_long(h):
     page = h.get("page")
     chapter = h.get("chapter_card") or h.get("chapter") or ""
@@ -527,6 +559,8 @@ class Service:
                 self._reader_appeared()
         elif not connected:
             self._hub.publish({"topic": READER, "type": "checked", "connected": False, "mount": str(mount)})
+        elif not self._is_saving() and any(not b["error"] for b in self._store.unverified_batches()):
+            self._finish_saves()
 
     def _reader_appeared(self):
         self._finish_saves()
@@ -654,6 +688,7 @@ class Service:
             },
             "skill": skill,
             "resume": self._resume_view(current),
+            "can_work_unplugged": self._can_work_unplugged(),
             "pending_saves": self._pending_saves_view(),
         }
 
@@ -668,6 +703,15 @@ class Service:
             "dir": _tilde(paths.prompts_dir()),
             "reloadAgo": self._prompt_watcher.seconds_since_reload(),
         }
+
+    def _can_work_unplugged(self):
+        """Whether a book kept on this computer has work under way."""
+        drafts = self._store.draft_counts()
+        return any(
+            (book["data"].get("highlights") and self._store.get_run(book["id"]))
+            or book["id"] in drafts or self._has_openable_work(book["id"])
+            for book in self._store.list_books()
+        )
 
     def _resume_view(self, current):
         drafts = self._store.draft_counts()
@@ -909,8 +953,8 @@ class Service:
 
     # Clashes
 
-    def _check_new_cards(self, book_id):
-        """Starts comparing the book's unchecked draft cards with the collection."""
+    def _check_new_cards(self, book_id, only=None):
+        """Starts comparing the book's unchecked draft cards, or just the records in `only`, with the collection."""
         try:
             if not self._store.collection_notes():
                 return
@@ -918,20 +962,94 @@ class Service:
             records = [(f"card:{card['id']}", card) for card in self._store.list_cards(book_id)]
             records += [(f"connection:{item['id']}", item) for item in self._store.list_connections(book_id)]
             records += [(f"idea:{item['id']}", item) for item in self._store.list_ideas(book_id)]
-            cards = [{"record": record, "question": item["front"], "front": clashes.plain(item["front"]), "back": item["back"]}
+            batch = [{"record": record, "question": clashes.card_key(item["front"], item["back"]),
+                      "front": clashes.plain(item["front"]), "back": item["back"]}
                      for record, item in records
-                     if item["front"].strip() and self._store.card_clash(record, item["front"]) is None]
-            self.clashes.check_new_cards(book_id, cards, on_done=lambda: self._publish_book(book_id, "clash_check"))
-        except ServiceError:
-            pass
+                     if item["front"].strip() and (only is None or record in only)]
+            # A clash with a card that was since edited or removed needs a new look
+            fronts = None if only is None else self._clash_fronts(card["front"] for card in batch)
+            cards, peers = [], []
+            for card in batch:
+                found = self._store.card_clash(card["record"], card["question"])
+                if found and _clash_is_stale(found, fronts):
+                    self._store.forget_card_clash(card["record"])
+                    found = None
+                (peers if found else cards).append(card)
+            self.clashes.check_new_cards(book_id, cards, on_done=lambda: self._publish_book(book_id, "clash_check"), peers=peers)
+        except ServiceError as e:
+            self.clashes.set_check_error(book_id, e.sentence)
         except Exception:
             _log.exception("New cards could not be checked")
 
-    def _clash_note(self, record, front):
-        found = self._store.card_clash(record, front)
+    def _clash_note(self, record, front, back):
+        found = self._store.card_clash(record, clashes.card_key(front, back))
         if not found or not found["other_front"]:
             return None
         return {"front": found["other_front"], "back": found["other_back"] or "", "why": found["why"] or ""}
+
+    def _clash_fronts(self, new_fronts):
+        # Every question a clash can still be about
+        return {*new_fronts, *(note["front"] for note in self._store.collection_notes())}
+
+    def _clash_check_view(self, book_id, preview):
+        """Marks the preview's editable rows with what the check found, and says where the check stands."""
+        unchecked, found = [], 0
+        rows = [row for group in preview["groups"] for row in group["rows"] if row.get("path") and row["front_raw"].strip()]
+        fronts = self._clash_fronts(clashes.plain(row["front_raw"]) for row in rows)
+        for row in rows:
+            record = _row_record(row["path"])
+            key = clashes.card_key(row["front_raw"], row["back_raw"])
+            stored = self._store.card_clash(record, key)
+            if stored is None or _clash_is_stale(stored, fronts):
+                row["unchecked"] = True
+                unchecked.append(key)
+                continue
+            row["clash"] = self._clash_note(record, row["front_raw"], row["back_raw"])
+            found += bool(row["clash"])
+        if not self._store.collection_notes():
+            state = "none"
+        elif self.clashes.checking(book_id):
+            state = "checking"
+        elif self.clashes.check_error(book_id):
+            state = "failed"
+        else:
+            state = "pending" if unchecked else "done"
+        return {"state": state, "found": found, "error": self.clashes.check_error(book_id) or "",
+                "total": len(self._store.collection_notes()), "key": "\n".join(unchecked)}
+
+    @_route
+    def save_check(self, book_id):
+        """Starts checking the cards about to be saved against the collection."""
+        preview = self._preview(_Context(self, self._book(book_id)))
+        only = {_row_record(row["path"]) for group in preview["groups"] for row in group["rows"] if row.get("path")}
+        self.clashes.set_check_error(book_id, None)
+        self._check_new_cards(book_id, only)
+        return {"checking": self.clashes.checking(book_id)}
+
+    @_route
+    def not_a_clash(self, book_id, path):
+        """Clears a new card's clash and remembers the answer for later checks."""
+        preview = self._preview(_Context(self, self._book(book_id)))
+        rows = [row for group in preview["groups"] for row in group["rows"] if row.get("path")]
+        row = next((item for item in rows if item["path"] == path), None)
+        if row is None:
+            raise ServiceError(404, "That card isn't in this save any more.")
+        record, key = _row_record(path), clashes.card_key(row["front_raw"], row["back_raw"])
+        found = self._store.card_clash(record, key)
+        if not found or not found["other_front"]:
+            return {"ok": True}
+        front = clashes.plain(row["front_raw"])
+        self.clashes.add_not_a_clash(front, row["back_raw"], found["other_front"], found["other_back"] or "")
+        with self._store.transaction():
+            self._store.set_card_clash(record, key)
+            # The other card, when it's new too
+            for other in rows:
+                other_record, other_key = _row_record(other["path"]), clashes.card_key(other["front_raw"], other["back_raw"])
+                stored = self._store.card_clash(other_record, other_key)
+                if stored and stored["other_front"] == front and clashes.plain(other["front_raw"]) == found["other_front"]:
+                    self._store.set_card_clash(other_record, other_key)
+        self._publish_book(book_id, "clash_check")
+        return {"ok": True}
 
     @_route
     def clashes_view(self):
@@ -1094,19 +1212,21 @@ class Service:
             "reader": self._reader_small(),
         }
 
+    def _not_asked_again(self, context):
+        # Highlights with removed suggestions, unless the reader wants new ones
+        cards = self._store.list_cards(context.book["id"], None, (store_module.REMOVED,))
+        return {card["hid"] for card in cards
+                if card["suggested"] is not None and not (context.states.get(card["hid"]) or {}).get("redo")}
+
     def _due_count(self, context):
         # Highlights a run would ask for: as Runner._due, from rows already read
-        book_id = context.book["id"]
-        rejected = {card["hid"] for card in self._store.list_cards(book_id, None, (store_module.REMOVED,))
-                    if card["suggested"] is not None}
+        rejected = self._not_asked_again(context)
         return sum(1 for h in context.highlights if h["status"] != "reviewed" and not context.is_skipped(h)
                    and not context.drafts.get(h["hid"]) and h["hid"] not in rejected)
 
     def _redo_count(self, context):
         # Highlights a fresh run would ask for, once it has cleared the suggestions not opened
-        book_id = context.book["id"]
-        rejected = {card["hid"] for card in self._store.list_cards(book_id, None, (store_module.REMOVED,))
-                    if card["suggested"] is not None}
+        rejected = self._not_asked_again(context)
         total = 0
         for h in context.highlights:
             if h["status"] == "reviewed" or context.is_skipped(h) or h["hid"] in rejected:
@@ -1197,7 +1317,7 @@ class Service:
             "later": later if have else "",
             "cards": [
                 {**_card_view(card, warn, context.jobs.get(f"card:{card['id']}")),
-                 "clash": self._clash_note(f"card:{card['id']}", card["front"])}
+                 "clash": self._clash_note(f"card:{card['id']}", card["front"], card["back"])}
                 for card, warn in zip(drafts, warnings)
             ],
             "saved": saved,
@@ -1301,7 +1421,7 @@ class Service:
             "sources": sources,
             "chapters": chapters,
             "srcCount": src_count,
-            "clash": self._clash_note(f"connection:{item['id']}", item["front"]),
+            "clash": self._clash_note(f"connection:{item['id']}", item["front"], item["back"]),
             "meta": " · ".join(part for part in (chapters, src_count, "" if item["opened"] else "Not opened") if part),
         }
 
@@ -1318,7 +1438,7 @@ class Service:
             "back": item["back"],
             "opened": item["opened"],
             "state": item["state"],
-            "clash": self._clash_note(f"idea:{item['id']}", item["front"]),
+            "clash": self._clash_note(f"idea:{item['id']}", item["front"], item["back"]),
             "meta": " · ".join(part for part in (item["chapter"], "" if item["opened"] else "Not opened") if part),
         }
 
@@ -1447,6 +1567,7 @@ class Service:
             }.get(stage, ""),
             "stage": "have" if have else stage if stage in ("running", "found") else "none",
             "status": status,
+            "copy": _companion_copy(found),
             "where": found["where"],
             "label": found["label"],
             "path": found["path"],
@@ -1593,6 +1714,19 @@ class Service:
             raise ServiceError(409, "This highlight is already reviewed.")
         self._store.set_skipped(book_id, hid, skipped)
         self._publish_book(book_id, "skipped", hid=hid, skipped=skipped)
+        return self._highlight_response(book_id, hid)
+
+    @_route
+    def redo_highlight(self, book_id, hid, redo=True):
+        """Keeps a highlight whose cards were all removed to do, with new suggestions next time."""
+        context = _Context(self, self._book(book_id))
+        h = self._highlight_in(context, hid)
+        if not isinstance(redo, bool):
+            raise ServiceError(400, "Redo has to be on or off.")
+        if h["status"] == "reviewed":
+            raise ServiceError(409, "This highlight is already reviewed.")
+        self._store.set_redo(book_id, hid, redo)
+        self._publish_book(book_id, "redo", hid=hid, redo=redo)
         return self._highlight_response(book_id, hid)
 
     @_route
@@ -1908,6 +2042,23 @@ class Service:
         self._publish_book(item["book_id"], "connection", connection_id=connection_id, change="removed")
         return self._connection_response(item)
 
+    @_route
+    def later_connection(self, connection_id):
+        """Leaves a connection out of the next save, and keeps it."""
+        self._connection(connection_id)
+        self._store.open_connection(connection_id, False)
+        item = self._connection(connection_id)
+        self._publish_book(item["book_id"], "connection", connection_id=connection_id, change="later")
+        return self._connection_response(item)
+
+    @_route
+    def restore_connection(self, connection_id):
+        self._connection(connection_id)
+        self._store.restore_connection(connection_id)
+        item = self._connection(connection_id)
+        self._publish_book(item["book_id"], "connection", connection_id=connection_id, change="restored")
+        return self._connection_response(item)
+
     # Key ideas
 
     def _idea_response(self, item):
@@ -1939,6 +2090,23 @@ class Service:
         self._store.remove_idea(idea_id)
         item = self._idea(idea_id)
         self._publish_book(item["book_id"], "idea", idea_id=idea_id, change="removed")
+        return self._idea_response(item)
+
+    @_route
+    def later_idea(self, idea_id):
+        """Leaves a key idea out of the next save, and keeps it."""
+        self._idea(idea_id)
+        self._store.open_idea(idea_id, False)
+        item = self._idea(idea_id)
+        self._publish_book(item["book_id"], "idea", idea_id=idea_id, change="later")
+        return self._idea_response(item)
+
+    @_route
+    def restore_idea(self, idea_id):
+        self._idea(idea_id)
+        self._store.restore_idea(idea_id)
+        item = self._idea(idea_id)
+        self._publish_book(item["book_id"], "idea", idea_id=idea_id, change="restored")
         return self._idea_response(item)
 
     # Save
@@ -2040,8 +2208,10 @@ class Service:
             need_link = {"screen": "connections", "id": fresh["need_connections"][0]}
         elif fresh["need_ideas"]:
             need_link = {"screen": "ideas", "id": fresh["need_ideas"][0]}
+        clash_check = self._clash_check_view(book_id, preview)
         return {
             **preview,
+            "clashCheck": clash_check,
             "markMeta": bool(mark),
             "saveCount": preview["count"],
             "heldCount": held_count,
@@ -2328,6 +2498,15 @@ class Service:
     def _companion_response(self, book_id):
         book = self._book(book_id)
         return {"companion": self._companion_view(book)}
+
+    @_route
+    def companion_open(self, book_id):
+        """Opens this book's Companion in the text editor."""
+        book = self._book(book_id)
+        found = self._find_companion(book)
+        if not found["found"] or not self._launch(["open", "-t", found["path"]]):
+            raise ServiceError(500, "That Book Companion couldn't be opened.")
+        return self._companion_response(book_id)
 
     @_route
     def companion_create(self, book_id):

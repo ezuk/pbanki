@@ -6,9 +6,11 @@ body that isn't JSON, are refused before anything else runs.
 """
 
 import errno
+import hashlib
 import html
 import json
 import logging
+import os
 import re
 import select
 import socket
@@ -29,6 +31,8 @@ HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 PORT_TRIES = 10
 WEB_ROOT = paths.desktop_root() / "web"
+LIVE_VERSION_PATH = "/__live/version"
+LIVE_RELOAD_TAG = b'<script defer src="js/live-reload.js"></script>'
 
 MAX_BODY = 1024 * 1024
 MAX_DRAIN = 16 * 1024 * 1024
@@ -134,7 +138,7 @@ _RUN_OPTIONS = {
     "count": int, "kind": str, "model": str, "prompt": str, "sees": str, "companion": str, "hint": str,
     "highlights": bool, "connections": bool, "meta_model": str, "ideas": bool, "fresh": bool,
 }
-_SUGGEST_FIELDS = {"count": int, "kind": str, "model": str, "prompt": str, "sees": str, "companion": str, "hint": str}
+_SUGGEST_FIELDS = {"count": int, "kind": str, "model": str, "prompt": str, "sees": str, "companion": str, "hint": str, "focus": str}
 _FIND_FIELDS = {"chapters": list, "scope": str, "count": int, "model": str, "prompt": str, "hint": str}
 _EDIT_FIELDS = {"front": str, "back": str}
 _SAVE_FIELDS = {"mark_connection_sources": bool}
@@ -176,6 +180,8 @@ _ROUTES = (
     ("POST", "/api/books/*/prompt", {"prompt": str}, _call_choose_prompt),
     ("POST", "/api/books/*/run", _RUN_FIELDS, _call_run),
     ("POST", "/api/books/*/highlights/*/open", {}, lambda s, r: s.open_highlight(*r.args)),
+    ("POST", "/api/books/*/highlights/*/redo", {"redo": bool},
+     lambda s, r: s.redo_highlight(*r.args, r.body.get("redo", True))),
     ("POST", "/api/books/*/highlights/*/skip", {"skipped": bool},
      lambda s, r: s.skip_highlight(*r.args, r.body.get("skipped", True))),
     ("POST", "/api/books/*/highlights/*/cards", {"kind": str}, lambda s, r: s.add_card(*r.args, r.body.get("kind", "qa"))),
@@ -190,15 +196,21 @@ _ROUTES = (
      lambda s, r: s.rewrite_card(*r.args, r.body.get("instruction"), r.body.get("model"))),
     ("POST", "/api/books/*/connections/find", _FIND_FIELDS, lambda s, r: s.find_connections(*r.args, r.body)),
     ("POST", "/api/connections/*/open", {}, lambda s, r: s.open_connection(*r.args)),
+    ("POST", "/api/connections/*/later", {}, lambda s, r: s.later_connection(*r.args)),
+    ("POST", "/api/connections/*/restore", {}, lambda s, r: s.restore_connection(*r.args)),
     ("PATCH", "/api/connections/*", _EDIT_FIELDS,
      lambda s, r: s.update_connection(*r.args, r.body.get("front"), r.body.get("back"))),
     ("DELETE", "/api/connections/*", {}, lambda s, r: s.remove_connection(*r.args)),
     ("POST", "/api/ideas/*/open", {}, lambda s, r: s.open_idea(*r.args)),
+    ("POST", "/api/ideas/*/later", {}, lambda s, r: s.later_idea(*r.args)),
+    ("POST", "/api/ideas/*/restore", {}, lambda s, r: s.restore_idea(*r.args)),
     ("PATCH", "/api/ideas/*", _EDIT_FIELDS, lambda s, r: s.update_idea(*r.args, r.body.get("front"), r.body.get("back"))),
     ("DELETE", "/api/ideas/*", {}, lambda s, r: s.remove_idea(*r.args)),
     ("GET", "/api/books/*/save", {},
      lambda s, r: s.save_preview(*r.args, _query_bool(r.query, "mark_connection_sources"))),
     ("POST", "/api/books/*/save", _SAVE_FIELDS, lambda s, r: s.save_book(*r.args, r.body.get("mark_connection_sources"))),
+    ("POST", "/api/books/*/save/not-a-clash", {"path": str}, lambda s, r: s.not_a_clash(*r.args, r.body.get("path"))),
+    ("POST", "/api/books/*/save/check", {}, lambda s, r: s.save_check(*r.args)),
     ("POST", "/api/books/*/save/retry", {}, lambda s, r: s.save_retry(*r.args)),
     ("POST", "/api/reader/eject", {}, lambda s, r: s.reader_eject()),
     ("POST", "/api/reader/plugin/update", {}, lambda s, r: s.reader_plugin_update()),
@@ -211,6 +223,7 @@ _ROUTES = (
     ("GET", "/api/prompts/*", {}, lambda s, r: s.prompt(*r.args)),
     ("POST", "/api/prompts/open", _PROMPT_FILE_FIELDS, _call_prompt_file("open_prompt")),
     ("POST", "/api/prompts/reveal", _PROMPT_FILE_FIELDS, _call_prompt_file("reveal_prompt")),
+    ("POST", "/api/books/*/companion/open", {}, lambda s, r: s.companion_open(*r.args)),
     ("POST", "/api/books/*/companion/create", {}, lambda s, r: s.companion_create(*r.args)),
     ("POST", "/api/books/*/companion/copy", {}, lambda s, r: s.companion_copy(*r.args)),
     ("POST", "/api/books/*/companion/keep", {}, lambda s, r: s.companion_keep(*r.args)),
@@ -364,7 +377,9 @@ class Handler(BaseHTTPRequestHandler):
         raw, _, query = self.path.partition("?")
         if not raw.startswith("/"):
             raise _Refused(400, _BAD_REQUEST, close=True)
-        if raw == "/api" or raw.startswith("/api/"):
+        if raw == LIVE_VERSION_PATH and self.server.live_reload:
+            self._send_json(200, self.server.live_version())
+        elif raw == "/api" or raw.startswith("/api/"):
             self._answer_api(raw, query, length)
         else:
             self._answer_static(raw, length)
@@ -528,6 +543,8 @@ class Handler(BaseHTTPRequestHandler):
             data = file.read_bytes()
         except OSError:
             raise _Refused(404, _NO_SUCH_ADDRESS) from None
+        if self.server.live_reload and raw == "/":
+            data = data.replace(b"</body>", LIVE_RELOAD_TAG + b"</body>")
         self._send(200, data, CONTENT_TYPES.get(file.suffix.lower(), "application/octet-stream"))
 
     def _send_missing_page(self, sentence):
@@ -558,6 +575,10 @@ def _refuse_constant(name):
     raise ValueError(name)
 
 
+def _digest(values):
+    return hashlib.sha1(repr(values).encode("utf-8")).hexdigest()[:16]
+
+
 class Server(ThreadingHTTPServer):
     """The HTTP server and the Service behind it, started and stopped together."""
 
@@ -569,6 +590,8 @@ class Server(ThreadingHTTPServer):
         self.web_root = Path(web_root) if web_root is not None else WEB_ROOT
         self.heartbeat = heartbeat
         self.closing = threading.Event()
+        self.live_reload = bool(os.environ.get("PBANKI_LIVE_RELOAD"))
+        self._started_at = time.time_ns()
         self._open = {}
         self._open_lock = threading.Lock()
         self._serving = None
@@ -604,6 +627,20 @@ class Server(ThreadingHTTPServer):
         self.server_close()
         self._finish_requests(wait, waiting)
         self.service.stop()
+
+    def live_version(self):
+        """Values that change when the styles, or anything else the page depends on, change."""
+        page = [self._started_at]
+        styles = []
+        for file in sorted(self.web_root.rglob("*")):
+            if file.suffix not in (".html", ".js", ".css"):
+                continue
+            try:
+                info = file.stat()
+            except OSError:
+                continue
+            (styles if file.suffix == ".css" else page).append((str(file), info.st_mtime_ns, info.st_size))
+        return {"page": _digest(page), "styles": _digest(styles)}
 
     def open_connections(self):
         with self._open_lock:

@@ -69,6 +69,8 @@ function ownStream({ open, lost, message }) {
 
 // Opens the event stream and keeps it open, shared between tabs where the browser can.
 // `onOpen` gets true if this follows a lost connection.
+const WORKER_GRACE_MS = 3000;
+
 export function listen({ onEvent, onOpen, onLost }) {
   let wasLost = false;
   const open = () => {
@@ -100,10 +102,29 @@ export function listen({ onEvent, onOpen, onLost }) {
   worker.onerror = () => {
     close = own();
   };
+  // A worker that can't reach a server the page can reach gives way to a stream of this page's own
+  let lostTimer = null;
+  const checkWorker = async () => {
+    lostTimer = null;
+    const answering = await fetch("/api/state").then((response) => response.ok, () => false);
+    if (!wasLost) return;
+    if (!answering) {
+      lostTimer = setTimeout(checkWorker, WORKER_GRACE_MS);
+      return;
+    }
+    worker.port.onmessage = null;
+    worker.port.close();
+    close = own();
+  };
   worker.port.onmessage = ({ data }) => {
-    if (data.type === "open") open();
-    else if (data.type === "lost") lost();
-    else if (data.type === "event") message(data.data);
+    if (data.type === "open") {
+      clearTimeout(lostTimer);
+      lostTimer = null;
+      open();
+    } else if (data.type === "lost") {
+      lost();
+      lostTimer = lostTimer || setTimeout(checkWorker, WORKER_GRACE_MS);
+    } else if (data.type === "event") message(data.data);
     else if (data.type === "unavailable") close = own();
   };
   return () => close();

@@ -4,6 +4,15 @@ import { useEffect, useState } from "../../vendor/preact-htm.js";
 import { store, mutate, useEvent } from "../store.js";
 import { html } from "../ui.js";
 
+// The text selected inside the passage, or "".
+export function selectedPassageText() {
+  const selection = window.getSelection();
+  const node = selection && selection.anchorNode;
+  const el = node && (node.nodeType === 1 ? node : node.parentElement);
+  if (!el || !el.closest || !el.closest(".pass")) return "";
+  return selection.toString().trim().replace(/\s+/g, " ");
+}
+
 // 1 to 3 words selected inside the passage, or "".
 function selectedTerm() {
   const selection = window.getSelection();

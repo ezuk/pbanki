@@ -1,6 +1,6 @@
 // Settings drawer.
 
-import { html, Drawer, Field, ReaderChip, Select } from "../ui.js";
+import { html, CompanionCopy, Drawer, Field, ReaderChip, Select } from "../ui.js";
 import { useStore, saveSettings, saveMount } from "../store.js";
 
 const SettingSelect = ({ label, value, options, name }) => html`<div class="setrow">
@@ -40,7 +40,7 @@ export function SettingsDrawer() {
     </div>
     <div class="setg">
       <div class="setgt">Book Companion</div>
-      ${openBook && html`<div class="setrow"><span>This book</span><span class="assts">${openBook.companion.status}</span></div>`}
+      ${openBook && html`<div class="assts">${openBook.companion.copy ? html`<${CompanionCopy} book=${openBook} />` : openBook.companion.status}</div>`}
       <${SettingSelect} label="What the AI reads per highlight" name="companion_send" value=${settings.companion_send} options=${state.comp_opts} />
       <div class="setn">Overview + chapter keeps each request small. Connections and key ideas always read the whole Companion.</div>
       <div class="fl">

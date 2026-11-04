@@ -41,6 +41,8 @@ SHORTLIST = 25
 _MIN_SHARED_WORDS = 1
 
 IMPORT_FILE = "clash-import.json"
+NOT_A_CLASH_SETTING = "clash_not_a_clash"
+NOT_A_CLASH_KEPT = 200
 
 _BREAK = re.compile(r"<br\s*/?>|</div>|</p>", re.I)
 _TAG = re.compile(r"<[^>]+>")
@@ -193,6 +195,11 @@ def build_check(pairs, examples):
             {"role": "user", "content": body}]
 
 
+def card_key(front, back):
+    """What a check of a new card holds for: changing either side asks for a new check."""
+    return f"{front}\n\n{back}"
+
+
 def build_new_cards(cards, notes, examples):
     """Messages comparing new cards with the collection."""
     calibration = _examples_text(examples, "This learner's own past verdicts, to calibrate you:")
@@ -276,6 +283,8 @@ def parse_new_cards(text, cards, notes_by_id):
         position = number - 1
         if position not in found or score > found[position]["score"]:
             found[position] = {"front": match["front"], "back": match["back"], "why": _text(item.get("why")), "score": score}
+            if match.get("record"):
+                found[position]["record"] = match["record"]
     return found
 
 
@@ -316,6 +325,7 @@ class Finder:
         self._error = None
         self._closed = False
         self._checks = {}
+        self._check_errors = {}
 
     def _ask(self, messages, token):
         if token.cancelled:
@@ -423,10 +433,23 @@ class Finder:
         decided = {state: [] for state in (REAL, NOT_A_CLASH)}
         for pair in self.store.clash_pairs((REAL, NOT_A_CLASH)):
             decided[pair["state"]].append(pair)
+        decided[NOT_A_CLASH].extend(self.store.get_setting(NOT_A_CLASH_SETTING, []))
         for state, pairs in decided.items():
             pairs.sort(key=lambda pair: pair["decided_at"] or 0, reverse=True)
             decided[state] = pairs[:EXAMPLES_OF_EACH]
         return decided
+
+    def add_not_a_clash(self, front_a, back_a, front_b, back_b):
+        """Remembers the user's answer about a new card, as an example for later checks and searches."""
+        kept = self.store.get_setting(NOT_A_CLASH_SETTING, [])
+        kept.append({"front_a": front_a, "back_a": back_a, "front_b": front_b, "back_b": back_b,
+                     "state": NOT_A_CLASH, "decided_at": self._now()})
+        self.store.set_setting(NOT_A_CLASH_SETTING, kept[-NOT_A_CLASH_KEPT:])
+
+    def _rejected(self):
+        # Question pairs the user said don't clash, both ways round
+        kept = self.store.get_setting(NOT_A_CLASH_SETTING, [])
+        return {pair for item in kept for pair in ((item["front_a"], item["front_b"]), (item["front_b"], item["front_a"]))}
 
     # Searching
 
@@ -550,9 +573,25 @@ class Finder:
         """The existing cards closest to a highlight, for the AI writing new ones."""
         return [{"front": note["front"], "back": note["back"]} for note in closest(self.store.collection_notes(), text)]
 
-    def check_new_cards(self, book_id, cards, on_done=None):
-        """Compares `cards` ({record, question, front, back}) with the collection in the background. A check
-        already running for this book picks them up when it ends."""
+    def checking(self, book_id):
+        with self._lock:
+            return book_id in self._checks
+
+    def check_error(self, book_id):
+        with self._lock:
+            return self._check_errors.get(book_id)
+
+    def set_check_error(self, book_id, sentence):
+        with self._lock:
+            if sentence:
+                self._check_errors[book_id] = sentence
+            else:
+                self._check_errors.pop(book_id, None)
+
+    def check_new_cards(self, book_id, cards, on_done=None, peers=()):
+        """Compares `cards` ({record, question, front, back}) with the collection, each other and `peers`
+        (other new cards, already checked) in the background. A check already running for this book picks
+        them up when it ends."""
         if not cards or not self.store.collection_notes():
             return
         with self._lock:
@@ -562,9 +601,10 @@ class Finder:
             if current is not None:
                 current["again"] = True
                 current["again_cards"] = cards
+                current["peers"] = peers
                 current["on_done"] = on_done
                 return
-            job = {"token": ai.CancelToken(), "again": False, "again_cards": None, "on_done": on_done}
+            job = {"token": ai.CancelToken(), "again": False, "again_cards": None, "on_done": on_done, "peers": peers}
             job["thread"] = threading.Thread(target=self._run_card_check, args=(book_id, cards, job), name="pbanki-card-check", daemon=True)
             self._checks[book_id] = job
         job["thread"].start()
@@ -572,7 +612,7 @@ class Finder:
     def _run_card_check(self, book_id, cards, job):
         try:
             while True:
-                self._check_cards(cards, job["token"])
+                self._check_cards(cards, job["token"], job["peers"])
                 with self._lock:
                     if not job["again"]:
                         self._checks.pop(book_id, None)
@@ -588,23 +628,50 @@ class Finder:
             _log.warning("could not check new cards: %s", e)
             with self._lock:
                 self._checks.pop(book_id, None)
+                self._check_errors[book_id] = str(e)
+            if job["on_done"] is not None:
+                job["on_done"]()
         except Exception:
             _log.exception("Checking new cards failed")
             with self._lock:
                 self._checks.pop(book_id, None)
+                self._check_errors[book_id] = "The clash check didn't finish."
+            if job["on_done"] is not None:
+                job["on_done"]()
         else:
             if job["on_done"] is not None:
                 job["on_done"]()
         finally:
             self.store.close()
 
-    def _check_cards(self, cards, token):
-        notes = self.store.collection_notes()
-        by_id = {note["nid"]: note for note in notes}
+    def _check_cards(self, cards, token, peers=()):
+        collection = self.store.collection_notes()
         examples = self._examples()
+        rejected = self._rejected()
+        everyone = [*cards, *peers]
+        by_record = {card["record"]: card for card in everyone}
         for start in range(0, len(cards), NEW_CARDS_PER_CHECK):
             chunk = cards[start:start + NEW_CARDS_PER_CHECK]
+            asked = {card["record"] for card in chunk}
+            # New cards outside this request read as existing ones, under negative numbers
+            others = [card for card in everyone if card["record"] not in asked]
+            notes = [*collection, *({**card, "nid": -i} for i, card in enumerate(others, 1))]
+            by_id = {note["nid"]: note for note in notes}
             found = parse_new_cards(self._ask(build_new_cards(chunk, notes, examples), token), chunk, by_id)
+            found = {position: hit for position, hit in found.items() if (chunk[position]["front"], hit["front"]) not in rejected}
             with self.store.transaction():
                 for position, card in enumerate(chunk):
-                    self.store.set_card_clash(card["record"], card["question"], found.get(position))
+                    # A clash the other card found earlier in this check stands
+                    kept = self.store.card_clash(card["record"], card["question"])
+                    if position in found or not (kept and kept["other_front"]):
+                        self.store.set_card_clash(card["record"], card["question"], found.get(position))
+                # Both cards of a clash among new cards get flagged
+                for position, hit in found.items():
+                    other = by_record.get(hit.get("record"))
+                    if other is None:
+                        continue
+                    kept = self.store.card_clash(other["record"], other["question"])
+                    if not (kept and kept["other_front"]):
+                        card = chunk[position]
+                        self.store.set_card_clash(other["record"], other["question"],
+                                                  {"front": card["front"], "back": card["back"], "why": hit["why"], "score": hit["score"]})

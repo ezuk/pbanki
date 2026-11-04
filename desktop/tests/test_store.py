@@ -128,6 +128,7 @@ class HighlightTests(StoreCase):
                 "error": None,
                 "later_research": None,
                 "chapter_notes_seen": False,
+                "redo": False,
             },
         )
         self.store.set_opened(self.book_id, self.hid)

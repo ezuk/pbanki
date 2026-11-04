@@ -805,19 +805,39 @@ class Saving(Base):
         self.assertEqual(self.svc.reader_eject(), {"ejected": True, "ejectLabel": "Safe to unplug"})
         self.assertEqual(self.ejected, [str(self.mount)])
 
-    def test_preview_says_what_is_blocked_and_what_stays(self):
+    def test_preview_leaves_out_a_card_with_no_answer(self):
         view = self.opened()
         hid = self.first_hid(view)
+        self.svc.open_highlight(self.pride, hid)
         card = self.svc.add_card(self.pride, hid, "qonly")["card"]
         self.svc.update_card(card["id"], front="A question with no answer?")
         preview = self.svc.save_preview(self.pride)
         self.assertTrue(preview["saveBlocked"])
-        self.assertEqual(preview["needCount"], 1)
-        self.assertTrue(preview["needText"])
-        self.assertTrue(preview["leftText"])
+        self.assertEqual(preview["saveCount"], 0)
+        self.assertEqual(preview["needCount"], 0)
+        self.assertIn("1 card with no answer is not included.", preview["leftText"])
         self.assert_refused(409, lambda: self.svc.save_book(self.pride))
         self.svc.update_card(card["id"], back="The answer.")
         self.assertFalse(self.svc.save_preview(self.pride)["saveBlocked"])
+
+    def test_the_companion_says_where_it_is_and_opens(self):
+        view = self.opened(self.mostly)
+        copy = view["companion"]["copy"]
+        self.assertIn("reader", copy["where"])
+        self.assertTrue(copy["size"].endswith(" KB"))
+        self.assertTrue(copy["date"])
+        self.svc.companion_open(self.mostly)
+        self.assertEqual(self.launched[-1], ["open", "-t", view["companion"]["path"]])
+
+    def test_a_companion_that_wont_open_says_so(self):
+        self.opened(self.mostly)
+        svc = self.make_service(launch=lambda _args: False)
+        self.assert_refused(500, lambda: svc.companion_open(self.mostly), "couldn't be opened")
+
+    def test_a_book_with_no_companion_has_nothing_to_open(self):
+        view = self.opened()
+        self.assertIsNone(view["companion"]["copy"])
+        self.assert_refused(500, lambda: self.svc.companion_open(self.pride), "couldn't be opened")
 
     def test_mark_connection_sources_is_kept(self):
         self.opened()
@@ -1570,8 +1590,10 @@ class Findings(Base):
         self.assertEqual(self.svc.save_book(self.pending)["status"], "waiting")
         after = self.svc.save_preview(self.pending)
         self.assertTrue(after["saveWaiting"])
-        for field in ("saveCount", "saveNoun", "markText", "groups", "count", "noun", "mark_count"):
+        for field in ("saveCount", "saveNoun", "markText", "count", "noun", "mark_count"):
             self.assertEqual(after[field], before[field], field)
+        fronts = lambda view: [(row["front"], row["back"]) for group in view["groups"] for row in group["rows"]]
+        self.assertEqual(fronts(after), fronts(before))
         self.assertEqual(after["steps"][2]["title"], before["steps"][2]["title"])
         self.assertEqual(after["heldCount"], 1)
         self.assertTrue(after["saveBlocked"])
@@ -2123,10 +2145,9 @@ class RegressionFindings(Base):
         book = self.svc.open_book(self.pride)
         hid = book["highlights"][0]["id"]
         self.svc.open_highlight(self.pride, hid)
-        card = self.svc.add_card(self.pride, hid, "qa")["card"]
-        self.svc.update_card(card["id"], front="Question?")
+        card = self.svc.add_card(self.pride, hid, "cloze")["card"]
+        self.svc.update_card(card["id"], front="Nothing hidden here.")
         preview = self.svc.save_preview(self.pride)
         self.assertEqual(preview["needLink"], {"screen": "highlights", "id": hid})
         self.assertEqual(preview["needCount"], 1)
         self.assertTrue(preview["saveBlocked"])
-        self.assertTrue(self.svc.book(self.pride)["highlights"][0]["cards"][0]["need"])

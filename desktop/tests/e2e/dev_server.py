@@ -10,7 +10,8 @@ The address is printed once the app is up. `stop`, Ctrl-C or SIGTERM ends the ap
 temporary folder. `unplug` and `plug` rename the fake mount, which the app notices within 2 s.
 Details of a running copy are in the control file, <temp folder>/pbanki-dev-<port>.json.
 
-Nothing here touches a real reader, the real data folder, or the real claude, codex, Terminal or open.
+Nothing here touches a real reader, the real data folder, Terminal or open. The real claude and codex
+are only used with --real-ai.
 """
 
 import argparse
@@ -96,13 +97,18 @@ def serve(args):
     build_reader(mount, plugin=None if args.plugin == "none" else args.plugin, companion=not args.no_companion,
                  koreader=not args.no_koreader, pbanki=not args.no_pbanki, history=not args.no_history)
     make_assistant(root / "assistant")
-    (root / "home").mkdir()
+    if args.home:
+        (root / "home").symlink_to(Path(args.home).resolve(), target_is_directory=True)
+    else:
+        (root / "home").mkdir()
     if args.unplugged:
         mount.rename(mount.with_name(mount.name + ".unplugged"))
 
     command = [sys.executable, "-u", str(DESKTOP / "run.py"), "--no-open", "--port", str(args.port)]
-    child = subprocess.Popen(command, env=environment(root, mount, args), stdout=subprocess.PIPE, text=True,
-                             start_new_session=True)
+    env = environment(root, mount, args)
+    if args.real_ai:
+        del env["PBANKI_CLAUDE_BIN"], env["PBANKI_CODEX_BIN"]
+    child = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, text=True, start_new_session=True)
 
     def stop(_number=None, _frame=None):
         if child.poll() is None:
@@ -142,6 +148,8 @@ def main():
     parser.add_argument("--no-pbanki", action="store_true")
     parser.add_argument("--no-history", action="store_true")
     parser.add_argument("--unplugged", action="store_true", help="start with the reader unplugged")
+    parser.add_argument("--home", help="use this data folder and keep it, in place of an empty temporary one")
+    parser.add_argument("--real-ai", action="store_true", help="use the real claude and codex commands")
     parser.add_argument("--ai", default="believable", help="FAKE_AI_MODE, see fixtures/fake_ai/_fake.py")
     parser.add_argument("--ai-delay", type=float, default=0.3, help="seconds each fake AI call takes")
     parser.add_argument("--companion-seconds", type=float, default=5, help="seconds Create takes in the fake Terminal")

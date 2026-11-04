@@ -197,6 +197,9 @@ MIGRATIONS = [
             score REAL
         )""",
     ),
+    (
+        "ALTER TABLE highlight_state ADD COLUMN redo INTEGER NOT NULL DEFAULT 0",
+    ),
 ]
 
 _CLOZE = re.compile(r"\{\{c\d+::")
@@ -273,7 +276,7 @@ def _idea(row):
 
 def _highlight(row):
     item = dict(row)
-    for field in ("opened", "skipped", "chapter_notes_seen"):
+    for field in ("opened", "skipped", "chapter_notes_seen", "redo"):
         item[field] = bool(item[field])
     return item
 
@@ -475,6 +478,12 @@ class Store:
             "UPDATE highlight_state SET skipped = ? WHERE book_id = ? AND hid = ?", (int(skipped), book_id, hid)
         )
 
+    def set_redo(self, book_id, hid, redo=True):
+        """Marks a highlight whose suggestions were removed as wanting new ones, or not."""
+        self._set_highlight(
+            "UPDATE highlight_state SET redo = ?, opened = 0 WHERE book_id = ? AND hid = ?", (int(redo), book_id, hid)
+        )
+
     def set_highlight_error(self, book_id, hid, error):
         self._set_highlight(
             "UPDATE highlight_state SET error = ? WHERE book_id = ? AND hid = ?", (error, book_id, hid)
@@ -524,6 +533,8 @@ class Store:
                     now,
                 ),
             )
+            if suggested is not None:
+                self._write("UPDATE highlight_state SET redo = 0 WHERE book_id = ? AND hid = ?", (book_id, hid))
         return self.get_card(card_id)
 
     def clear_suggested_cards(self, book_id, hids):
@@ -1001,6 +1012,9 @@ class Store:
             "VALUES (?, ?, ?, ?, ?, ?)",
             (record, question, found.get("front"), found.get("back"), found.get("why"), found.get("score")),
         )
+
+    def forget_card_clash(self, record):
+        self._write("DELETE FROM card_clashes WHERE record = ?", (record,))
 
     def card_clash(self, record, question):
         """What was found for this record, while its question still reads the same, else None."""

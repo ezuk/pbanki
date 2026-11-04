@@ -95,7 +95,7 @@ function Card({ card, highlight, book }) {
     <div class="chd"><span class="ckind">${card.kindLabel}</span><span>${card.src}</span>
       <span class="chdr">
         <button class="lnk" onClick=${toggleRewrite}>Rewrite</button>
-        <button class="lnk" onClick=${() => setPanels(card.id, { prev: !open.prev })}>On the reader</button>
+        <button class="lnk" onClick=${() => setPanels(card.id, { prev: !open.prev })}>Preview</button>
         <button class="x" onClick=${remove} aria-label="Remove card">✕</button>
       </span>
     </div>

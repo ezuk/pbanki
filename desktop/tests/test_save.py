@@ -73,6 +73,14 @@ def highlight(key, text="Text", **fields):
     return {"key": key, "hid": store_module.hid_for(key), "text": text, **fields}
 
 
+EDITING_FIELDS = ("path", "cloze", "front_raw", "back_raw")
+
+
+def shown(groups):
+    """Preview groups without what the screen uses to edit a row."""
+    return [{**group, "rows": [{k: v for k, v in row.items() if k not in EDITING_FIELDS} for row in group["rows"]]} for group in groups]
+
+
 class SaveCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -135,15 +143,36 @@ class SaveCase(unittest.TestCase):
 
 
 class NothingToAnswerTests(SaveCase):
-    def test_a_question_with_no_answer_blocks_the_save(self):
+    def test_a_question_with_no_answer_stays_out_of_the_save(self):
         h = self.add_highlight("k1", cards=(("qa", "Why?", "  "),))
         p = save.preview(self.store, self.book, [h])
-        self.assertTrue(p["blocked"])
-        self.assertEqual(p["needs"], [h["hid"]])
-        self.assertEqual(p["need_text"], "1 question still needs an answer. Answer or remove before saving.")
-        self.assertEqual(p["groups"][0]["rows"][0]["needLabel"], "No answer yet")
-        with self.assertRaises(save.SaveBlocked):
+        self.assertEqual(p["count"], 0)
+        self.assertEqual(p["needs"], [])
+        self.assertEqual(p["need_text"], "")
+        self.assertEqual(p["groups"], [])
+        self.assertEqual(p["marked"]["with_cards"], [])
+        self.assertIn("1 card with no answer is not included.", p["left_text"])
+        with self.assertRaisesRegex(save.SaveBlocked, "no cards to save"):
             save.back_up(self.store, self.book, [h])
+
+    def test_unanswered_cards_dont_stop_answered_ones_being_saved(self):
+        partly = self.add_highlight("k1", cards=(("qonly", "Kept?", "Yes"), ("qonly", "Dropped?", "")))
+        none = self.add_highlight("k2", cards=(("qonly", "Unanswered?", ""),))
+        p = save.preview(self.store, self.book, [partly, none])
+        self.assertFalse(p["blocked"])
+        self.assertEqual(p["count"], 1)
+        self.assertEqual(p["marked"]["with_cards"], [partly["hid"]])
+        self.assertEqual([row["front"] for group in p["groups"] for row in group["rows"]], ["Kept?"])
+        self.assertIn("2 cards with no answer are not included.", p["left_text"])
+        result = save.save(self.store, self.book, [partly, none], self.mount)
+        self.assertEqual(result["summary"]["cards"], 1)
+        inbox = self.inbox.read_bytes()
+        self.assertIn(b"Kept?", inbox)
+        self.assertNotIn(b"Dropped?", inbox)
+        self.assertNotIn(b"Unanswered?", inbox)
+        # The other card of a finished highlight goes with it; an untouched highlight keeps its card
+        self.assertEqual(self.store.list_cards(self.book_id, partly["hid"]), [])
+        self.assertEqual([card["front"] for card in self.store.list_cards(self.book_id, none["hid"])], ["Unanswered?"])
 
     def test_a_cloze_hiding_nothing_blocks_the_save(self):
         for front in ("A plain sentence.", "Empty {{c1::  }} gap.", "{{{{c2::c1::Senten}}ce}} broken."):
@@ -166,17 +195,23 @@ class NothingToAnswerTests(SaveCase):
         h = self.add_highlight("k1", cards=(("qa", "{{c1::x}} y", ""),))
         self.assertFalse(save.preview(self.store, self.book, [h])["blocked"])
 
-    def test_a_connection_or_idea_with_no_answer_blocks_the_save(self):
+    def test_a_connection_or_idea_with_no_answer_stays_out_of_the_save(self):
         h = self.add_highlight("k1")
         connection = self.store.add_connection(self.book_id, "T", "F?", "", [h["hid"]])
         self.store.open_connection(connection["id"])
         idea = self.store.add_idea(self.book_id, "E", "IT", "", "", "I?", " ")
         self.store.open_idea(idea["id"])
         p = save.preview(self.store, self.book, [h])
-        self.assertTrue(p["blocked"])
-        self.assertEqual(p["need_connections"], [connection["id"]])
-        self.assertEqual(p["need_ideas"], [idea["id"]])
-        self.assertEqual(p["need_text"], "2 questions still need answers. Answer or remove before saving.")
+        self.assertFalse(p["blocked"])
+        self.assertEqual(p["count"], 1)
+        self.assertEqual(p["need_connections"], [])
+        self.assertEqual(p["need_ideas"], [])
+        self.assertEqual(p["need_text"], "")
+        self.assertEqual(p["connection_only"], [])
+        self.assertIn("2 cards with no answer are not included.", p["left_text"])
+        save.save(self.store, self.book, [h], self.mount)
+        self.assertEqual(self.store.get_connection(connection["id"])["state"], store_module.DRAFT)
+        self.assertEqual(self.store.get_idea(idea["id"])["state"], store_module.DRAFT)
 
 
 class PreviewTests(SaveCase):
@@ -196,7 +231,7 @@ class PreviewTests(SaveCase):
         self.assertEqual(p["count"], 3)
         self.assertEqual(p["noun"], "cards ready")
         self.assertEqual(
-            p["groups"],
+            shown(p["groups"]),
             [
                 {
                     "type": "highlight",
@@ -237,14 +272,12 @@ class PreviewTests(SaveCase):
         self.assertEqual(p["noun"], "card ready")
         self.assertEqual(p["left_text"], "Every pending highlight is covered.")
 
-    def test_a_question_without_an_answer_blocks_the_save(self):
+    def test_only_unanswered_questions_leave_nothing_to_save(self):
         h = self.add_highlight("k1", cards=(("qonly", "Q", " "), ("qonly", "Q2", "")))
         p = save.preview(self.store, self.book, [h])
         self.assertTrue(p["blocked"])
-        self.assertEqual(p["needs"], [h["hid"], h["hid"]])
-        self.assertEqual(p["need_text"], "2 questions still need answers. Answer or remove before saving.")
-        self.assertTrue(p["groups"][0]["rows"][0]["need"])
-        with self.assertRaisesRegex(save.SaveBlocked, "still need answers"):
+        self.assertEqual(p["needs"], [])
+        with self.assertRaisesRegex(save.SaveBlocked, "no cards to save"):
             save.save(self.store, self.book, [h], self.mount)
         self.assertEqual(self.store.list_batches(), [])
         self.assertFalse(self.inbox.exists())
@@ -263,8 +296,8 @@ class PreviewTests(SaveCase):
 
     def test_cloze_rows_show_the_gap_as_the_mock_does(self):
         h = self.add_highlight("k1", cards=(("cloze", "The {{c1::Seine}} and {{c2::Loire}}", ""),))
-        row = save.preview(self.store, self.book, [h])["groups"][0]["rows"][0]
-        self.assertEqual(row, {"front": "The [...] and [...]", "back": "Cloze", "need": False})
+        groups = save.preview(self.store, self.book, [h])["groups"]
+        self.assertEqual(shown(groups)[0]["rows"][0], {"front": "The [...] and [...]", "back": "Cloze", "need": False})
 
     def test_nothing_to_save_is_blocked(self):
         h = self.add_highlight("k1", opened=False, cards=())
@@ -1644,7 +1677,7 @@ class FindingsTests(SaveCase):
         highlights = self.work()
         preview = save.preview(self.store, self.book, highlights)
         result = save.save(self.store, self.book, highlights, self.mount)
-        self.assertEqual(result["summary"]["groups"], preview["groups"])
+        self.assertEqual(result["summary"]["groups"], shown(preview["groups"]))
 
     def test_with_held_adds_batches_to_a_preview(self):
         a = self.add_highlight("k1", cards=(("qa", "Q1", "A1"),))

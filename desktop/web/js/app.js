@@ -4,6 +4,7 @@ import { render, useErrorBoundary, useEffect } from "../vendor/preact-htm.js";
 import { useStore, start, useBookLoader, replace, go, bookPath } from "./store.js";
 import { html, ErrorBar, Waiting } from "./ui.js";
 import { PlugIn, ReaderCheck } from "./screens/reader.js";
+import { Start } from "./screens/start.js";
 import { PickBook } from "./screens/books.js";
 import { Clashes } from "./screens/clashes.js";
 import { Suggest, Highlights } from "./screens/working.js";
@@ -18,13 +19,14 @@ import { CreateDrawer } from "./drawers/create.js";
 const table = (entries) => Object.assign(Object.create(null), entries);
 
 // Screens with no book
-const SCREENS = table({ plug: PlugIn, check: ReaderCheck, books: PickBook, clashes: Clashes });
+const SCREENS = table({ plug: PlugIn, check: ReaderCheck, start: Start, books: PickBook, clashes: Clashes });
 // Screens of the open book. They can count on store.book being there.
 const BOOK_SCREENS = table({ suggest: Suggest, highlights: Highlights, connections: Connections, ideas: Ideas, save: SaveCards, saved: Saved });
 const DRAWERS = table({ prompt: PromptDrawer, settings: SettingsDrawer, create: CreateDrawer });
 
 // The plug-in screen moves on by itself, and a home address picks the right start.
-function useReaderRedirects(route, connected) {
+function useReaderRedirects(route, connected, canWorkUnplugged) {
+  const unplugged = canWorkUnplugged ? "#/start" : "#/plug";
   useEffect(() => {
     if (connected === null) return;
     const name = route.name;
@@ -32,10 +34,10 @@ function useReaderRedirects(route, connected) {
     const query = location.hash.split("?")[1];
     const move = (hash) => replace(query ? `${hash}?${query}` : hash);
     if (connected && (name === "plug" || name === "home")) move("#/check");
-    else if (!connected && (name === "check" || name === "home")) move("#/plug");
+    else if (!connected && (name === "check" || name === "home")) move(unplugged);
     else if (route.bookId && !BOOK_SCREENS[name]) move(bookPath(route.bookId));
-    else if (name !== "home" && !route.bookId && !SCREENS[name]) move(connected ? "#/check" : "#/plug");
-  }, [route.name, route.bookId, connected]);
+    else if (name !== "home" && !route.bookId && !SCREENS[name]) move(connected ? "#/check" : unplugged);
+  }, [route.name, route.bookId, connected, canWorkUnplugged]);
 }
 
 function Problem({ title, children }) {
@@ -54,7 +56,7 @@ function Screen() {
       <div class="center"><div class="narrow">
         <h1 class="h1">This book didn't open</h1>
         <p class="lede">${bookError}</p>
-        <div class="rowg"><button class="btn pri" onClick=${() => go(state.reader.connected ? "#/books" : "#/plug")}>Back</button></div>
+        <div class="rowg"><button class="btn pri" onClick=${() => go(state.reader.connected || state.can_work_unplugged ? "#/start" : "#/plug")}>Back</button></div>
       </div></div>
     `;
   }
@@ -66,7 +68,7 @@ function App() {
   const { route, state, startError } = useStore();
   const [crash] = useErrorBoundary();
   useBookLoader();
-  useReaderRedirects(route, state ? state.reader.connected : null);
+  useReaderRedirects(route, state ? state.reader.connected : null, !!(state && state.can_work_unplugged));
 
   useEffect(() => {
     start();

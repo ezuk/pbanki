@@ -239,6 +239,7 @@ POST /api/books/<id>/prompt          {prompt}, keeps the prompt picked for this 
 POST /api/books/<id>/run             {action:"start"|"pause"|"resume"|"stop", options?}
 POST /api/books/<id>/highlights/<hid>/open
 POST /api/books/<id>/highlights/<hid>/skip        {skipped}
+POST /api/books/<id>/highlights/<hid>/redo        {redo}, wants new suggestions, or doesn't
 POST /api/books/<id>/highlights/<hid>/cards       {kind}, adds a blank card
 POST /api/books/<id>/highlights/<hid>/suggest     {count, kind, model, prompt, sees, companion, hint}
 POST /api/books/<id>/highlights/<hid>/define      {term, model}
@@ -249,14 +250,20 @@ POST /api/cards/<cid>/restore
 POST /api/cards/<cid>/rewrite        {instruction, model}
 POST /api/books/<id>/connections/find   {chapters, scope, count, model, prompt, hint}
 POST /api/connections/<id>/open
+POST /api/connections/<id>/later     leaves it out of this save, for later
+POST /api/connections/<id>/restore   undoes dismissing it
 PATCH  /api/connections/<id>         {front?, back?}
 DELETE /api/connections/<id>
 POST /api/ideas/<id>/open
+POST /api/ideas/<id>/later           leaves it out of this save, for later
+POST /api/ideas/<id>/restore         undoes dismissing it
 PATCH  /api/ideas/<id>               {front?, back?}
 DELETE /api/ideas/<id>
 GET  /api/books/<id>/save            preview, including which highlights get marked and what stays
 POST /api/books/<id>/save            {mark_connection_sources}
 POST /api/books/<id>/save/retry
+POST /api/books/<id>/save/check      compares the cards about to be saved with the collection and each other
+POST /api/books/<id>/save/not-a-clash   {path}, clears a card's clash and remembers it for later checks
 POST /api/reader/eject
 POST /api/reader/plugin/update
 POST /api/reader/choose-folder       opens the Mac's folder dialog, stores the pick as the mount
@@ -264,6 +271,7 @@ PATCH /api/settings                  {mount?, assistants?, model?, meta_model?, 
 GET  /api/prompts/<name>             files and text
 POST /api/prompts/open               {name, file}
 POST /api/prompts/reveal             {name, file}
+POST /api/books/<id>/companion/open  opens the Companion in the text editor
 POST /api/books/<id>/companion/create
 POST /api/books/<id>/companion/copy
 POST /api/books/<id>/companion/keep

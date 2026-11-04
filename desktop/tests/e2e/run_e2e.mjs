@@ -310,10 +310,11 @@ function readSave() {
       groups: [...document.querySelectorAll(".saveg > div")].filter((g) => g.querySelector(".sgh")).map((g) => ({
         head: g.querySelector(".sgh span").textContent,
         where: g.querySelector(".sgm").textContent,
-        rows: [...g.querySelectorAll(".sr")].map((row) => ({
-          front: row.querySelector(".srq").textContent,
-          back: row.children[1].lastElementChild.textContent,
-          need: !!row.querySelector(".srneed"),
+        rows: [...g.querySelectorAll(".sr:not(.sremp)")].map((row) => ({
+          // A card still to be saved is editable, one already sent is plain text
+          front: row.querySelector(".srq")?.textContent ?? row.querySelector("textarea").value,
+          back: row.querySelector(".srq") ? row.children[1].lastElementChild.textContent : row.querySelectorAll("textarea")[1].value,
+          need: !!row.querySelector(".srneed, .ta.need"),
         })),
       })),
       steps: [...document.querySelectorAll(".step2")].map((el) => el.children[1].textContent),
@@ -359,6 +360,7 @@ class Book {
   }
 
   async open(index) {
+    await showAll();
     const row = page.locator(".navlist .hl").nth(index);
     await row.click();
     const total = await page.locator(".navlist .hl").count();
@@ -530,7 +532,7 @@ async function waitForRunThenReview(rows) {
     `The run should finish with rows ${rows}`,
     60000,
   );
-  await button("Review highlights").click();
+  await button(/^Continue/).click();
   await page.locator(".crumbt").waitFor();
 }
 
@@ -555,17 +557,23 @@ function checkAdded(rel, from, expected, what) {
 }
 
 // Expected Save-screen group for a highlight, from the highlight screen.
+// The list starts on To do. Tests count rows through the whole book.
+async function showAll() {
+  await page.locator(".navhd .seg .sg", { hasText: /^All / }).click();
+}
+
 function highlightGroup(book, index) {
   const rows = book.saved(index).map((card) =>
     card.kind === "Cloze"
-      ? { front: card.front.replace(/\{\{c\d+::(.*?)\}\}/g, "[...]"), back: "Cloze", need: false }
+      ? { front: card.front, back: card.back, need: false }
       : { front: card.front, back: card.back, need: false },
   );
   return { head: book.source(index).text, rows };
 }
 
 function checkGroups(save, expected) {
-  const shown = save.groups.map((g) => ({ head: g.head, rows: g.rows }));
+  // A highlight whose cards were all removed asks what to do with it, and has no rows to compare
+  const shown = save.groups.filter((g) => g.rows.length).map((g) => ({ head: g.head, rows: g.rows }));
   eq(shown, expected, "The Save screen's groups, against the screens they came from");
 }
 
@@ -595,7 +603,10 @@ async function wholeFlow() {
   });
 
   await step("Pick a book lists the history", async () => {
-    await button("Show my books").click();
+    await button("Continue").click();
+    await seeH1("What would you like to do?");
+    await page.locator(".choice", { hasText: "Tidy up cards" }).waitFor();
+    await page.locator(".choice", { hasText: "Make new cards" }).click();
     await seeH1("Pick a book");
     await until(async () => (await page.locator("button.bk").count()) === 9, "All 9 history books listed");
     const first = page.locator("button.bk").first();
@@ -627,11 +638,11 @@ async function wholeFlow() {
   });
 
   await step("Preview a card on the reader", async () => {
-    await cardAt(0).getByRole("button", { name: "On the reader" }).click();
+    await cardAt(0).getByRole("button", { name: "Preview" }).click();
     const labels = await cardAt(0).locator(".prevs .lab").allInnerTexts();
     eq(labels.map((l) => l.toLowerCase()), ["question", "answer", "context"], "The preview's three pages");
     ok((await cardAt(0).locator(".prevs").innerText()).includes("What must a rich single man be in want of?"), "The preview shows the edit");
-    await cardAt(0).getByRole("button", { name: "On the reader" }).click();
+    await cardAt(0).getByRole("button", { name: "Preview" }).click();
   });
 
   await step("Write a card by hand, and leave a blank one", async () => {
@@ -690,24 +701,23 @@ async function wholeFlow() {
     await setKind("qa");
   });
 
-  await step("Save is blocked until the questions are answered", async () => {
+  await step("Questions with no answer stay out of the save", async () => {
     await page.locator(".top .btn.pri").click();
     await until(async () => (await readSave()).groups.length > 0, "The Save screen has groups");
     let save = await readSave();
-    eq(save.errors.length, 1, "One error about the answers");
-    ok(save.errors[0].includes("2 questions still need answers"), `It counts them: ${save.errors[0]}`);
-    ok(save.disabled, "The Save button is disabled");
-    eq(save.groups.flatMap((g) => g.rows).filter((r) => r.need).length, 2, "Rows say No answer yet");
-    await button("Go to it").click();
-    await until(async () => (await textOf(".crumbt")).includes("2 of 7"), "Go to it opens the highlight");
+    eq(save.errors.length, 0, "No error about the answers");
+    eq(save.groups.flatMap((g) => g.rows).filter((r) => r.need).length, 0, "No row lacks an answer");
+    ok((await page.locator(".saver").innerText()).includes("2 cards with no answer are not included."), "It counts what was left out");
+    await button("Back to editing").click();
+    await page.locator(".crumbt").waitFor();
+    await book.open(H.qonly);
+    await until(async () => (await textOf(".crumbt")).includes("2 of 7"), "The highlight opens");
     const shown = await book.read(H.qonly);
     const n = shown.cards.length;
     await typeInto(cardAt(n - 2).locator(".ta.b"), "He is the father of the family.");
     eq((await book.read(H.qonly)).cards[n - 2].src, shown.cards[n - 2].src, "Answering a blank question isn't an edit");
     await page.locator(".top .btn.pri").click();
-    await until(async () => (await readSave()).errors.some((e) => e.includes("1 question still needs an answer")), "One answer still missing");
-    save = await readSave();
-    ok(save.disabled, "Still blocked with one left");
+    await until(async () => (await page.locator(".saver").innerText()).includes("1 card with no answer is not included."), "One answer still missing");
     await button("Back to editing").click();
     await page.locator(".crumbt").waitFor();
     await book.open(H.qonly);
@@ -831,7 +841,7 @@ async function wholeFlow() {
     await page.locator(".col > .banner", { hasText: "Skipped. It will count as reviewed when you save." }).waitFor();
     await button("Undo skip").click();
     await page.locator(".col > .banner", { hasText: "Skipped." }).waitFor({ state: "detached" });
-    await button("Skip").click();
+    await button("Skip").first().click();
     await page.locator(".col > .banner", { hasText: "Skipped." }).waitFor();
     book.skippedCards = shown.cards;
   });
@@ -1013,12 +1023,14 @@ async function wholeFlow() {
   await step("The book now shows them as reviewed", async () => {
     await button("Keep working on this one").click();
     await page.locator(".navhd .seg .sg", { hasText: "Reviewed 6" }).waitFor();
+    await showAll();
     await page.locator(".navlist .hl").nth(H.edit).click();
     await page.locator(".col > .banner", { hasText: "Reviewed. These are the cards you saved from it." }).waitFor();
     const fronts = await page.locator(".cards .card.ro .ta.f").evaluateAll((els) => els.map((el) => el.value));
     ok(fronts.includes("Who is said to want a wife?"), "Its saved cards show");
     await page.locator(".top .btn.pri").waitFor();
-    eq(await page.locator(".top .btn.pri").isDisabled(), true, "Nothing left to save");
+    // Carrying on opened the next highlight to do, which brings its two suggested cards in
+    eq(await page.locator(".top .btn.pri").innerText(), "Save 2 cards", "Only the next highlight's cards are left to save");
   });
 
   return book;
@@ -1043,6 +1055,7 @@ async function unpluggedFlow() {
     await pickBook(book);
     await waitForRunThenReview(["Highlight cards", "Connections"]);
     await page.locator(".navhd .seg .sg", { hasText: "To do 3" }).waitFor();
+    await showAll();
     eq(await page.locator(".navlist .hl").count(), 5, "Five highlights");
     inboxBefore = readFile(INBOX);
     reviewedBefore = readFile(REVIEWED);
@@ -1143,6 +1156,7 @@ async function unpluggedFlow() {
     const before = book.cards[P2];
     const back = "Thinning later is a chore that nobody at all enjoys.";
     await cardAt(before.length - 2).locator(".ta.b").fill(back);
+    await showAll();
     await page.locator(".navlist .hl").nth(P1).click();
     await page.locator(".crumbt", { hasText: `${P1 + 1} of 5` }).waitFor();
     eq((await book.open(P2)).cards[before.length - 2].back, back, "Text typed just before moving on is kept");
@@ -1242,6 +1256,7 @@ async function unpluggedFlow() {
   await step("The unticked source stays to do", async () => {
     await button("Keep working on this one").click();
     await page.locator(".navhd .seg .sg", { hasText: "To do 1" }).waitFor();
+    await showAll();
     await page.locator(".navlist .hl").nth(P3).click();
     await page.locator(".crumbt", { hasText: "5 of 5" }).waitFor();
     eq(await page.locator(".col > .banner", { hasText: "Reviewed" }).count(), 0, "It isn't reviewed");
@@ -1263,8 +1278,8 @@ async function failedSaveFlow() {
     await page.goto(`${url}/#/books`);
     await pickBook(book);
     await until(async () => (await page.locator(".chk", { hasText: "Done · 1 of 1 highlights" }).count()) === 1, "The run covers the one pending highlight", 30000);
-    await until(() => button("Review highlights").isVisible(), "The run finishes", 30000);
-    await button("Review highlights").click();
+    await until(() => button(/^Continue/).isVisible(), "The run finishes", 30000);
+    await button(/^Continue/).click();
     await page.locator(".crumbt").waitFor();
     await page.locator(".navhd .seg .sg", { hasText: "To do 1" }).waitFor();
     inboxBefore = readFile(INBOX);

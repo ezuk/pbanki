@@ -1,8 +1,10 @@
 // "Ask the AI for more": the panel under the cards, and the request it sends.
 
+import { useEffect, useState } from "../../vendor/preact-htm.js";
 import { store, useStore, setUi, mutate, onEvent } from "../store.js";
 import { html, plural, Running } from "../ui.js";
 import { currentOptions, askCount, CountOpt, ChoiceOpt, ChosenPromptLine } from "./working-options.js";
+import { selectedPassageText } from "./working-passage.js";
 
 // Each highlight has its own hint.
 const hintOf = (book, highlight) => (store.ui.hints || {})[`${book.id}/${highlight.id}`] || "";
@@ -23,6 +25,11 @@ export async function askForCards(book, highlight) {
   const typed = hintOf(book, highlight);
   const hint = typed.trim();
   if (hint) body.hint = hint;
+  const focus = selectedPassageText();
+  if (focus) {
+    body.focus = focus;
+    window.getSelection().removeAllRanges();
+  }
   sentHints.set(key, typed);
   setUi({ asking: { ...store.ui.asking, [key]: true } });
   try {
@@ -46,6 +53,12 @@ export function AskPanel({ highlight, book }) {
   const options = currentOptions(book);
   const key = `${book.id}/${highlight.id}`;
   const busy = highlight.busy || highlight.writing || !!(ui.asking || {})[key];
+  const [focus, setFocus] = useState("");
+  useEffect(() => {
+    const onChange = () => setFocus(selectedPassageText());
+    document.addEventListener("selectionchange", onChange);
+    return () => document.removeEventListener("selectionchange", onChange);
+  }, []);
   const label = busy ? "Writing..." : `Suggest ${plural(askCount(options), "card")}`;
   return html`<section class="comp">
     <div class="compt">Ask the AI for more</div>
@@ -57,8 +70,9 @@ export function AskPanel({ highlight, book }) {
       <${ChoiceOpt} book=${book} label="Prompt" option="prompt" choices=${state.prompts.names} />
       <${ChoiceOpt} book=${book} label="AI reads" option="sees" choices=${state.sees_opts} />
       ${book.companion.have && html`<${ChoiceOpt} book=${book} label="Companion" option="companion" choices=${state.comp_opts} />`}
-      <button class="btn pri go" onClick=${() => askForCards(book, highlight)} disabled=${busy}>${label}</button>
+      <button class="btn pri go" onMouseDown=${(e) => e.preventDefault()} onClick=${() => askForCards(book, highlight)} disabled=${busy}>${label}</button>
     </div>
+    ${focus && html`<div class="running">Cards will ask about your selection: "${focus.length > 120 ? `${focus.slice(0, 120)}...` : focus}"</div>`}
     ${highlight.busy && highlight.busyCmd && html`<${Running}>Running ${highlight.busyCmd}<//>`}
     ${book.aiNote && html`<div class="running">${book.aiNote}</div>`}
     <${ChosenPromptLine} book=${book} />

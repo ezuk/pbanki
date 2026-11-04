@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from pbanki_desktop import ai, cardgen, clashes
+from pbanki_desktop import ai, cardgen, clashes, service
 from pbanki_desktop.store import Store
 from test_service import Base
 
@@ -218,10 +218,136 @@ class WithService(Base):
         h = self.svc.open_book(self.pride)["highlights"][0]
         card = self.svc._store.add_card(self.pride, h["id"], "qa", "What to ask when tempted?", "How will I feel?")
         self.svc._check_new_cards(self.pride)
-        self.wait(lambda: self.svc._clash_note(f"card:{card['id']}", card["front"]))
-        note = self.svc._clash_note(f"card:{card['id']}", card["front"])
+        record = f"card:{card['id']}"
+        self.wait(lambda: self.svc._clash_note(record, card["front"], card["back"]))
+        note = self.svc._clash_note(record, card["front"], card["back"])
         self.assertEqual(note["front"], NOTES[0][1][0])
-        self.assertIsNone(self.svc._clash_note(f"card:{card['id']}", "Something else?"))
+        self.assertIsNone(self.svc._clash_note(record, "Something else?", card["back"]))
+        self.assertIsNone(self.svc._clash_note(record, card["front"], "Something else"))
+
+    # The check on the Save cards screen
+
+    def save_cards(self, *cards):
+        """Opens the first highlights of the book, one card each. Returns the cards."""
+        highlights = self.svc.open_book(self.pride)["highlights"]
+        made = []
+        for h, (front, back) in zip(highlights, cards):
+            self.svc.open_highlight(self.pride, h["id"])
+            made.append(self.svc._store.add_card(self.pride, h["id"], "qa", front, back))
+        return made
+
+    def checked(self):
+        self.svc.save_check(self.pride)
+        self.wait(lambda: self.svc.save_preview(self.pride)["clashCheck"]["state"] not in ("checking", "pending"))
+        return self.svc.save_preview(self.pride)
+
+    def rows(self, preview):
+        return {row["front_raw"]: row for group in preview["groups"] for row in group["rows"]}
+
+    def test_a_save_waits_for_a_check_of_the_cards_in_it(self):
+        self.setUpService(FakeQuery())
+        answered, unanswered = self.save_cards(("Answered?", "Yes"), ("Unanswered?", ""))
+        preview = self.svc.save_preview(self.pride)
+        self.assertEqual(preview["clashCheck"]["state"], "pending")
+        self.assertTrue(self.rows(preview)["Answered?"]["unchecked"])
+        preview = self.checked()
+        self.assertEqual(preview["clashCheck"]["state"], "done")
+        self.assertEqual(preview["clashCheck"]["found"], 0)
+        self.assertEqual(preview["clashCheck"]["total"], 3)
+        self.assertIn("Answered?", self.query.prompts[-1])
+        self.assertNotIn("Unanswered?", self.query.prompts[-1])
+        self.assertNotIn("unchecked", self.rows(preview)["Answered?"])
+
+    def test_without_a_collection_there_is_no_check(self):
+        self.svc = self.make_service(query=FakeQuery())
+        self.save_cards(("A question?", "An answer"))
+        self.assertEqual(self.svc.save_preview(self.pride)["clashCheck"]["state"], "none")
+
+    def test_a_failed_check_says_why_and_can_be_tried_again(self):
+        self.setUpService(FakeQuery())
+        self.save_cards(("A question?", "An answer"))
+        real = self.svc.clashes._ask
+
+        def broken(*_args, **_kwargs):
+            raise clashes.ai.AIError("The AI isn't answering.")
+
+        self.svc.clashes._ask = broken
+        preview = self.checked()
+        self.assertEqual(preview["clashCheck"]["state"], "failed")
+        self.assertEqual(preview["clashCheck"]["error"], "The AI isn't answering.")
+        self.assertFalse(preview["saveBlocked"])
+        self.svc.clashes._ask = real
+        self.assertEqual(self.checked()["clashCheck"]["state"], "done")
+
+    def test_a_clash_with_the_collection_shows_on_its_row(self):
+        self.setUpService(FakeQuery(new={"clashes": [{"new": 1, "other": "E1", "p": 0.7, "why": "Alike"}]}))
+        self.save_cards(("What to ask when tempted?", "How will I feel?"))
+        preview = self.checked()
+        self.assertEqual(preview["clashCheck"]["found"], 1)
+        self.assertEqual(self.rows(preview)["What to ask when tempted?"]["clash"]["front"], NOTES[0][1][0])
+
+    def test_changing_an_answer_asks_again(self):
+        self.setUpService(FakeQuery())
+        card = self.save_cards(("A question?", "An answer"))[0]
+        self.checked()
+        self.svc.update_card(card["id"], back="Another answer")
+        self.assertEqual(self.svc.save_preview(self.pride)["clashCheck"]["state"], "pending")
+
+    def test_new_cards_are_checked_against_each_other_and_both_are_flagged(self):
+        self.setUpService(FakeQuery(new={"clashes": [{"new": 1, "other": "N2", "p": 0.8, "why": "Alike"}]}))
+        self.save_cards(("How do tomatoes taste?", "Great"), ("What is the taste of tomatoes?", "Meh"))
+        rows = self.rows(self.checked())
+        self.assertEqual(rows["How do tomatoes taste?"]["clash"]["front"], "What is the taste of tomatoes?")
+        self.assertEqual(rows["What is the taste of tomatoes?"]["clash"]["front"], "How do tomatoes taste?")
+
+    def test_a_new_card_is_compared_with_new_cards_already_checked(self):
+        self.setUpService(FakeQuery())
+        self.save_cards(("How do tomatoes taste?", "Great"))
+        self.checked()
+        highlight = self.svc.book(self.pride)["highlights"][1]
+        self.svc.open_highlight(self.pride, highlight["id"])
+        self.svc._store.add_card(self.pride, highlight["id"], "qa", "What is the taste of tomatoes?", "Meh")
+        self.query.new = {"clashes": [{"new": 1, "other": "E-1", "p": 0.8, "why": "Alike"}]}
+        rows = self.rows(self.checked())
+        self.assertIn("E-1. Q: How do tomatoes taste?", self.query.prompts[-1])
+        self.assertEqual(rows["What is the taste of tomatoes?"]["clash"]["front"], "How do tomatoes taste?")
+        self.assertEqual(rows["How do tomatoes taste?"]["clash"]["front"], "What is the taste of tomatoes?")
+
+    def test_removing_one_of_two_clashing_cards_checks_the_other_again(self):
+        self.setUpService(FakeQuery(new={"clashes": [{"new": 1, "other": "N2", "p": 0.8, "why": "Alike"}]}))
+        first, second = self.save_cards(("How do tomatoes taste?", "Great"), ("What is the taste of tomatoes?", "Meh"))
+        self.checked()
+        self.query.new = {"clashes": []}
+        self.svc.remove_card(second["id"])
+        preview = self.svc.save_preview(self.pride)
+        self.assertEqual(preview["clashCheck"]["state"], "pending")
+        self.assertTrue(self.rows(preview)["How do tomatoes taste?"]["unchecked"])
+        preview = self.checked()
+        self.assertEqual(preview["clashCheck"]["state"], "done")
+        self.assertEqual(preview["clashCheck"]["found"], 0)
+
+    def test_not_a_clash_clears_both_cards_and_teaches_later_checks(self):
+        self.setUpService(FakeQuery(new={"clashes": [{"new": 1, "other": "N2", "p": 0.8, "why": "Alike"}]}))
+        first, second = self.save_cards(("How do tomatoes taste?", "Great"), ("What is the taste of tomatoes?", "Meh"))
+        rows = self.rows(self.checked())
+        self.svc.not_a_clash(self.pride, rows["How do tomatoes taste?"]["path"])
+        preview = self.svc.save_preview(self.pride)
+        self.assertEqual(preview["clashCheck"]["found"], 0)
+        self.assertNotIn("unchecked", self.rows(preview)["How do tomatoes taste?"])
+        self.assertNotIn("unchecked", self.rows(preview)["What is the taste of tomatoes?"])
+
+        # The AI sees the answer as an example, and the same pair can't be flagged again
+        self.svc.update_card(first["id"], back="Great, really")
+        preview = self.checked()
+        self.assertIn("NOT clashes", self.query.prompts[-1])
+        self.assertIn("Q1: How do tomatoes taste?", self.query.prompts[-1])
+        self.assertEqual(preview["clashCheck"]["found"], 0)
+
+    def test_not_a_clash_on_a_card_not_in_the_save_is_refused(self):
+        self.setUpService(FakeQuery())
+        self.save_cards(("A question?", "An answer"))
+        with self.assertRaises(service.ServiceError):
+            self.svc.not_a_clash(self.pride, "/api/cards/nope")
 
     def test_without_a_collection_new_cards_ask_the_ai_nothing(self):
         query = FakeQuery()

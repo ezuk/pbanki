@@ -235,6 +235,11 @@ def need_of(item):
     return None if item["back"].strip() else "answer"
 
 
+def _ready(item):
+    """Written and answered. A card with no answer hasn't been reviewed, so it stays out of a save."""
+    return _filled(item) and need_of(item) != "answer"
+
+
 def _select(store, book, highlights, mark_connection_sources):
     """What a save covers, by the mock's rules: only what the user opened."""
     book_id = _book_id(book)
@@ -255,7 +260,7 @@ def _select(store, book, highlights, mark_connection_sources):
 
     with_cards = []
     for hid in pending:
-        if states.get(hid, {}).get("opened") and any(_filled(c) for c in drafts.get(hid, [])):
+        if states.get(hid, {}).get("opened") and any(_ready(c) for c in drafts.get(hid, [])):
             with_cards.append(hid)
     unopened = [
         hid for hid in pending if not states.get(hid, {}).get("opened") and drafts.get(hid)
@@ -263,8 +268,17 @@ def _select(store, book, highlights, mark_connection_sources):
 
     all_connections = store.list_connections(book_id)
     all_ideas = store.list_ideas(book_id)
-    connections = [c for c in all_connections if c["opened"] and _filled(c)]
-    ideas = [i for i in all_ideas if i["opened"] and _filled(i)]
+    connections = [c for c in all_connections if c["opened"] and _ready(c)]
+    ideas = [i for i in all_ideas if i["opened"] and _ready(i)]
+    no_answer = sum(1 for hid in pending if states.get(hid, {}).get("opened")
+                    for card in drafts.get(hid, []) if _filled(card) and not _ready(card))
+    no_answer += sum(1 for item in (*all_connections, *all_ideas) if item["opened"] and _filled(item) and not _ready(item))
+
+    removed = {card["hid"] for card in store.list_cards(book_id, None, (store_module.REMOVED,)) if card["suggested"] is not None}
+    emptied = [
+        hid for hid in pending
+        if hid in removed and not states.get(hid, {}).get("redo") and not any(_filled(c) for c in drafts.get(hid, []))
+    ]
 
     connection_only = []
     for connection in connections:
@@ -280,23 +294,25 @@ def _select(store, book, highlights, mark_connection_sources):
     needs, need_kinds = [], []
     for hid in with_cards:
         for card in drafts[hid]:
-            need = need_of(card) if _filled(card) else None
+            need = need_of(card) if _ready(card) else None
             if need:
                 needs.append(hid)
                 need_kinds.append(need)
     need_connections = [c["id"] for c in connections if need_of(c)]
     need_ideas = [i["id"] for i in ideas if need_of(i)]
     need_kinds += ["answer"] * (len(need_connections) + len(need_ideas))
-    count = sum(sum(1 for c in drafts[hid] if _filled(c)) for hid in with_cards) + len(connections) + len(ideas)
+    count = sum(sum(1 for c in drafts[hid] if _ready(c)) for hid in with_cards) + len(connections) + len(ideas)
 
     return {
         "by_hid": by_hid,
         "drafts": drafts,
         "with_cards": with_cards,
+        "emptied": emptied,
         "connection_only": connection_only,
         "marked_sources": marked_sources,
         "skipped": skipped,
         "skipped_cards": skipped_cards,
+        "no_answer": no_answer,
         "pending": pending,
         "unopened": unopened,
         "connections": connections,
@@ -342,6 +358,9 @@ def _left_text(selection):
         if n:
             verb = "stays" if n == 1 else "stay"
             parts.append(f"{_plural(n, word)} you haven't opened also {verb} here.")
+    n = selection["no_answer"]
+    if n:
+        parts.append("1 card with no answer is not included." if n == 1 else f"{n} cards with no answer are not included.")
     n = selection["skipped_cards"]
     if n == 1:
         parts.append("1 card on a skipped highlight will not be saved. Undo the skip to keep it.")
@@ -369,12 +388,39 @@ def _preview_row(card):
     return {"front": card["front"], "back": card["back"], **label}
 
 
+def _editable(row, card, base):
+    # A row of the Save cards screen with what it takes to change the card
+    is_cloze = card.get("kind") == "cloze"
+    return {**row, "path": f"/api/{base}/{card['id']}", "cloze": is_cloze, "front_raw": card["front"], "back_raw": card["back"]}
+
+
+def _editable_groups(selection):
+    # _groups with the raw text and address of each draft, for editing before a save
+    groups = _groups(selection)
+    cards = {}
+    for hid in selection["with_cards"]:
+        cards[("highlight", hid)] = [c for c in selection["drafts"][hid] if _ready(c)]
+    for c in selection["connections"]:
+        cards[("connection", c["id"])] = [c]
+    for i in selection["ideas"]:
+        cards[("idea", i["id"])] = [i]
+    bases = {"highlight": "cards", "connection": "connections", "idea": "ideas"}
+    for group in groups:
+        items = cards[(group["type"], group["id"])]
+        group["rows"] = [_editable(row, card, bases[group["type"]]) for row, card in zip(group["rows"], items)]
+    by_hid = selection["by_hid"]
+    for hid in selection["emptied"]:
+        h = by_hid[hid]
+        groups.append({"type": "highlight", "id": hid, "head": _text(h.get("text")), "where": _where(h), "rows": [], "emptied": True})
+    return groups
+
+
 def _groups(selection):
     by_hid = selection["by_hid"]
     groups = []
     for hid in selection["with_cards"]:
         h = by_hid[hid]
-        rows = [_preview_row(c) for c in selection["drafts"][hid] if _filled(c)]
+        rows = [_preview_row(c) for c in selection["drafts"][hid] if _ready(c)]
         groups.append({"type": "highlight", "id": hid, "head": _text(h.get("text")), "where": _where(h), "rows": rows})
     for c in selection["connections"]:
         groups.append(
@@ -414,7 +460,7 @@ def preview(store, book, highlights, mark_connection_sources=True):
     needs = selection["needs"]
     kinds = selection["need_kinds"]
     return {
-        "groups": _groups(selection),
+        "groups": _editable_groups(selection),
         "count": count,
         "noun": _noun(count),
         "needs": needs,
@@ -473,8 +519,8 @@ def back_up(store, book, highlights, mark_connection_sources=True):
         inbox_lines, reviewed_lines, saved_cards, card_ids, blank_ids = [], [], [], [], []
         for hid in selection["with_cards"]:
             h = by_hid[hid]
-            cards = [c for c in drafts[hid] if _filled(c)]
-            blank_ids.extend(c["id"] for c in drafts[hid] if not _filled(c))
+            cards = [c for c in drafts[hid] if _ready(c)]
+            blank_ids.extend(c["id"] for c in drafts[hid] if not _ready(c))
             for card in cards:
                 inbox_lines.append(highlight_card_line(book, h, card, batch_id))
                 saved_cards.append({**card, "hid": hid})

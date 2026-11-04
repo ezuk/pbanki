@@ -487,7 +487,7 @@ class Routes(Base):
         self.refused(400, "POST", path, {"mark_connection_sources": "yes"}, text='"mark_connection_sources"')
         card = self.ok("POST", f"/api/books/{self.pride}/highlights/{self.hid(view)}/cards", {"kind": "qonly"})["card"]
         self.ok("PATCH", f"/api/cards/{card['id']}", {"front": "Why?"})
-        self.refused(409, "POST", path, {}, text="needs an answer")
+        self.refused(409, "POST", path, {}, text="no cards to save")
         self.refused(404, "POST", "/api/books/nope/save", {})
 
     def test_save_retry_refusals(self):

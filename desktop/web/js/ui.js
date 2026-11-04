@@ -1,9 +1,16 @@
 // Pieces the mock repeats across screens.
 
 import { html, useEffect, useLayoutEffect, useRef, useState } from "../vendor/preact-htm.js";
-import { useStore, go, openDrawer, closeDrawer, clearError, debouncedSave, editSaver, bookPath, here } from "./store.js";
+import { useStore, go, mutate, openDrawer, closeDrawer, clearError, debouncedSave, editSaver, bookPath, here } from "./store.js";
 
 export { html };
+
+// Where the book's Companion is. Its size opens the file.
+export function CompanionCopy({ book }) {
+  const { where, size, date } = book.companion.copy;
+  if (!size) return where;
+  return html`${where} (<button class="lnk" onClick=${() => mutate("POST", `/api/books/${book.id}/companion/open`)}>${size}</button>, updated ${date})`;
+}
 
 export const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
@@ -56,7 +63,7 @@ export const SettingsLink = () => html`<button class="lnk" onClick=${() => openD
 export function Top({ middle, settings = true, children }) {
   return html`
     <div class="top">
-      <span class="brand">pbAnki</span>
+      <button class="brand" onClick=${() => go("#/start")}>pbAnki</button>
       ${middle}
       <div class="topr"><${ReaderChip} />${settings && html`<${SettingsLink} />`}${children}</div>
     </div>

@@ -6,14 +6,14 @@ import { api } from "../api.js";
 import { html, Top, Running, plural } from "../ui.js";
 
 const TABS = [
-  { id: "new", label: "To check" },
-  { id: "real", label: "Real" },
+  { id: "new", label: "Please review" },
+  { id: "real", label: "Clashes" },
   { id: "no", label: "Not a clash" },
 ];
 
 const EMPTY = {
-  new: "Nothing to check. Find clashes to look through your cards.",
-  real: "No real clashes yet. Pairs you mark Real wait here until you reword one of the questions.",
+  new: "Nothing to review. Find clashes to look through your cards.",
+  real: "No clashes yet. Pairs you mark Real clash wait here until you reword one of the questions.",
   no: "No pairs marked yet.",
 };
 
@@ -80,7 +80,7 @@ export function Clashes() {
     .filter((pairs) => pairs.length);
 
   return html`
-    <${Top}><button class="lnk" onClick=${() => go("#/books")}>Books</button><//>
+    <${Top}><button class="lnk" onClick=${() => go("#/start")}>Back</button><//>
     <div class="center centertop"><div class="wide">
       <div>
         <h1 class="h1">Find clashes</h1>

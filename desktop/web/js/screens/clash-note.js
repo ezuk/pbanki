@@ -2,7 +2,11 @@
 
 import { html } from "../ui.js";
 
-export function ClashNote({ clash }) {
+export function ClashNote({ clash, onNotAClash }) {
   if (!clash) return null;
-  return html`<div class="warn"><span>May be confused with: ${clash.front} → ${clash.back}</span></div>`;
+  return html`<div class="clashn">
+    <div class="clashh"><span class="rowg"><span class="clasht">CLASH</span>May be confused with</span>${onNotAClash && html`<button class="lnk" style="color:var(--ink)" onClick=${onNotAClash}>Not a clash</button>`}</div>
+    <div class="clashr"><span class="clashl">Question</span><span class="clashnq">${clash.front}</span></div>
+    ${clash.back && html`<div class="clashr"><span class="clashl">Answer</span><span>${clash.back}</span></div>`}
+  </div>`;
 }

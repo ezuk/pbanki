@@ -189,8 +189,53 @@ check("A book's Highlights filter stays with that book", async () => {
   await page.locator(".nav .seg .sg").nth(2).click();
   await page.evaluate((id) => (location.hash = `#/book/${id}/highlights`), SCAN);
   await page.waitForFunction(() => document.querySelector(".crumbt") && !document.querySelector(".crumbt").innerText.includes("of 150"));
-  eq(await page.locator(".nav .seg .sg.on").innerText().then((t) => t.split(" ")[0]), "All", "The other book's filter");
+  eq(await page.locator(".nav .seg .sg.on").innerText().then((t) => t.split(" ")[0]), "To", "The other book's filter");
   ok((await page.locator(".hl.on").count()) === 1, "The highlight on screen is in the list");
+});
+
+check("The first screen offers both paths, and the logo comes back to it", async () => {
+  const page = await fresh("#/start");
+  await page.locator(".choice", { hasText: "Tidy up cards" }).click();
+  await until(async () => (await page.evaluate(() => location.hash)).includes("clashes"), "Tidy up goes to clashes");
+  await page.locator(".brand").click();
+  await page.locator(".choice", { hasText: "Make new cards" }).click();
+  await page.locator("h1", { hasText: "Pick a book" }).waitFor();
+  ok(!(await page.getByText("Find clashes in your cards").count()), "The old link is gone");
+});
+
+check("The list starts on To do and moving stays in the filter and search", async () => {
+  const book = await bookOf(BIG);
+  const page = await fresh(`#/book/${BIG}/highlights`);
+  eq(await page.locator(".nav .seg .sg").evaluateAll((els) => els.map((el) => el.innerText.split(" ")[0])), ["To", "Reviewed", "All"], "The order");
+  await page.locator(".nav .seg .sg", { hasText: /^To do / }).waitFor();
+  ok((await page.locator(".nav .seg .sg.on").innerText()).startsWith("To do"), "To do is the default");
+
+  const firstRow = page.locator(".navlist .hl").first();
+  await firstRow.click();
+  const previous = button(page, "Previous highlight");
+  const next = button(page, "Next highlight");
+  eq(await previous.count(), 2, "Two bars");
+  eq(await next.count(), 2, "Two bars");
+  ok(await previous.first().isDisabled(), "Previous is off on the first row");
+  await next.last().click();
+  await until(async () => (await page.locator(".navlist .hl").nth(1).getAttribute("class")).includes(" on"), "The next row becomes active");
+
+  // A word from one highlight narrows the list and is marked on the page
+  const pride = await bookOf(PRIDE);
+  const todo = pride.highlights.filter((h) => h.status !== "reviewed" && !h.skipped);
+  const words = todo.flatMap((h) => h.mark.split(/\s+/)).filter((w) => /^[a-z]{5,}$/i.test(w));
+  const word = words.find((w) => todo.some((h) => !h.mark.toLowerCase().includes(w.toLowerCase())));
+  ok(word, "A word only some highlights have");
+  await page.evaluate((id) => (location.hash = `#/book/${id}/highlights`), PRIDE);
+  await page.locator(".navlist .hl").first().waitFor();
+  await page.locator(".navhd input[type=search]").fill(word);
+  await until(async () => (await page.locator(".navlist .hl").count()) < todo.length, "Search narrows the list");
+  await page.locator(".navlist .hl").first().click();
+  await until(() => page.evaluate(() => (CSS.highlights.get("hl-search")?.size ?? 0) > 0), "The match is marked in the right pane");
+  await page.locator(".navhd input[type=search]").fill("zzzznotaword");
+  await page.getByText("No matches.").waitFor();
+  await page.locator(".navhd input[type=search]").fill("");
+  await until(() => page.evaluate(() => (CSS.highlights.get("hl-search")?.size ?? 0) === 0), "Clearing the search clears the marks");
 });
 
 // The hint
@@ -243,20 +288,26 @@ check("A double click on Suggest sends one request and shows no error", async ()
 
 // Cards with nothing to answer
 
-check("A blank-answer question and a cloze hiding nothing block the save", async () => {
+check("A cloze hiding nothing blocks the save, and a blank answer doesn't", async () => {
   const book = await bookOf(TIME);
   const pending = book.highlights.filter((h) => h.status !== "reviewed");
   const hid = pending[0].id;
   const page = await fresh(`#/book/${TIME}/highlights/${hid}`);
+  await button(page, "+ Question").click();
+  await page.locator(".card .ta.f").last().fill("A question with no answer?");
   await button(page, "+ Cloze").click();
-  await page.locator(".ta.c").first().waitFor();
+  await page.locator(".ta.c").first().fill("Nothing hidden in this sentence.");
+  await page.waitForTimeout(800);
   await page.goto(`${url}/#/book/${TIME}/save`);
-  await page.locator(".srneed").first().waitFor();
-  eq(await page.locator(".srneed").first().innerText(), "No words hidden", "The mark");
+  await page.locator(".ta.b.need").first().waitFor();
+  eq(await page.locator(".ta.b.need").first().getAttribute("placeholder"), "No words hidden", "The mark");
+  ok(!(await page.locator(".saveg").innerText()).includes("A question with no answer?"), "The unanswered question isn't listed");
+  ok((await page.locator(".saver").innerText()).includes("with no answer"), "It says what was left out");
   ok(await page.locator(".saver .btn.pri").isDisabled(), "Save is off");
   await page.locator(".saver .errb .lnk").click();
   await until(async () => (await page.evaluate(() => location.hash)).includes(hid), "Go to it goes there");
-  await page.locator(".card .x").first().click();
+  await page.locator(".card .x").last().click();
+  await page.locator(".card .x").last().click();
 });
 
 check("Hide selected words over hidden text changes nothing and says why", async () => {
@@ -310,6 +361,7 @@ check("J works from a dropdown and from a read-only saved card", async () => {
   const editable = book.highlights.find((h) => h.canEdit);
   ok(savedOne, "The fixture has a highlight with saved cards");
   const page = await fresh(`#/book/${TIME}/highlights/${editable.id}`);
+  await page.locator(".nav .seg .sg", { hasText: /^All / }).click();
   const before = await crumb(page);
   await page.locator(".comp .sel").first().focus();
   await page.keyboard.press(editable.index === 0 ? "j" : "k");
@@ -359,9 +411,9 @@ check("Text typed in an outage survives moving away, saves by itself, and never 
     await page.keyboard.type(OUTAGE_TEXT);
     await sleep(700);
     ok((await bars(page)).join(" ").includes("safe on this computer"), "It says the work is safe");
-    await button(page, "Next").click();
+    await button(page, "Next highlight").first().click();
     await until(async () => (await field.count()) === 0, "Moved on");
-    await button(page, "Previous").click();
+    await button(page, "Previous highlight").first().click();
     await field.waitFor();
     eq(await field.inputValue(), OUTAGE_TEXT, "The text is back on screen");
   } finally {
@@ -585,12 +637,12 @@ check("Suggest again can be left, and comes back to the finished run", async () 
   await call("POST", `/api/books/${PRIDE}/run`, { action: "start", options: { connections: false, ideas: false } });
   await until(async () => !(await call("GET", `/api/books/${PRIDE}`)).data.run.active, "The run ends", 30000);
   const page = await fresh(`#/book/${PRIDE}/suggest`);
-  await button(page, "Suggest again").click();
+  await button(page, "Suggest new cards").click();
   await button(page, "Skip, write them myself").or(button(page, "Back to the last run")).first().waitFor();
   await page.evaluate((id) => (location.hash = `#/book/${id}/highlights`), PRIDE);
   await page.locator(".crumbt").waitFor();
   await page.goBack();
-  await button(page, "Review highlights").waitFor();
+  await button(page, "Continue").waitFor();
   ok(book.highlights.length > 0, "The book has highlights");
 });
 
@@ -609,10 +661,19 @@ check("A finished run gives way to the options while highlights are waiting", as
   ok((await call("GET", `/api/books/${id}`)).data.suggest.due > 0, "Highlights are still waiting");
   const page = await fresh(`#/book/${id}/suggest`);
   await page.locator(".opt", { hasText: "AI reads" }).waitFor();
-  await button(page, "Back to the last run").click();
-  await button(page, "Review highlights").waitFor();
-  await button(page, "Suggest again").click();
-  await page.locator(".opt", { hasText: "AI reads" }).waitFor();
+  const due = (await call("GET", `/api/books/${id}`)).data.suggest.due;
+  const toDo = (await call("GET", `/api/books/${id}`)).data.highlights.filter((h) => h.status !== "reviewed" && !h.skipped).length;
+  const process = `Process ${due} new ${due === 1 ? "highlight" : "highlights"} since last run`;
+  if (toDo > due) {
+    await button(page, `Continue (${toDo - due} To Do)`).waitFor();
+    await button(page, process).waitFor();
+  } else {
+    eq(await page.locator(".rowg .btn.pri").innerText(), process, "With only new highlights left, that's the main button");
+    await button(page, "Back to the last run").click();
+    await button(page, "Continue").waitFor();
+    await button(page, "Suggest new cards").click();
+    await page.locator(".opt", { hasText: "AI reads" }).waitFor();
+  }
 });
 
 check("Suggest again replaces suggestions instead of finding nothing waiting", async () => {
@@ -620,7 +681,7 @@ check("Suggest again replaces suggestions instead of finding nothing waiting", a
   const book = await bookOf(id);
   await until(async () => !(await call("GET", `/api/books/${id}`)).data.run.active, "No run going", 30000);
   const page = await fresh(`#/book/${id}/suggest`);
-  const again = button(page, "Suggest again");
+  const again = button(page, "Suggest new cards");
   if (await again.count()) await again.click();
   const start = page.locator(".rowg .btn.pri");
   await start.waitFor();
@@ -653,7 +714,7 @@ check("A book with nothing pending offers key ideas instead of cards for 0 highl
   for (const h of book.highlights.filter((item) => item.canEdit)) await call("POST", `/api/books/${TIME}/highlights/${h.id}/skip`, { skipped: true });
   await call("POST", `/api/books/${TIME}/run`, { action: "stop" });
   const page = await fresh(`#/book/${TIME}/suggest`);
-  const again = button(page, "Suggest again");
+  const again = button(page, "Suggest new cards");
   if (await again.count()) await again.click();
   const start = page.locator(".rowg .btn.pri");
   await start.waitFor();
@@ -723,6 +784,47 @@ check("The Plug in screen's check time counts, and its refused path stays for co
     fs.renameSync(away, mount);
     await call("PATCH", "/api/settings", { mount });
   }
+});
+
+// Last, because the collection it adds stays for any check after it
+check("The Save screen finds clashes, and Not a clash and an edit each clear one", async () => {
+  await killServer();
+  fs.writeFileSync(path.join(env.PBANKI_DESKTOP_HOME, "clash-import.json"), JSON.stringify({
+    notes: [{ nid: 1, deck: "Default", front: "Where is Zanzibar?", back: "Off Tanzania" }],
+  }));
+  await startServer();
+  const book = await bookOf(PRIDE);
+  const [first, second] = book.highlights.filter((h) => h.canEdit);
+  for (const [h, front] of [[first, "How big is Zanzibar?"], [second, "Who rules Zanzibar?"]]) {
+    await call("POST", `/api/books/${PRIDE}/highlights/${h.id}/open`);
+    const card = await newCard(PRIDE, h.id);
+    await call("PATCH", `/api/cards/${card.id}`, { front, back: "An answer" });
+  }
+  const page = await fresh(`#/book/${PRIDE}/save`);
+  const tags = page.locator(".clasht");
+  await until(async () => (await tags.count()) === 2, "Both cards are flagged", 15000);
+  ok((await page.locator(".clashn").first().innerText()).includes("Where is Zanzibar?"), "It shows the card it clashes with");
+  ok((await page.locator(".saver .btn.pri").innerText()).includes("Save anyway"), "The button says it would save anyway");
+
+  await page.locator(".sgh .lnk").first().click();
+  await until(async () => (await page.evaluate(() => location.hash)).includes("/highlights/"), "The link goes back to the highlight");
+  await page.goBack();
+  await until(async () => (await tags.count()) === 2, "Coming back keeps both clashes");
+
+  await button(page, "Not a clash").first().click();
+  await until(async () => (await tags.count()) === 1, "Not a clash clears that one");
+  await page.getByText("No clash now").waitFor();
+
+  const fronts = page.locator(".sre .ta.f");
+  ok((await fronts.nth(1).inputValue()).includes("Zanzibar"), "The second card stays where it was");
+  await fronts.nth(1).fill("What is the capital of France?");
+  await until(async () => (await tags.count()) === 0, "An edit clears the other", 15000);
+  await until(async () => !(await page.locator(".saver .btn.pri").innerText()).includes("anyway"), "The button goes back to Save");
+
+  await page.reload();
+  await page.locator(".saver .btn.pri").waitFor();
+  await until(async () => (await page.locator(".saver").innerText()).includes("No clashes"), "The check finishes clean", 15000);
+  eq(await tags.count(), 0, "The Not a clash answer lasts");
 });
 
 let failures = 0;
