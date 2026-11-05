@@ -524,11 +524,12 @@ function refetchForEvent(event) {
     if (type === "changed" || type === "books") {
       quietly(loadBooks());
       quietly(refreshBook());
+      if (store.route.name === "clashes") quietly(loadClashes());
     }
   } else if (topic === "settings" || topic === "prompts") {
     quietly(loadState());
   } else if (topic === "clashes") {
-    if (store.route.name === "clashes") quietly(loadClashes());
+    if (store.route.name === "clashes" || store.route.name === "start") quietly(loadClashes());
   } else if (topic.startsWith("book:")) {
     if (store.route.bookId === topic.slice(5)) quietly(refreshBook());
     if (store.route.name === "books") quietly(loadBooks());

@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use slint::ComponentHandle;
 
-use crate::api::{LearnSession, PlatformHooks, import_inbox, update_deck_tree};
+use crate::api::{LearnSession, PlatformHooks, import_inbox, refresh_deck_tree};
 use crate::{Config, MainWindow, SyncLogin, SyncMode, SyncOutcome, SyncReport, SyncStep};
 
 /// Lets e-ink draw the status before the UI thread blocks on Wi-Fi.
@@ -78,6 +78,7 @@ pub fn setup_sync(
             && !ui.get_syncing()
         {
             show(&ui, "", false);
+            ui.set_sync_notice("".into());
         }
     });
 
@@ -108,7 +109,7 @@ pub fn setup_sync(
                 return;
             }
             if reopened.swap(false, std::sync::atomic::Ordering::Relaxed) {
-                ui.set_deck_tree(update_deck_tree(&session));
+                refresh_deck_tree(&ui, &session);
                 if sync_on_open() {
                     ui.invoke_sync();
                 }
@@ -140,8 +141,11 @@ fn start_sync(
         show(ui, "✗ Log in to AnkiWeb in Settings to sync.", true);
         return;
     };
-    // KOReader cards go up with this sync
-    import_inbox(session);
+    // KOReader cards and queued changes go up with this sync. A download would
+    // replace them, so they wait until it finishes.
+    if mode != SyncMode::Download {
+        import_inbox(session);
+    }
 
     ui.set_syncing(true);
     let run = {
@@ -233,9 +237,23 @@ fn run_sync(
                 ui.set_sync_upload_ok(upload_ok);
                 ui.set_sync_download_ok(download_ok);
             }
-            ui.set_deck_tree(update_deck_tree(&session));
+            after_sync(&session.app_dir, &report.outcome);
+            refresh_deck_tree(&ui, &session);
         },
     );
+}
+
+/// Forgets imported cards a sync carried up, or queues them again after a
+/// download replaced them.
+fn after_sync(app_dir: &std::path::Path, outcome: &SyncOutcome) {
+    let kept = match outcome {
+        SyncOutcome::Synced | SyncOutcome::Uploaded => crate::inbox::clear_unsynced(app_dir),
+        SyncOutcome::Downloaded => crate::inbox::restore_unsynced(app_dir),
+        SyncOutcome::FullSyncNeeded { .. } | SyncOutcome::Failed(_) => Ok(()),
+    };
+    if let Err(e) = kept {
+        eprintln!("After sync: {e}");
+    }
 }
 
 fn save_login_changes(config: &Rc<RefCell<Config>>, report: &SyncReport) {

@@ -2071,8 +2071,11 @@ dependencies = [
 name = "dev"
 version = "0.1.0"
 dependencies = [
+ "anki",
  "common",
  "png 0.17.16",
+ "reqwest",
+ "serde_json",
  "slint",
  "tokio",
 ]

@@ -41,7 +41,7 @@ def check_allowed(mount, target):
     except ValueError:
         raise ForbiddenPath(f"{target} is not on the reader") from None
     text = str(rel)
-    if text in (paths.INBOX_FILE, paths.REVIEWED_FILE):
+    if text in (paths.INBOX_FILE, paths.REVIEWED_FILE, paths.CHANGES_FILE):
         return
     if text.startswith(paths.PLUGIN_DIR + "/"):
         return

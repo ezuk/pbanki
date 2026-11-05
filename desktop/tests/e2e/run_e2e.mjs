@@ -1470,7 +1470,7 @@ async function main() {
   await failedSaveFlow();
 
   phase("D. The whole reader, and the page");
-  await step("Only inbox.jsonl and reviewed.jsonl changed on the reader", async () => {
+  await step("With no card changes queued, only inbox.jsonl and reviewed.jsonl changed on the reader", async () => {
     checkReaderUnchangedElsewhere();
     eq(pageErrors, [], "Errors thrown in the page");
     eq(serverErrors, [], "Server failures seen by the page");

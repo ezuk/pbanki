@@ -16,18 +16,24 @@ from pbanki_desktop.store import Store
 from test_service import Base
 
 
-def make_collection(mount, notes):
+def make_collection(mount, notes, notetype="Basic", usn=-1, suspended=()):
     """A small Anki collection: `notes` are (id, fields list, deck name)."""
     path = Path(mount) / clashes.COLLECTION_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
+    path.unlink(missing_ok=True)
     conn = sqlite3.connect(path)
-    conn.executescript("CREATE TABLE notes(id INTEGER, flds TEXT); CREATE TABLE cards(id INTEGER, nid INTEGER, did INTEGER);"
-                       "CREATE TABLE decks(id INTEGER, name TEXT);")
+    conn.executescript(
+        "CREATE TABLE notes(id INTEGER, mid INTEGER, usn INTEGER, tags TEXT, flds TEXT);"
+        "CREATE TABLE cards(id INTEGER, nid INTEGER, did INTEGER, usn INTEGER, queue INTEGER, ivl INTEGER, reps INTEGER, lapses INTEGER);"
+        "CREATE TABLE decks(id INTEGER, name TEXT);"
+        "CREATE TABLE notetypes(id INTEGER, name TEXT);"
+        "CREATE TABLE graves(oid INTEGER, type INTEGER, usn INTEGER);")
+    conn.execute("INSERT INTO notetypes VALUES (1, ?)", (notetype,))
     decks = {}
     for nid, fields, deck in notes:
         did = decks.setdefault(deck, len(decks) + 1)
-        conn.execute("INSERT INTO notes VALUES (?, ?)", (nid, "\x1f".join(fields)))
-        conn.execute("INSERT INTO cards VALUES (?, ?, ?)", (nid, nid, did))
+        conn.execute("INSERT INTO notes VALUES (?, 1, ?, '', ?)", (nid, usn, "\x1f".join(fields)))
+        conn.execute("INSERT INTO cards VALUES (?, ?, ?, ?, ?, 41, 23, 2)", (nid, nid, did, usn, -1 if nid in suspended else 2))
     for name, did in decks.items():
         conn.execute("INSERT INTO decks VALUES (?, ?)", (did, name))
     conn.commit()
@@ -150,51 +156,149 @@ class WithService(Base):
         self.setUpService(FakeQuery())
         view = self.search()
         self.assertIsNone(view["error"])
-        self.assertEqual(view["counts"], {"new": 1, "real": 0, "no": 0})
-        pair = view["groups"][0][0]
+        self.assertEqual(view["counts"], {"clashes": 1, "changes": 0, "dismissed": 0})
+        pair = view["pairs"][0]
         self.assertEqual((pair["a"], pair["b"]), (1, 2))
-        self.assertEqual(pair["percent"], 60)
+        self.assertEqual(pair["score"], 0.6)
 
     def test_the_checker_drops_pairs_below_the_cutoff(self):
         self.setUpService(FakeQuery(scores={"verdicts": [{"pair": 1, "p": 0.2}]}))
-        self.assertEqual(self.search()["groups"], [])
+        self.assertEqual(self.search()["pairs"], [])
 
-    def test_a_verdict_stays_and_teaches_the_next_search(self):
-        self.setUpService(FakeQuery())
+    def real(self):
         self.search()
-        self.svc.clash_verdict("1-2", "real")
+        self.svc._store.update_clash_pair(1, 2, state="real")
+
+    def test_a_real_clash_stays_and_teaches_the_next_search(self):
+        self.setUpService(FakeQuery())
+        self.real()
         self.query.prompts.clear()
         view = self.search()
-        self.assertEqual(view["counts"]["real"], 1)
+        self.assertEqual(view["counts"]["clashes"], 1)
+        self.assertEqual(view["pairs"][0]["state"], "real")
         self.assertTrue(any("REAL clashes" in prompt for prompt in self.query.prompts))
         self.assertFalse(any("You judge pairs" in prompt for prompt in self.query.prompts))
 
-    def test_rewording_a_question_counts_a_real_clash_as_fixed(self):
+    def test_a_search_never_erases_an_answer(self):
         self.setUpService(FakeQuery())
         self.search()
-        self.svc.clash_verdict("1-2", "real")
-        (self.mount / clashes.COLLECTION_FILE).unlink()
+        self.svc._store.set_clash_pair({"a": 1, "b": 2, "fingerprint": "other", "front_a": "Q", "back_a": "", "front_b": "R", "back_b": "",
+                                        "state": "new"})
+        self.assertEqual(self.svc._store.clash_pair(1, 2)["fingerprint"], "other")
+        self.svc._store.update_clash_pair(1, 2, state="real")
+        self.svc._store.set_clash_pair({"a": 1, "b": 2, "fingerprint": "third", "front_a": "Q", "back_a": "", "front_b": "R", "back_b": "",
+                                        "state": "new"})
+        self.assertEqual(self.svc._store.clash_pair(1, 2)["state"], "real")
+
+    def test_rewording_a_question_asks_whether_it_is_fixed(self):
+        self.setUpService(FakeQuery())
+        self.real()
         make_collection(self.mount, [(1, ["What should you ask before a daily habit?", "Do I want this daily?"], "D"), NOTES[1]])
         self.svc.clashes.refresh(self.mount)
-        view = self.svc.clashes_view()
-        self.assertEqual(view["fixed"], 1)
-        self.assertEqual(view["groups"], [])
+        pair = self.svc.clashes_view()["pairs"][0]
+        self.assertEqual(pair["status"], "ask")
+        self.assertEqual(pair["msg"], "Reworded. Does this fix it?")
+        self.assertFalse(pair["closed"])
+        self.query.prompts.clear()
+        view = self.svc.clash_pair_action("1-2", "fixed")
+        self.assertEqual(view["pairs"][0]["status"], "fixed")
+        self.assertEqual(view["counts"]["clashes"], 0)
+        self.assertEqual(self.query.prompts, [])
+        view = self.svc.clash_pair_action("1-2", "undo")
+        self.assertEqual(view["pairs"][0]["status"], "ask")
+        view = self.svc.clash_pair_action("1-2", "still")
+        self.assertEqual(view["pairs"][0]["msg"], "Reworded, still a clash.")
+        self.assertEqual(view["counts"]["clashes"], 1)
+        verdicts = [row["verdict"] for row in self.svc._store.clash_verdicts()]
+        self.assertEqual(verdicts, ["fixed", "undo-fixed", "still"])
+
+    def test_the_ai_only_looks_at_reworded_pairs_when_asked(self):
+        self.setUpService(FakeQuery(scores={"verdicts": [{"pair": 1, "p": 0.1}]}))
+        self.svc.clashes.check_reworded  # noqa: B018
+        self.svc._store.set_clash_pair({"a": 1, "b": 2, "fingerprint": "older words", "front_a": "Q", "back_a": "", "front_b": "R", "back_b": "", "state": "real"})
+        self.assertEqual(self.query.prompts, [])
+        self.svc.clash_pair_action("1-2", "ask_ai")
+        self.wait(lambda: not self.svc.clashes_view()["running"])
+        pair = self.svc.clashes_view()["pairs"][0]
+        self.assertEqual(pair["status"], "ai")
+        self.assertIn("no longer read alike", pair["msg"])
+        self.assertEqual(self.svc._store.clash_verdicts()[-1]["verdict"], "ai")
+        self.assertEqual(self.svc._store.clash_verdicts()[-1]["score"], 0.1)
 
     def test_a_failed_search_says_why_and_keeps_verdicts(self):
         self.setUpService(FakeQuery())
-        self.search()
-        self.svc.clash_verdict("1-2", "real")
+        self.real()
         def broken(*args, **kwargs):
             raise ai.AIError("The AI isn't answering.")
         self.svc.clashes._query = broken
         view = self.search()
         self.assertEqual(view["error"], "The AI isn't answering.")
-        self.assertEqual(view["counts"]["real"], 1)
+        self.assertEqual(view["pairs"][0]["state"], "real")
 
     def test_an_unknown_pair_is_refused(self):
         self.setUpService(FakeQuery())
-        with self.assertRaises(Exception):
-            self.svc.clash_verdict("8-9", "real")
+        with self.assertRaises(service.ServiceError):
+            self.svc.clash_pair_action("8-9", "dismiss")
+
+    # Dismissing
+
+    def test_a_dismissed_pair_is_logged_and_stays_hidden_while_it_reads_about_the_same(self):
+        self.setUpService(FakeQuery())
+        self.search()
+        view = self.svc.clash_pair_action("1-2", "dismiss")
+        self.assertEqual(view["counts"]["clashes"], 0)
+        self.assertEqual(view["counts"]["dismissed"], 1)
+        self.assertEqual(view["dismissed"][0]["source"], "From Find clashes")
+        self.assertEqual(self.svc._store.clash_verdicts()[-1]["verdict"], "no")
+        self.query.prompts.clear()
+        view = self.search()
+        self.assertEqual(view["pairs"][0]["status"], "dismissed")
+        self.assertTrue(view["pairs"][0]["closed"])
+        self.assertFalse(any("You judge pairs" in prompt for prompt in self.query.prompts))
+        self.assertIn("Left out 1 pair you already answered.", view["learn"])
+
+    def test_a_pair_reworded_a_lot_can_come_up_again(self):
+        self.setUpService(FakeQuery())
+        self.search()
+        self.svc.clash_pair_action("1-2", "dismiss")
+        make_collection(self.mount, [(1, ["Name the question to pose in front of something tempting", "Do I want this daily?"], "D"), NOTES[1]])
+        self.svc.clashes.refresh(self.mount)
+        view = self.search()
+        self.assertEqual(view["counts"]["clashes"], 1)
+        self.assertEqual(view["counts"]["dismissed"], 0)
+
+    def test_undoing_a_dismissal_brings_the_pair_back(self):
+        self.setUpService(FakeQuery())
+        self.search()
+        view = self.svc.clash_pair_action("1-2", "dismiss")
+        view = self.svc.clash_undo_dismissal(view["dismissed"][0]["id"])
+        self.assertEqual(view["counts"], {"clashes": 1, "changes": 0, "dismissed": 0})
+
+    def test_a_dismissal_from_find_also_stops_the_save_check_warning(self):
+        reply = {"clashes": [{"new": 1, "other": "E1", "p": 0.7, "why": "Alike"}]}
+        self.setUpService(FakeQuery(new=reply))
+        self.search()
+        self.svc._store.add_clash_dismissal({"front_a": "What to ask when tempted?", "back_a": "", "front_b": NOTES[0][1][0], "back_b": "", "source": "find"})
+        self.save_cards(("What to ask when tempted?", "How will I feel?"))
+        self.assertEqual(self.checked()["clashCheck"]["found"], 0)
+
+    def test_suspended_cards_are_left_out_of_searches_and_checks(self):
+        self.setUpService(FakeQuery())
+        self.svc.card_suspend("3")
+        self.query.prompts.clear()
+        self.search()
+        self.assertFalse(any("capital of Australia" in prompt for prompt in self.query.prompts))
+        self.save_cards(("Answered?", "Yes"))
+        self.checked()
+        self.assertNotIn("capital of Australia", self.query.prompts[-1])
+
+    def test_old_answers_move_to_the_dismissed_list_once(self):
+        self.setUpService(FakeQuery())
+        self.svc._store.set_setting(clashes.NOT_A_CLASH_SETTING, [{"front_a": "A?", "back_a": "", "front_b": "B?", "back_b": "", "state": "no", "decided_at": 1}])
+        self.svc._store.set_clash_pair({"a": 1, "b": 2, "fingerprint": "f", "front_a": "C?", "back_a": "", "front_b": "D?", "back_b": "", "state": "no"})
+        self.svc.clashes.import_trial_file()
+        self.svc.clashes.import_trial_file()
+        self.assertEqual(sorted(row["source"] for row in self.svc._store.clash_dismissals()), ["find", "save"])
 
     def test_nothing_on_the_reader_is_written(self):
         self.setUpService(FakeQuery())
@@ -363,7 +467,7 @@ class WithService(Base):
                                            "pairs": [{"a": 1, "b": 2, "state": "real", "fingerprint": clashes.fingerprint({"front": "Q1", "back": "A1"}, {"front": "Q2", "back": "A2"}),
                                                       "front_a": "Q1", "back_a": "A1", "front_b": "Q2", "back_b": "A2"}]}))
         svc = self.make_service(query=FakeQuery())
-        self.assertEqual(svc.clashes_view()["counts"]["real"], 1)
+        self.assertEqual(svc.clashes_view()["pairs"][0]["state"], "real")
         self.assertFalse(import_file.exists())
 
 

@@ -787,7 +787,7 @@ check("The Plug in screen's check time counts, and its refused path stays for co
 });
 
 // Last, because the collection it adds stays for any check after it
-check("The Save screen finds clashes, and Not a clash and an edit each clear one", async () => {
+check("The Save screen finds clashes, and Dismiss clash and an edit each clear one", async () => {
   await killServer();
   fs.writeFileSync(path.join(env.PBANKI_DESKTOP_HOME, "clash-import.json"), JSON.stringify({
     notes: [{ nid: 1, deck: "Default", front: "Where is Zanzibar?", back: "Off Tanzania" }],
@@ -801,9 +801,9 @@ check("The Save screen finds clashes, and Not a clash and an edit each clear one
     await call("PATCH", `/api/cards/${card.id}`, { front, back: "An answer" });
   }
   const page = await fresh(`#/book/${PRIDE}/save`);
-  const tags = page.locator(".clasht");
+  const tags = page.locator(".clashp .btn", { hasText: "Dismiss clash" });
   await until(async () => (await tags.count()) === 2, "Both cards are flagged", 15000);
-  ok((await page.locator(".clashn").first().innerText()).includes("Where is Zanzibar?"), "It shows the card it clashes with");
+  ok((await page.locator(".clashp").first().innerText()).includes("Where is Zanzibar?"), "It shows the card it clashes with");
   ok((await page.locator(".saver .btn.pri").innerText()).includes("Save anyway"), "The button says it would save anyway");
 
   await page.locator(".sgh .lnk").first().click();
@@ -811,11 +811,12 @@ check("The Save screen finds clashes, and Not a clash and an edit each clear one
   await page.goBack();
   await until(async () => (await tags.count()) === 2, "Coming back keeps both clashes");
 
-  await button(page, "Not a clash").first().click();
-  await until(async () => (await tags.count()) === 1, "Not a clash clears that one");
+  await tags.first().click();
+  await until(async () => (await tags.count()) === 1, "Dismiss clash clears that one");
   await page.getByText("No clash now").waitFor();
+  await page.getByText("It won't warn about this pair again").waitFor();
 
-  const fronts = page.locator(".sre .ta.f");
+  const fronts = page.locator(".clashp .edta.q");
   ok((await fronts.nth(1).inputValue()).includes("Zanzibar"), "The second card stays where it was");
   await fronts.nth(1).fill("What is the capital of France?");
   await until(async () => (await tags.count()) === 0, "An edit clears the other", 15000);
@@ -824,7 +825,238 @@ check("The Save screen finds clashes, and Not a clash and an edit each clear one
   await page.reload();
   await page.locator(".saver .btn.pri").waitFor();
   await until(async () => (await page.locator(".saver").innerText()).includes("No clashes"), "The check finishes clean", 15000);
-  eq(await tags.count(), 0, "The Not a clash answer lasts");
+  eq(await tags.count(), 0, "The dismissal lasts");
+});
+
+// With the server stopped, so a send under way can't write over what this clears.
+function seedCollection(pairs = true) {
+  for (const name of ["changes.jsonl", "changes.applying.jsonl", "changes.results.jsonl"]) fs.rmSync(path.join(mount, "applications/pbanki", name), { force: true });
+  const script = `
+import json, sqlite3, sys
+from pathlib import Path
+sys.path.insert(0, ${JSON.stringify(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", ".."))})
+sys.path.insert(0, ${JSON.stringify(path.join(path.dirname(fileURLToPath(import.meta.url)), ".."))})
+from pbanki_desktop import changes, clashes, paths
+from test_clashes import make_collection
+mount, home = sys.argv[1:3]
+make_collection(mount, [
+    (1, ["What is the aim of meditation?", "To end the war with thoughts."], "Monks"),
+    (2, ["What is meditation's purpose?", "Transforming the heart."], "Monks"),
+    (3, ["How do you tell a real reward?", "It gives life meaning."], "Willpower"),
+    (4, ["How do you test a reward?", "Pay attention to getting it."], "Willpower"),
+    (5, ["Where is Zanzibar?", "Off Tanzania"], "Places"),
+])
+(Path(mount) / paths.APP_FILE).write_bytes(changes.FORMAT_MARKER)
+db = sqlite3.connect(Path(home) / "pbanki.db")
+db.execute("DELETE FROM clash_pairs")
+db.execute("DELETE FROM clash_dismissals")
+db.execute("DELETE FROM card_changes")
+db.execute("DELETE FROM card_clashes")
+notes = {n["nid"]: n for n in clashes.read_collection(mount)}
+for a, b in ((1, 2), (3, 4)) if ${pairs ? "True" : "False"} else ():
+    first, second = notes[a], notes[b]
+    db.execute("INSERT INTO clash_pairs(a, b, fingerprint, front_a, back_a, front_b, back_b, state, score) VALUES (?,?,?,?,?,?,?,?,?)",
+               (a, b, clashes.fingerprint(first, second), first["front"], first["back"], second["front"], second["back"], "new", 0.8))
+db.commit()
+`;
+  const done = spawnSync("python3", ["-c", script, mount, env.PBANKI_DESKTOP_HOME], { encoding: "utf-8" });
+  if (done.status !== 0) throw new Error(done.stderr);
+}
+
+async function plug(connected) {
+  const away = `${mount}.away`;
+  if (connected === fs.existsSync(mount)) return;
+  if (connected) fs.renameSync(away, mount);
+  else fs.renameSync(mount, away);
+  await until(async () => (await call("GET", "/api/state")).data.reader.connected === connected, "The app notices the reader", 15000);
+  // The app looks every 2 seconds, and only a look it took sees the reader come and go
+  await new Promise((done) => setTimeout(done, 3000));
+}
+
+const changesFile = () => path.join(mount, "applications/pbanki/changes.jsonl");
+const queued = () => fs.readFileSync(changesFile(), "utf-8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
+// What the reader does while it's away from the computer: takes the queue and writes results.
+const applyAway = (lines) => {
+  const dir = path.join(`${mount}.away`, "applications/pbanki");
+  fs.rmSync(path.join(dir, "changes.jsonl"), { force: true });
+  fs.appendFileSync(path.join(dir, "changes.results.jsonl"), lines.map((line) => `${JSON.stringify({ at: 5, ...line })}\n`).join(""));
+};
+const shots = process.env.E2E_SHOTS;
+const shot = async (page, name) => { if (shots) await page.screenshot({ path: path.join(shots, `${name}.png`), fullPage: true }); };
+
+check("Fixing clashes from here: edit and suspend wait, go by themselves, can be undone, and report back", async () => {
+  await killServer();
+  seedCollection();
+  await startServer();
+  await until(async () => (await call("GET", "/api/clashes")).data.cards === 5, "It reads the collection", 15000);
+  await plug(false);
+  const page = await fresh("#/clashes");
+  await page.getByText("2 pairs").waitFor({ state: "detached" });
+  const body = () => page.locator(".wide").innerText();
+  await until(async () => (await body()).includes("Clashes (2)"), "Both clashes are listed");
+  ok((await body()).includes("Added"), "Cards show their age");
+  ok((await body()).includes("23 reviews"), "Cards show their reviews");
+
+  const first = page.locator(".clashp").first();
+  await first.locator(".lnk", { hasText: "Edit" }).first().click();
+  await first.getByText("Stays on this computer until you plug in your reader.").waitFor();
+  await first.locator("textarea.q").fill("");
+  await first.locator(".btn", { hasText: "Save change" }).click();
+  await first.getByText("A card needs a question.").waitFor();
+  await first.locator("textarea.q").fill("What does meditation change about how we relate to thoughts?");
+  eq(await first.locator(".cbx input").isChecked(), false, "Learn again is off when only the question changed");
+  await first.locator("textarea.a").fill("We stop fighting them.");
+  eq(await first.locator(".cbx input").isChecked(), true, "Learn again comes on when the answer changed");
+  await first.locator(".btn", { hasText: "Save change" }).click();
+  await first.getByText("WAITING FOR READER").waitFor();
+  await first.getByText("Reader still has:").waitFor();
+  await first.getByText("Comes back as a new card, and keeps its review log.").waitFor();
+  await first.getByText("Reworded. Does this fix it?").waitFor();
+  await page.getByText("1 change waiting for your reader.").waitFor();
+  await shot(page, "clashes-edited");
+
+  const second = page.locator(".clashp").nth(1);
+  await second.locator(".lnk", { hasText: "Suspend" }).first().click();
+  await second.getByText("WILL BE SUSPENDED").waitFor();
+  await second.getByText("Settled, because a card in this pair is suspended.").waitFor();
+  await second.locator(".lnk", { hasText: "Unsuspend" }).click();
+  await second.locator(".btn", { hasText: "Dismiss" }).waitFor();
+  await second.locator(".lnk", { hasText: "Suspend" }).first().click();
+  await second.getByText("WILL BE SUSPENDED").waitFor();
+
+  await page.locator(".sg", { hasText: "Changes" }).click();
+  await page.getByText("Plug in your PocketBook to send 2 changes").waitFor();
+  await page.getByText("On their way").waitFor();
+  await page.getByText("Waiting for your reader.").first().waitFor();
+  await page.getByText("Is it fixed?").waitFor();
+  await shot(page, "changes-waiting");
+  ok(!fs.existsSync(`${mount}.away/applications/pbanki/changes.jsonl`), "Nothing is written while it's unplugged");
+
+  await plug(true);
+  await page.getByText("2 changes on your reader").waitFor({ timeout: 20000 });
+  await page.locator(".btn", { hasText: "Eject reader" }).waitFor();
+  eq(queued().length, 2, "Both changes are on the reader");
+  await shot(page, "changes-on-reader");
+
+  await page.locator(".chg", { hasText: "Reworded" }).locator(".lnk", { hasText: "Undo" }).click();
+  await page.getByText("1 change on your reader").waitFor({ timeout: 20000 });
+  eq(queued().map((line) => line.op), ["suspend"], "Undo takes it off the reader");
+
+  // The edit again, then pbAnki reports back
+  await page.locator(".sg", { hasText: "Clashes" }).click();
+  await first.locator(".lnk", { hasText: "Edit" }).first().click();
+  await first.locator("textarea.q").fill("A wording that gets refused?");
+  await first.locator(".btn", { hasText: "Save change" }).click();
+  await until(async () => queued().length === 2, "The new edit goes by itself", 20000);
+  const [suspend, edit] = [queued().find((line) => line.op === "suspend"), queued().find((line) => line.op === "edit")];
+  await plug(false);
+  applyAway([{ id: suspend.id, note_id: 3, status: "applied" },
+    { id: edit.id, note_id: 1, status: "refused", reason: "changed", front: "Words from the reader?", back: "To end the war with thoughts." }]);
+  await plug(true);
+  await page.locator(".sg", { hasText: "Changes" }).click();
+  await page.getByText("Needs you").waitFor({ timeout: 20000 });
+  await page.getByText("Words from the reader?").waitFor();
+  await page.getByText("A wording that gets refused?").first().waitFor();
+  await shot(page, "changes-needs-you");
+  await page.locator(".btn", { hasText: "Keep the reader's text" }).click();
+  await page.locator(".btn", { hasText: "Leave it" }).click();
+  await page.getByText("Needs you").waitFor({ state: "detached" });
+});
+
+check("Delete for good asks first, and Dismiss has an Undo and a tab of its own", async () => {
+  await plug(true);
+  await killServer();
+  seedCollection();
+  await startServer();
+  await until(async () => (await call("GET", "/api/clashes")).data.cards === 5, "It reads the collection", 15000);
+  await call("POST", "/api/clashes/cards/3/suspend");
+  const page = await fresh("#/clashes");
+  await page.locator(".btn", { hasText: "Dismiss" }).first().click();
+  await page.getByText("Dismissed. It stays hidden while these questions read about the same.").waitFor();
+  await page.locator(".prow .lnk", { hasText: "Undo" }).click();
+  await page.getByText("Dismissed. It stays hidden").waitFor({ state: "detached" });
+  await page.locator(".btn", { hasText: "Dismiss" }).first().click();
+  await page.locator(".sg", { hasText: "Dismissed (1)" }).click();
+  await page.getByText("From Find clashes", { exact: true }).waitFor();
+  await shot(page, "dismissed");
+  await page.locator(".lnk", { hasText: "Undo dismiss" }).click();
+  await page.locator(".sg", { hasText: "Dismissed (0)" }).waitFor();
+
+  await page.locator(".sg", { hasText: "Changes" }).click();
+  const row = page.locator(".chg", { hasText: "How do you tell a real reward?" });
+  await row.locator(".lnk", { hasText: "Delete for good" }).click();
+  await row.getByText("This computer keeps a copy of its text.").waitFor();
+  await shot(page, "delete-confirm");
+  await row.locator(".btn", { hasText: "Keep it suspended" }).click();
+  await row.locator(".lnk", { hasText: "Delete for good" }).click();
+  await row.locator(".btn", { hasText: "Delete for good" }).click();
+  await page.locator(".chgk", { hasText: "Delete for good" }).waitFor();
+});
+
+check("A reader with an old pbAnki gets nothing, and says what to do", async () => {
+  await plug(true);
+  await killServer();
+  seedCollection();
+  fs.writeFileSync(path.join(mount, "applications/pbanki/pbanki"), "an older app");
+  await startServer();
+  await until(async () => (await call("GET", "/api/clashes")).data.cards === 5, "It reads the collection", 15000);
+  await call("POST", "/api/clashes/cards/1/suspend");
+  const page = await fresh("#/clashes");
+  await page.locator(".sg", { hasText: "Changes" }).click();
+  await page.getByText("Your reader's pbAnki can't take these changes yet").waitFor({ timeout: 20000 });
+  await shot(page, "changes-old-build");
+  ok(!fs.existsSync(changesFile()) || !fs.readFileSync(changesFile(), "utf-8"), "Nothing was written");
+  await page.locator(".brand").click();
+  await page.getByText("1 change waiting for your reader").waitFor();
+  await page.getByText("1 clash", { exact: true }).waitFor();
+  await shot(page, "start");
+});
+
+check("The Save check and Highlights share the same answers, and a restart doesn't start a check", async () => {
+  await plug(true);
+  await killServer();
+  seedCollection(false);
+  await startServer();
+  await until(async () => (await call("GET", "/api/clashes")).data.cards === 5, "It reads the collection", 15000);
+  const book = await bookOf(GARDENS);
+  const highlight = book.highlights.filter((h) => h.canEdit)[2];
+  await call("POST", `/api/books/${GARDENS}/highlights/${highlight.id}/open`);
+  const card = await newCard(GARDENS, highlight.id);
+  await call("PATCH", `/api/cards/${card.id}`, { front: "What is Zanzibar near?", back: "Tanzania" });
+  const page = await fresh(`#/book/${GARDENS}/save`);
+  const row = page.locator(".clashp").first();
+  await row.getByText("Where is Zanzibar?").waitFor({ timeout: 20000 });
+  await shot(page, "save-clash");
+  await row.locator(".lnk", { hasText: "Edit" }).click();
+  await row.locator("textarea.q").nth(1).fill("Which ocean is Zanzibar in?");
+  await row.locator(".btn", { hasText: "Save change" }).click();
+  await row.getByText("Reworded. Does this fix it?").waitFor();
+  await row.locator(".btn", { hasText: "Yes, fixed" }).click();
+  await row.getByText("You said this is fixed.").waitFor();
+  await until(async () => !(await page.locator(".saver .btn.pri").innerText()).includes("anyway"), "No clash left to save over");
+  await row.locator(".prb .lnk", { hasText: "Undo" }).click();
+  await row.getByText("Reworded. Does this fix it?").waitFor();
+
+  await page.goto(`${url}/#/book/${GARDENS}/highlights/${highlight.id}`);
+  const note = page.locator(".clashn");
+  await note.getByText("Which ocean is Zanzibar in?").waitFor();
+  await shot(page, "highlights-clash");
+  await note.locator(".lnk", { hasText: "Dismiss" }).click();
+  await note.waitFor({ state: "detached" });
+  await page.locator(".undo .lnk", { hasText: "Undo" }).click();
+  await note.waitFor();
+
+  // An edit that makes a check pending, with the page having started it before a restart
+  await page.goto(`${url}/#/book/${GARDENS}/save`);
+  await page.locator(".saver").waitFor();
+  await call("PATCH", `/api/cards/${card.id}`, { front: "What is Zanzibar next to?", back: "Tanzania" });
+  const key = (await call("GET", `/api/books/${GARDENS}/save`)).data.clashCheck.key;
+  await page.evaluate(([id, wanted]) => sessionStorage.setItem(`pbanki-check-${id}-${wanted}`, "1"), [GARDENS, key]);
+  await page.reload();
+  await page.getByText("Clashes won't be checked for this save.").waitFor();
+  ok(!(await page.locator(".saver .btn.pri").isDisabled()), "Saving isn't blocked");
+  const before = (await call("GET", `/api/books/${GARDENS}/save`)).data.clashCheck.state;
+  eq(before, "pending", "No check started by itself");
 });
 
 let failures = 0;

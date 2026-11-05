@@ -200,6 +200,85 @@ MIGRATIONS = [
     (
         "ALTER TABLE highlight_state ADD COLUMN redo INTEGER NOT NULL DEFAULT 0",
     ),
+    (
+        "ALTER TABLE collection_notes ADD COLUMN raw_front TEXT",
+        "ALTER TABLE collection_notes ADD COLUMN raw_back TEXT",
+        "ALTER TABLE collection_notes ADD COLUMN notetype TEXT",
+        "ALTER TABLE collection_notes ADD COLUMN fields INTEGER",
+        "ALTER TABLE collection_notes ADD COLUMN cards INTEGER",
+        "ALTER TABLE collection_notes ADD COLUMN usn INTEGER",
+        "ALTER TABLE collection_notes ADD COLUMN card_usn INTEGER",
+        "ALTER TABLE collection_notes ADD COLUMN reps INTEGER",
+        "ALTER TABLE collection_notes ADD COLUMN lapses INTEGER",
+        "ALTER TABLE collection_notes ADD COLUMN ivl INTEGER",
+        "ALTER TABLE collection_notes ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE collection_notes ADD COLUMN tags TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE clash_pairs ADD COLUMN decision TEXT",
+        "ALTER TABLE clash_pairs ADD COLUMN decision_fp TEXT",
+        "ALTER TABLE clash_pairs ADD COLUMN ai_score REAL",
+        "ALTER TABLE clash_pairs ADD COLUMN auto INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE clash_pairs ADD COLUMN model TEXT",
+        "ALTER TABLE clash_pairs ADD COLUMN prompt TEXT",
+        "ALTER TABLE card_clashes ADD COLUMN other_nid INTEGER",
+        "ALTER TABLE card_clashes ADD COLUMN decision TEXT",
+        "ALTER TABLE card_clashes ADD COLUMN decision_fp TEXT",
+        "ALTER TABLE card_clashes ADD COLUMN ai_score REAL",
+        """CREATE TABLE clash_dismissals(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            a INTEGER,
+            b INTEGER,
+            front_a TEXT NOT NULL,
+            back_a TEXT NOT NULL DEFAULT '',
+            front_b TEXT NOT NULL,
+            back_b TEXT NOT NULL DEFAULT '',
+            source TEXT NOT NULL,
+            record TEXT,
+            question TEXT,
+            found_json TEXT,
+            at REAL
+        )""",
+        """CREATE TABLE clash_verdicts(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            at REAL,
+            a INTEGER,
+            b INTEGER,
+            front_a TEXT NOT NULL,
+            back_a TEXT NOT NULL DEFAULT '',
+            front_b TEXT NOT NULL,
+            back_b TEXT NOT NULL DEFAULT '',
+            verdict TEXT NOT NULL,
+            source TEXT NOT NULL,
+            score REAL,
+            model TEXT,
+            prompt TEXT
+        )""",
+        """CREATE TABLE card_changes(
+            id TEXT PRIMARY KEY,
+            seq INTEGER NOT NULL,
+            op TEXT NOT NULL,
+            nid INTEGER NOT NULL,
+            deck TEXT NOT NULL DEFAULT '',
+            expect_front TEXT,
+            expect_back TEXT,
+            front TEXT,
+            back TEXT,
+            learn INTEGER NOT NULL DEFAULT 0,
+            stage TEXT NOT NULL,
+            problem TEXT,
+            detail TEXT,
+            reader_front TEXT,
+            reader_back TEXT,
+            replaces TEXT,
+            claimed INTEGER NOT NULL DEFAULT 0,
+            copy_json TEXT,
+            created_at REAL,
+            written_at REAL,
+            result_at REAL,
+            synced_at REAL,
+            closed_at REAL,
+            on_ankiweb INTEGER NOT NULL DEFAULT 0
+        )""",
+    ),
 ]
 
 _CLOZE = re.compile(r"\{\{c\d+::")
@@ -975,14 +1054,17 @@ class Store:
     # The reader's collection and clashes
 
     def collection_notes(self):
-        return [dict(r) for r in self._all("SELECT nid, deck, front, back FROM collection_notes ORDER BY nid")]
+        return [dict(r) for r in self._all("SELECT * FROM collection_notes ORDER BY nid")]
 
     def replace_collection_notes(self, notes, read_at):
+        columns = ("nid", "deck", "front", "back", "raw_front", "raw_back", "notetype", "fields", "cards", "usn",
+                   "card_usn", "reps", "lapses", "ivl", "suspended", "tags")
+        statement = f"INSERT INTO collection_notes({', '.join(columns)}) VALUES ({_marks(columns)})"
         with self.transaction():
             self._write("DELETE FROM collection_notes")
             for note in notes:
-                self._write("INSERT INTO collection_notes(nid, deck, front, back) VALUES (?, ?, ?, ?)",
-                            (note["nid"], note["deck"], note["front"], note["back"]))
+                values = {"suspended": 0, "tags": "", **note}
+                self._write(statement, [values.get(column) for column in columns])
             self.set_setting("collection_read_at", read_at)
 
     def clash_pairs(self, states=None):
@@ -990,28 +1072,37 @@ class Store:
             return [dict(r) for r in self._all("SELECT * FROM clash_pairs")]
         return [dict(r) for r in self._all(f"SELECT * FROM clash_pairs WHERE state IN ({_marks(states)})", states)]
 
-    def set_clash_pair(self, pair):
+    def clash_pair(self, a, b):
+        row = self._one("SELECT * FROM clash_pairs WHERE a = ? AND b = ?", (a, b))
+        return dict(row) if row else None
+
+    def set_clash_pair(self, pair, overwrite=False):
+        """Adds a pair. One already there stays, unless it has no answer yet or `overwrite` says so."""
         columns = ("a", "b", "fingerprint", "front_a", "back_a", "front_b", "back_b", "state", "score", "why",
-                   "found_at", "decided_at")
-        values = {"score": None, "why": "", "found_at": None, "decided_at": None, **pair}
-        self._write(f"INSERT OR REPLACE INTO clash_pairs({', '.join(columns)}) VALUES ({_marks(columns)})",
+                   "found_at", "decided_at", "model", "prompt")
+        values = {"score": None, "why": "", "found_at": None, "decided_at": None, "model": None, "prompt": None, **pair}
+        updates = ", ".join(f"{column} = excluded.{column}" for column in columns[2:])
+        clear = "decision = NULL, decision_fp = NULL, ai_score = NULL, auto = 0"
+        guard = "" if overwrite else " WHERE clash_pairs.state = 'new'"
+        self._write(f"INSERT INTO clash_pairs({', '.join(columns)}) VALUES ({_marks(columns)}) "
+                    f"ON CONFLICT(a, b) DO UPDATE SET {updates}, {clear}{guard}",
                     [values[column] for column in columns])
 
-    def set_clash_verdict(self, a, b, state, at):
-        """Whether the pair was there to change."""
-        with self.transaction():
-            found = self._one("SELECT 1 FROM clash_pairs WHERE a = ? AND b = ?", (a, b))
-            if found:
-                self._write("UPDATE clash_pairs SET state = ?, decided_at = ? WHERE a = ? AND b = ?", (state, at, a, b))
-        return bool(found)
+    def update_clash_pair(self, a, b, **fields):
+        names = ", ".join(f"{name} = ?" for name in fields)
+        self._write(f"UPDATE clash_pairs SET {names} WHERE a = ? AND b = ?", [*fields.values(), a, b])
 
     def set_card_clash(self, record, question, found=None):
         found = found or {}
         self._write(
-            "INSERT OR REPLACE INTO card_clashes(record, question, other_front, other_back, why, score) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (record, question, found.get("front"), found.get("back"), found.get("why"), found.get("score")),
+            "INSERT OR REPLACE INTO card_clashes(record, question, other_front, other_back, why, score, other_nid) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (record, question, found.get("front"), found.get("back"), found.get("why"), found.get("score"), found.get("nid")),
         )
+
+    def set_card_clash_decision(self, record, question, decision, decision_fp, ai_score=None):
+        self._write("UPDATE card_clashes SET decision = ?, decision_fp = ?, ai_score = ? WHERE record = ? AND question = ?",
+                    (decision, decision_fp, ai_score, record, question))
 
     def forget_card_clash(self, record):
         self._write("DELETE FROM card_clashes WHERE record = ?", (record,))
@@ -1020,3 +1111,55 @@ class Store:
         """What was found for this record, while its question still reads the same, else None."""
         row = self._one("SELECT * FROM card_clashes WHERE record = ? AND question = ?", (record, question))
         return dict(row) if row else None
+
+    # Dismissed pairs and the log of answers
+
+    def clash_dismissals(self):
+        return [dict(r) for r in self._all("SELECT * FROM clash_dismissals ORDER BY id DESC")]
+
+    def clash_dismissal(self, dismissal_id):
+        row = self._one("SELECT * FROM clash_dismissals WHERE id = ?", (dismissal_id,))
+        return dict(row) if row else None
+
+    def add_clash_dismissal(self, item):
+        columns = ("a", "b", "front_a", "back_a", "front_b", "back_b", "source", "record", "question", "found_json", "at")
+        self._write(f"INSERT INTO clash_dismissals({', '.join(columns)}) VALUES ({_marks(columns)})",
+                    [item.get(column) for column in columns])
+        return self._one("SELECT last_insert_rowid() AS id")["id"]
+
+    def remove_clash_dismissal(self, dismissal_id):
+        self._write("DELETE FROM clash_dismissals WHERE id = ?", (dismissal_id,))
+
+    def log_clash_verdict(self, entry):
+        """Adds to the log of answers, which nothing ever changes."""
+        columns = ("at", "a", "b", "front_a", "back_a", "front_b", "back_b", "verdict", "source", "score", "model", "prompt")
+        self._write(f"INSERT INTO clash_verdicts({', '.join(columns)}) VALUES ({_marks(columns)})",
+                    [entry.get(column) for column in columns])
+
+    def clash_verdicts(self):
+        return [dict(r) for r in self._all("SELECT * FROM clash_verdicts ORDER BY id")]
+
+    # Changes to cards in the reader's collection
+
+    def card_changes(self, open_only=False):
+        where = " WHERE closed_at IS NULL" if open_only else ""
+        return [dict(r) for r in self._all(f"SELECT * FROM card_changes{where} ORDER BY seq")]
+
+    def card_change(self, change_id):
+        row = self._one("SELECT * FROM card_changes WHERE id = ?", (change_id,))
+        return dict(row) if row else None
+
+    def add_card_change(self, change):
+        with self.transaction():
+            seq = self._one("SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM card_changes")["next"]
+            values = {"seq": seq, **change}
+            columns = tuple(values)
+            self._write(f"INSERT INTO card_changes({', '.join(columns)}) VALUES ({_marks(columns)})",
+                        [values[column] for column in columns])
+
+    def update_card_change(self, change_id, **fields):
+        names = ", ".join(f"{name} = ?" for name in fields)
+        self._write(f"UPDATE card_changes SET {names} WHERE id = ?", [*fields.values(), change_id])
+
+    def remove_card_change(self, change_id):
+        self._write("DELETE FROM card_changes WHERE id = ?", (change_id,))

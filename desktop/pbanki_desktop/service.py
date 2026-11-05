@@ -24,7 +24,7 @@ from datetime import datetime
 from functools import wraps
 from pathlib import Path
 
-from . import ai, cardgen, checks, clashes, companion, device, epub, paths, prompts, reader, runs, save
+from . import ai, cardgen, changes, checks, clashes, companion, device, epub, paths, prompts, reader, runs, save
 from . import store as store_module
 from .store import DRAFT, Store, VERIFIED, book_id_for, hid_for
 
@@ -331,7 +331,10 @@ def _passage_fields(h):
 
 
 def _clash_is_stale(found, fronts):
-    # Whether the question it clashed with is gone. `fronts` of None doesn't look.
+    # Whether the new card it clashed with is gone. `fronts` of None doesn't look. A clash with a card
+    # in the collection stands until the user answers, whatever happens to that card's wording.
+    if found.get("other_nid"):
+        return False
     return fronts is not None and bool(found["other_front"]) and found["other_front"] not in fronts
 
 
@@ -458,6 +461,7 @@ class Service:
         self._create_lock = threading.Lock()
         self._notes_memo = {}
         self._find_errors = {}
+        self._check_skips = set()
 
     # Life cycle
 
@@ -561,10 +565,30 @@ class Service:
             self._hub.publish({"topic": READER, "type": "checked", "connected": False, "mount": str(mount)})
         elif not self._is_saving() and any(not b["error"] for b in self._store.unverified_batches()):
             self._finish_saves()
+        elif not self._is_saving() and self._changes_to_send():
+            self._send_changes()
 
     def _reader_appeared(self):
         self._finish_saves()
         self._start_refresh()
+
+    def _changes_to_send(self):
+        if self._store.get_setting(changes.ERROR_SETTING) or self._store.get_setting(changes.OLD_BUILD_SETTING):
+            return False
+        return any(row["stage"] == changes.WAITING and not row["problem"] for row in self._store.card_changes(open_only=True))
+
+    def _send_changes(self):
+        with self._save_under_way():
+            self.clashes.emit_changes()
+            changes.send(self._store, self._mount())
+        self.clashes.emit_changes()
+
+    def _read_clashes(self, mount):
+        # A plug-in starts afresh: what stopped the last send may be gone now
+        self.clashes.refresh(mount)
+        self._store.set_setting(changes.ERROR_SETTING, None)
+        self._store.set_setting(changes.OLD_BUILD_SETTING, None)
+        self._send_changes()
 
     def _start_refresh(self):
         with self._refresh_lock:
@@ -920,7 +944,7 @@ class Service:
 
     def _refresh_all(self):
         try:
-            self._read_reader(self.clashes.refresh)
+            self._read_reader(self._read_clashes)
             rows = self._read_reader(reader.list_books)
             if not rows:
                 return
@@ -959,9 +983,7 @@ class Service:
             if not self._store.collection_notes():
                 return
             self._check_model(self._store.get_settings()["meta_model"])
-            records = [(f"card:{card['id']}", card) for card in self._store.list_cards(book_id)]
-            records += [(f"connection:{item['id']}", item) for item in self._store.list_connections(book_id)]
-            records += [(f"idea:{item['id']}", item) for item in self._store.list_ideas(book_id)]
+            records = list(self._book_records(book_id).items())
             batch = [{"record": record, "question": clashes.card_key(item["front"], item["back"]),
                       "front": clashes.plain(item["front"]), "back": item["back"]}
                      for record, item in records
@@ -981,15 +1003,46 @@ class Service:
         except Exception:
             _log.exception("New cards could not be checked")
 
+    def _book_records(self, book_id):
+        records = {f"card:{card['id']}": card for card in self._store.list_cards(book_id)}
+        records.update((f"connection:{item['id']}", item) for item in self._store.list_connections(book_id))
+        records.update((f"idea:{item['id']}", item) for item in self._store.list_ideas(book_id))
+        return records
+
     def _clash_note(self, record, front, back):
+        """What a new card clashes with, and where the user's answer stands."""
         found = self._store.card_clash(record, clashes.card_key(front, back))
         if not found or not found["other_front"]:
             return None
-        return {"front": found["other_front"], "back": found["other_back"] or "", "why": found["why"] or ""}
+        note = {"front": found["other_front"], "back": found["other_back"] or "", "why": found["why"] or "",
+                "status": "open", "msg": "", "card": None, "closed": False}
+        notes = self.clashes.current_notes()
+        other = next((n for n in notes if n["nid"] == found["other_nid"]), None) if found["other_nid"] else (
+            next((n for n in notes if n["front"] == found["other_front"]), None))
+        if other is None:
+            if found["other_nid"]:
+                return None
+            return note
+        if other.get("deleting"):
+            return None
+        current = clashes.card_key(other["front"], other["back"])
+        decided = found["decision"] if found["decision_fp"] == current else None
+        if other.get("suspended"):
+            status = "settled"
+        elif decided in ("fixed", "still", "ai"):
+            status = decided
+        elif other["front"] != found["other_front"] or other["back"] != (found["other_back"] or ""):
+            status = "ask"
+        else:
+            status = "open"
+        note.update(front=other["front"], back=other["back"], status=status, closed=status in ("settled", "fixed"),
+                    msg=clashes.status_message(status, found["ai_score"]),
+                    card=self.clashes.card_view(other, self._store.card_changes(open_only=True), self._connected()))
+        return note
 
     def _clash_fronts(self, new_fronts):
         # Every question a clash can still be about
-        return {*new_fronts, *(note["front"] for note in self._store.collection_notes())}
+        return {*new_fronts, *(note["front"] for note in self.clashes.active_notes())}
 
     def _clash_check_view(self, book_id, preview):
         """Marks the preview's editable rows with what the check found, and says where the check stands."""
@@ -1005,16 +1058,19 @@ class Service:
                 unchecked.append(key)
                 continue
             row["clash"] = self._clash_note(record, row["front_raw"], row["back_raw"])
-            found += bool(row["clash"])
+            found += bool(row["clash"]) and not row["clash"]["closed"]
         if not self._store.collection_notes():
             state = "none"
         elif self.clashes.checking(book_id):
             state = "checking"
+        elif book_id in self._check_skips:
+            state = "skipped"
         elif self.clashes.check_error(book_id):
             state = "failed"
         else:
             state = "pending" if unchecked else "done"
         return {"state": state, "found": found, "error": self.clashes.check_error(book_id) or "",
+                "saveHint": changes.save_hint(self._store, self._connected()),
                 "total": len(self._store.collection_notes()), "key": "\n".join(unchecked)}
 
     @_route
@@ -1023,37 +1079,81 @@ class Service:
         preview = self._preview(_Context(self, self._book(book_id)))
         only = {_row_record(row["path"]) for group in preview["groups"] for row in group["rows"] if row.get("path")}
         self.clashes.set_check_error(book_id, None)
+        self._check_skips.discard(book_id)
         self._check_new_cards(book_id, only)
         return {"checking": self.clashes.checking(book_id)}
 
     @_route
-    def not_a_clash(self, book_id, path):
-        """Clears a new card's clash and remembers the answer for later checks."""
-        preview = self._preview(_Context(self, self._book(book_id)))
-        rows = [row for group in preview["groups"] for row in group["rows"] if row.get("path")]
-        row = next((item for item in rows if item["path"] == path), None)
-        if row is None:
+    def save_check_skip(self, book_id):
+        """Save without checking: stops a check under way, and lets this save go ahead."""
+        self._book(book_id)
+        self._check_skips.add(book_id)
+        self.clashes.stop_check(book_id)
+        self._publish_book(book_id, "clash_check")
+        return {"ok": True}
+
+    def _new_card_clash(self, book_id, path):
+        self._book(book_id)
+        record = _row_record(path or "/")
+        item = self._book_records(book_id).get(record)
+        if item is None:
             raise ServiceError(404, "That card isn't in this save any more.")
-        record, key = _row_record(path), clashes.card_key(row["front_raw"], row["back_raw"])
+        return record, item, clashes.card_key(item["front"], item["back"])
+
+    @_route
+    def not_a_clash(self, book_id, path, source="save"):
+        """Clears a new card's clash and remembers the answer for later checks."""
+        record, item, key = self._new_card_clash(book_id, path)
         found = self._store.card_clash(record, key)
         if not found or not found["other_front"]:
             return {"ok": True}
-        front = clashes.plain(row["front_raw"])
-        self.clashes.add_not_a_clash(front, row["back_raw"], found["other_front"], found["other_back"] or "")
+        front = clashes.plain(item["front"])
+        self.clashes.dismiss_new_card(record, key, front, item["back"], found, source)
         with self._store.transaction():
-            self._store.set_card_clash(record, key)
             # The other card, when it's new too
-            for other in rows:
-                other_record, other_key = _row_record(other["path"]), clashes.card_key(other["front_raw"], other["back_raw"])
+            for other_record, other in self._book_records(book_id).items():
+                other_key = clashes.card_key(other["front"], other["back"])
                 stored = self._store.card_clash(other_record, other_key)
-                if stored and stored["other_front"] == front and clashes.plain(other["front_raw"]) == found["other_front"]:
+                if stored and stored["other_front"] == front and clashes.plain(other["front"]) == found["other_front"]:
                     self._store.set_card_clash(other_record, other_key)
         self._publish_book(book_id, "clash_check")
         return {"ok": True}
 
     @_route
+    def undo_not_a_clash(self, book_id, path):
+        record, _item, key = self._new_card_clash(book_id, path)
+        for item in self._store.clash_dismissals():
+            if item["record"] == record and item["question"] == key:
+                self.clashes.undo_dismissal(item["id"])
+                break
+        self._publish_book(book_id, "clash_check")
+        return {"ok": True}
+
+    @_route
+    def new_card_clash_action(self, book_id, path, action):
+        """Yes, fixed or Still a clash, about a new card whose existing card was reworded."""
+        record, _item, key = self._new_card_clash(book_id, path)
+        note = self._clash_note(record, _item["front"], _item["back"])
+        if note is None or note["card"] is None:
+            raise ServiceError(404, "That clash isn't there any more.")
+        if action in ("fixed", "still"):
+            self._store.set_card_clash_decision(record, key, action, clashes.card_key(note["front"], note["back"]))
+        elif action == "undo":
+            self._store.set_card_clash_decision(record, key, None, None)
+        elif action == "ask_ai":
+            self._store.forget_card_clash(record)
+            self._check_new_cards(book_id, {record})
+        else:
+            raise ServiceError(400, "That isn't an answer to this.")
+        self._publish_book(book_id, "clash_check")
+        return {"ok": True}
+
+    def _clashes_view(self):
+        return self.clashes.view(self._connected(), self._is_saving())
+
+    @_route
     def clashes_view(self):
-        return self.clashes.view()
+        return self._clashes_view()
 
     @_route
     def clashes_find(self):
@@ -1065,18 +1165,99 @@ class Service:
             self.clashes.start_search()
         except clashes.SearchBusy as e:
             raise ServiceError(409, str(e)) from None
-        return self.clashes.view()
+        return self._clashes_view()
 
     @_route
     def clashes_stop(self):
         self.clashes.stop_search()
-        return self.clashes.view()
+        return self._clashes_view()
 
     @_route
-    def clash_verdict(self, pair_id, verdict):
-        if not self.clashes.set_verdict(pair_id, verdict):
+    def clashes_check_reworded(self, pair_ids=None):
+        """Asks the AI about reworded pairs. Only ever runs when the user asks."""
+        self._check_model(self._store.get_settings()["meta_model"])
+        try:
+            self.clashes.check_reworded(pair_ids)
+        except clashes.SearchBusy as e:
+            raise ServiceError(409, str(e)) from None
+        return self._clashes_view()
+
+    @_route
+    def clash_pair_action(self, pair_id, action):
+        if action == "ask_ai":
+            return self.clashes_check_reworded([pair_id])
+        if not self.clashes.pair_action(pair_id, action):
             raise ServiceError(404, "That pair of cards isn't on this computer.")
-        return self.clashes.view()
+        return self._clashes_view()
+
+    @_route
+    def clash_undo_dismissal(self, dismissal_id):
+        if not self.clashes.undo_dismissal(int(dismissal_id)):
+            raise ServiceError(404, "That pair isn't on the Dismissed list any more.")
+        return self._clashes_view()
+
+    def _change(self, make):
+        try:
+            result = make()
+        except changes.ChangeRefused as e:
+            raise ServiceError(409, str(e)) from None
+        self.clashes.emit_changes()
+        return result
+
+    @_route
+    def card_edit(self, nid, front, back, learn):
+        nid = int(nid)
+        row = self._change(lambda: changes.queue_edit(self._store, nid, front, back, learn, self._now(), self._connected()))
+        if row is None:
+            self.clashes.change_taken_back()
+        else:
+            self.clashes.changed(nid, "edit")
+        return self._clashes_view()
+
+    @_route
+    def card_suspend(self, nid):
+        nid = int(nid)
+        self._change(lambda: changes.queue_suspend(self._store, nid, self._now()))
+        self.clashes.changed(nid, "suspend")
+        return self._clashes_view()
+
+    @_route
+    def card_unsuspend(self, nid):
+        nid = int(nid)
+        self._change(lambda: changes.queue_unsuspend(self._store, nid, self._now(), self._connected()))
+        self.clashes.change_taken_back()
+        return self._clashes_view()
+
+    @_route
+    def card_delete(self, nid):
+        nid = int(nid)
+        self._change(lambda: changes.queue_delete(self._store, nid, self._now()))
+        return self._clashes_view()
+
+    @_route
+    def change_undo(self, change_id):
+        with self._save_under_way():
+            self._change(lambda: changes.undo(self._store, change_id, self._mount()))
+        self.clashes.change_taken_back()
+        return self._clashes_view()
+
+    @_route
+    def change_use_mine(self, change_id):
+        self._change(lambda: changes.use_mine(self._store, change_id, self._now()))
+        return self._clashes_view()
+
+    @_route
+    def change_drop(self, change_id):
+        self._change(lambda: changes.drop(self._store, change_id, self._now()))
+        self.clashes.change_taken_back()
+        return self._clashes_view()
+
+    @_route
+    def changes_send(self):
+        """Try again, after a write to the reader failed."""
+        self._store.set_setting(changes.ERROR_SETTING, None)
+        self._send_changes()
+        return self._clashes_view()
 
     # Looking things up
 
@@ -2239,11 +2420,21 @@ class Service:
                 {"n": 3, "title": preview["mark_text"],
                  "detail": f"{paths.REVIEWED_FILE}. The plugin reads this when you next open the book in KOReader. "
                            "It stops offering these highlights, and adds the cards to the history it learns your style from."},
-                {"n": 4, "title": "Read back from the reader to check",
+                *self._change_step(),
+                {"n": 5 if self._waiting_changes() else 4, "title": "Read back from the reader to check",
                  "detail": "This reader has lost newly copied files before, so pbAnki confirms they landed."},
             ],
             "last_saved": self._save_result_view(save.batch_result(verified[-1])) if verified else None,
         }
+
+    def _waiting_changes(self):
+        return sum(row["stage"] == changes.WAITING and not row["problem"] for row in self._store.card_changes(open_only=True))
+
+    def _change_step(self):
+        waiting = self._waiting_changes()
+        if not waiting:
+            return []
+        return [{"n": 4, "title": f"Also send your {_plural(waiting, 'card change')}", "detail": "It waits if the reader is unplugged."}]
 
     @staticmethod
     def _held_text(held, fresh):
@@ -2257,6 +2448,7 @@ class Service:
     def save_book(self, book_id, mark_connection_sources=None):
         """Saves what the preview shows. Blocks until the reader has proven the write, or the cards
         are backed up and waiting for it. A second save during this one is refused."""
+        self._check_skips.discard(book_id)
         self._refresh_reviewed(self._book(book_id))
         context = _Context(self, self._book(book_id))
         if mark_connection_sources is not None:

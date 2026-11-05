@@ -1,6 +1,6 @@
 // The cards of one highlight: written by hand or by the AI, editable, with Rewrite and the preview.
 
-import { useEffect, useLayoutEffect, useRef } from "../../vendor/preact-htm.js";
+import { useEffect, useLayoutEffect, useRef, useState } from "../../vendor/preact-htm.js";
 import { store, useStore, setUi, mutate, removeRecord, showError, useEvent } from "../store.js";
 import { ClashNote } from "./clash-note.js";
 import { html, Field, Pulse, EinkBar } from "../ui.js";
@@ -87,6 +87,13 @@ function Card({ card, highlight, book }) {
   const remove = async () => {
     if (await removeRecord(cardPath(card))) setUi({ removed: { hid: card.hid, id: card.id } });
   };
+  const [clashGone, setClashGone] = useState(false);
+  const dismissClash = async () => {
+    if (await mutate("POST", `/api/books/${book.id}/save/not-a-clash`, { path: cardPath(card), source: "highlights" })) setClashGone(true);
+  };
+  const undoDismiss = async () => {
+    if (await mutate("POST", `/api/books/${book.id}/save/undo-not-a-clash`, { path: cardPath(card) })) setClashGone(false);
+  };
   const toggleRewrite = () => {
     if (!open.rw) focusRewrite = card.id;
     setPanels(card.id, { rw: !open.rw });
@@ -101,7 +108,8 @@ function Card({ card, highlight, book }) {
     </div>
     ${card.isCloze ? html`<${ClozeFields} card=${card} />` : html`<${PlainFields} card=${card} />`}
     ${card.warn && html`<div class="warn"><span>${card.warn}</span></div>`}
-    <${ClashNote} clash=${card.clash} />
+    <${ClashNote} clash=${card.clash} onDismiss=${dismissClash} />
+    ${clashGone && !card.clash && html`<div class="undo"><span>Dismissed. It won't warn about this pair again.</span><button class="lnk" onClick=${undoDismiss}>Undo</button></div>`}
     ${open.rw && html`<${RewritePanel} card=${card} />`}
     ${open.prev && html`<${Preview} card=${card} highlight=${highlight} book=${book} />`}
   </div>`;

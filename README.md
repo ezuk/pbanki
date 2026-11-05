@@ -328,7 +328,7 @@ The deck list and the study screen show the time in the top-right corner, update
 ### Under the hood
 
 - One Cargo workspace with a single lock file. The Anki dependency is pinned to an exact commit.
-- 83 Rust tests, covering card layout, config, the KOReader inbox and the study flow against real Anki collections, plus specs for the plugin's card prompts and prompt folders. The original had none.
+- 105 Rust tests, covering card layout, config, the KOReader inbox and the study flow against real Anki collections, plus specs for the plugin's card prompts and prompt folders. The original had none.
 - CI checks formatting, runs Clippy and the tests, and cross-builds for the PocketBook on every push.
 - Fixes to the original: sync could never log in with the default config (an empty token counted as a real one), settings were always saved to the device path, the sync status got stuck after a failure, and a page size of 0 crashed the app.
 - The launcher works around firmware 6.11 refusing to load `libinkview.so`.
@@ -368,7 +368,7 @@ It needs Python 3.11 or newer on a Mac, and nothing else to install. AI cards us
 - **The passage around each highlight**, with your note, card checks, Rewrite, cloze and question-only cards, definition cards from selected words, and a preview of each card as it will look on the reader.
 - **Connections:** questions that take several highlights to answer, each naming its chapters by number and title.
 - **Key ideas:** with a Book Companion, important points your highlights missed, and a warning when later research questions a claim you highlighted.
-- **Clash check:** finds cards in your collection whose questions read alike but whose answers differ, and lets you sort them into real clashes and false alarms. Telling it "not a clash" keeps that pair from coming back.
+- **Tidy up cards:** finds cards in your collection whose questions read alike but whose answers differ. Reword one, suspend it or delete it from the Mac, or dismiss the pair so it stays away. Changes wait until you plug in your reader, pbAnki applies them when you open it, and your next sync takes them to AnkiWeb. The Changes tab shows how far each one has got.
 - **Prompts as files on your Mac**, reloaded when you edit them, in the same format as the plugin's.
 
 <p align="center"><img src="docs/screenshots/desktop/11-key-ideas.png" width="800" alt="The Key ideas screen: a point from the Book Companion that the highlights missed, with a quote from the book and a card"></p>
@@ -377,9 +377,9 @@ It needs Python 3.11 or newer on a Mac, and nothing else to install. AI cards us
 
 Only what you opened gets saved. **Save to reader** backs up to your Mac, adds the cards to pbAnki's inbox, and marks those highlights as reviewed; the plugin picks that up the next time you open the book in KOReader. Your reader's disk has silently lost freshly copied files before, so the app ejects and remounts it and reads the files back before saying they landed.
 
-A card with no answer stays out of the save. Before you save, the AI checks new cards against your collection and against each other. Clashes appear at the top of the Save screen, where you can edit the card, remove it, mark it Not a clash, jump back to its highlight, or save anyway.
+A card with no answer stays out of the save. Before you save, the AI checks new cards against your collection and against each other. Clashes appear at the top of the Save screen, where you can edit either card, suspend the one you already have, dismiss the clash, jump back to its highlight, or save anyway.
 
-It writes only `applications/pbanki/inbox.jsonl` and `reviewed.jsonl`, plus a Book Companion or the plugin if you click the button for it. It never changes KOReader's own files, and never starts anything on the reader.
+It writes only `applications/pbanki/inbox.jsonl`, `reviewed.jsonl` and `changes.jsonl`, plus a Book Companion or the plugin if you click the button for it. It never opens your collection for writing, because pbAnki on the reader applies the changes itself. A card that changed since you edited it is left alone and shown to you with both versions. It never changes KOReader's own files, and never starts anything on the reader.
 
 <p align="center"><img src="docs/screenshots/desktop/12-save-review.png" width="800" alt="The Save cards screen: every card to be saved, grouped by highlight, with the steps that happen when you save"></p>
 

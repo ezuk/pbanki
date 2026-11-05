@@ -20,7 +20,10 @@ from concurrent.futures import ThreadPoolExecutor
 from itertools import combinations
 from pathlib import Path
 
-from . import ai, paths
+from difflib import SequenceMatcher
+
+from . import ai, changes, paths
+from .changes import plain
 
 _log = logging.getLogger(__name__)
 
@@ -42,12 +45,10 @@ _MIN_SHARED_WORDS = 1
 
 IMPORT_FILE = "clash-import.json"
 NOT_A_CLASH_SETTING = "clash_not_a_clash"
-NOT_A_CLASH_KEPT = 200
+LAST_SEARCH_SETTING = "clash_last_search"
+READ_ALIKE = 0.8
+SOURCE_NAMES = {"find": "From Find clashes", "save": "From the Save check", "highlights": "From Highlights"}
 
-_BREAK = re.compile(r"<br\s*/?>|</div>|</p>", re.I)
-_TAG = re.compile(r"<[^>]+>")
-_SPACE = re.compile(r"\s+")
-_CLOZE = re.compile(r"\{\{c\d+::(.*?)(::.*?)?\}\}")
 _WORD = re.compile(r"[^\W_]+(?:'[^\W_]+)?")
 _STOP_WORDS = frozenset(
     "a an the of to in on for and or is are was were be do does did what which who whom how why when where can "
@@ -80,19 +81,10 @@ _NEW_CARDS_FORMAT = """
 Reply with JSON only: {"clashes":[{"new":number,"other":"E<number> for an existing card or N<number> for a new card","p":0.0-1.0,"why":"one short sentence naming how the answers differ"}]}. Leave out new cards with no likely clash. p is your probability that the learner would call it a clash."""
 
 
-def plain(text):
-    """A field as plain text. Cloze deletions become [brackets]."""
-    text = _BREAK.sub(" ", text)
-    text = _TAG.sub("", text)
-    text = html.unescape(text)
-    text = _CLOZE.sub(r"[\1]", text)
-    return _SPACE.sub(" ", text).strip()
-
-
-def read_collection(mount):
-    """The notes in the reader's collection, or None when there is no collection or it can't be
-    read. Read from a copy on this Mac, because opening the file where it is could write beside
-    it on the reader."""
+def _read(mount):
+    """(notes, ids of notes deleted but not yet synced), or None when there is no collection or it
+    can't be read. Read from a copy on this Mac, because opening the file where it is could write
+    beside it on the reader."""
     source = Path(mount) / COLLECTION_FILE
     if not source.is_file():
         return None
@@ -107,8 +99,11 @@ def read_collection(mount):
             try:
                 connection.create_collation("unicase", lambda a, b: (a.lower() > b.lower()) - (a.lower() < b.lower()))
                 decks = {row[0]: row[1].split("\x1f")[-1] for row in connection.execute("SELECT id, name FROM decks")}
+                types = dict(connection.execute("SELECT id, name FROM notetypes").fetchall())
+                graves = {row[0] for row in connection.execute("SELECT oid FROM graves WHERE type = 1 AND usn = -1")}
                 rows = connection.execute(
-                    "SELECT n.id, n.flds, MIN(c.did) FROM notes n JOIN cards c ON c.nid = n.id GROUP BY n.id ORDER BY n.id"
+                    "SELECT n.id, n.flds, MIN(c.did), n.mid, n.usn, n.tags, COUNT(c.id), MIN(c.usn), MAX(c.reps), MAX(c.lapses), "
+                    "MAX(c.ivl), MIN(c.queue = -1) FROM notes n JOIN cards c ON c.nid = n.id GROUP BY n.id ORDER BY n.id"
                 ).fetchall()
             finally:
                 connection.close()
@@ -116,13 +111,70 @@ def read_collection(mount):
         _log.warning("could not read pbAnki's collection: %s", e)
         return None
     notes = []
-    for nid, fields, deck in rows:
+    for nid, fields, deck, mid, usn, tags, cards, card_usn, reps, lapses, ivl, suspended in rows:
         parts = fields.split("\x1f")
         front = plain(parts[0])
         if front:
-            notes.append({"nid": nid, "deck": decks.get(deck, ""), "front": front,
-                          "back": plain(parts[1]) if len(parts) > 1 else ""})
-    return notes
+            raw_back = parts[1] if len(parts) > 1 else ""
+            notes.append({"nid": nid, "deck": decks.get(deck, ""), "front": front, "back": plain(raw_back),
+                          "raw_front": parts[0], "raw_back": raw_back, "notetype": types.get(mid), "fields": len(parts),
+                          "cards": cards, "usn": usn, "card_usn": card_usn, "reps": reps, "lapses": lapses,
+                          "ivl": max(ivl, 0), "suspended": suspended, "tags": tags.strip()})
+    return notes, graves
+
+
+def read_collection(mount):
+    """The notes in the reader's collection, or None when there is no collection or it can't be read."""
+    found = _read(mount)
+    return None if found is None else found[0]
+
+
+def read_alike(first, second):
+    """Whether two questions are about the same in wording."""
+    return SequenceMatcher(None, _WORD.findall(first.lower()), _WORD.findall(second.lower())).ratio() >= READ_ALIKE
+
+
+def _count(n, word, many=None):
+    return f"{n} {word if n == 1 else many or word + 's'}"
+
+
+def status_message(status, ai_score):
+    if status == "dismissed":
+        return "Dismissed. It stays hidden while these questions read about the same."
+    if status == "settled":
+        return "Settled, because a card in this pair is suspended."
+    if status == "fixed":
+        return "✓ You said this is fixed."
+    if status == "ask":
+        return "Reworded. Does this fix it?"
+    if status == "ai":
+        if ai_score is not None and ai_score < CHECK_CUTOFF:
+            return "Reworded. The AI thinks these no longer read alike. Your call."
+        return "Reworded. The AI thinks these may still read alike. Your call."
+    if status == "still":
+        return "Reworded, still a clash."
+    return ""
+
+
+def _age(days):
+    if days < 14:
+        return _count(max(days, 1), "day")
+    if days < 60:
+        return _count(days // 7, "week")
+    if days < 730:
+        return _count(days // 30, "month")
+    return _count(days // 365, "year")
+
+
+def _stats(note, now):
+    """Age and review history from the cards as last read, or "" when they weren't read."""
+    if note.get("reps") is None:
+        return ""
+    added = f"Added {_age(int((now - note['nid'] / 1000) / 86400))} ago"
+    if not note["reps"]:
+        return f"{added} · Not reviewed yet"
+    return (f"{added} · {_count(note['reps'], 'review')} · {_count(note['lapses'] or 0, 'lapse')}"
+            f" · Interval {_count(note['ivl'] or 0, 'day')}")
 
 
 def fingerprint(first, second):
@@ -285,6 +337,8 @@ def parse_new_cards(text, cards, notes_by_id):
             found[position] = {"front": match["front"], "back": match["back"], "why": _text(item.get("why")), "score": score}
             if match.get("record"):
                 found[position]["record"] = match["record"]
+            elif (match.get("nid") or 0) > 0:
+                found[position]["nid"] = match["nid"]
     return found
 
 
@@ -305,6 +359,9 @@ def group(pairs):
     for pair in pairs:
         groups.setdefault(root(pair["a"]), []).append(pair)
     return list(groups.values())
+
+
+PROMPT_VERSION = hashlib.sha256((_SEARCH_SYSTEM + _CHECK_SYSTEM + _NEW_CARDS_SYSTEM).encode("utf-8")).hexdigest()[:12]
 
 
 class SearchBusy(Exception):
@@ -332,6 +389,15 @@ class Finder:
             raise ai.AICancelled()
         return (self._query or ai.query)(self._model(), messages, cancel=token)
 
+    def emit_changes(self):
+        self._emit("changes")
+
+    def stop_check(self, book_id):
+        with self._lock:
+            check = self._checks.get(book_id)
+        if check is not None:
+            check["token"].cancel()
+
     def _emit(self, kind):
         if self._on_event is not None:
             self._on_event({"topic": TOPIC, "type": kind})
@@ -353,115 +419,299 @@ class Finder:
     def import_trial_file(self):
         """Takes in cards and verdicts left in the data folder, once."""
         path = paths.home() / IMPORT_FILE
-        if not path.is_file():
-            return
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            with self.store.transaction():
-                if data.get("notes") and not self.store.collection_notes():
-                    self.store.replace_collection_notes(data["notes"], data.get("read_at") or self._now())
-                for pair in data.get("pairs") or []:
-                    self.store.set_clash_pair({**pair, "found_at": self._now(), "decided_at": self._now()})
-            path.rename(path.with_name(IMPORT_FILE + ".done"))
-        except (OSError, ValueError, KeyError, TypeError) as e:
-            _log.warning("could not import %s: %s", path, e)
+        if path.is_file():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                with self.store.transaction():
+                    if data.get("notes") and not self.store.collection_notes():
+                        self.store.replace_collection_notes(data["notes"], data.get("read_at") or self._now())
+                    for pair in data.get("pairs") or []:
+                        self.store.set_clash_pair({**pair, "found_at": self._now(), "decided_at": self._now()})
+                path.rename(path.with_name(IMPORT_FILE + ".done"))
+            except (OSError, ValueError, KeyError, TypeError) as e:
+                _log.warning("could not import %s: %s", path, e)
+        self._adopt_old_dismissals()
+
+    def _adopt_old_dismissals(self):
+        """Moves answers kept the old ways to the one list of dismissed pairs."""
+        kept = {(row["a"], row["b"]) for row in self.store.clash_dismissals()}
+        with self.store.transaction():
+            for pair in self.store.clash_pairs((NOT_A_CLASH,)):
+                if (pair["a"], pair["b"]) not in kept:
+                    self.store.add_clash_dismissal({**pair, "source": "find", "at": pair["decided_at"]})
+            for item in self.store.get_setting(NOT_A_CLASH_SETTING) or []:
+                self.store.add_clash_dismissal({**item, "source": "save", "at": item.get("decided_at")})
+            self.store.set_setting(NOT_A_CLASH_SETTING, None)
 
     def refresh(self, mount):
-        """Reads the reader's cards. A collection that can't be read leaves the last copy in place."""
-        notes = read_collection(mount)
-        if notes is None:
+        """Reads the reader's cards and what became of changes. A collection that can't be read leaves the last copy in place."""
+        found = _read(mount)
+        if found is None:
+            changes.read_back(self.store, mount, None, None, self._now())
             return False
+        notes, graves = found
         self.store.replace_collection_notes(notes, self._now())
+        changes.read_back(self.store, mount, notes, graves, self._now())
         self._emit("cards")
         return True
 
+    def current_notes(self):
+        """The cards as they will be once queued changes apply. What was refused drops back by itself."""
+        return changes.overlay(self.store.collection_notes(), self.store.card_changes(open_only=True))
+
+    def active_notes(self):
+        """The cards that can clash: not suspended, not being deleted."""
+        return [note for note in self.current_notes() if not note.get("suspended") and not note.get("deleting")]
+
     # The view
 
-    def view(self):
-        notes = self.store.collection_notes()
+    def view(self, connected=False, writing=False):
+        notes = self.current_notes()
         by_id = {note["nid"]: note for note in notes}
+        rows = self.store.card_changes(open_only=True)
+        dismissals = self.store.clash_dismissals()
         pairs = []
-        fixed = 0
         for pair in self.store.clash_pairs():
             first, second = by_id.get(pair["a"]), by_id.get(pair["b"])
-            if first is None or second is None or fingerprint(first, second) != pair["fingerprint"]:
-                fixed += pair["state"] == REAL
+            if first is None or second is None or first.get("deleting") or second.get("deleting"):
+                continue
+            if pair["state"] == NEW and self._matches_dismissal(first["front"], second["front"], dismissals):
                 continue
             pairs.append(self._pair_view(pair, first, second))
         pairs.sort(key=lambda pair: (-(pair["score"] or 0), pair["a"], pair["b"]))
+        involved = {nid for pair in pairs for nid in (pair["a"], pair["b"])}
         with self._lock:
             search = self._search
             progress = {key: search[key] for key in ("step", "done", "total")} if search else None
             error = self._error
+        changes_view = changes.view(self.store, notes, connected, writing)
         return {
-            "cards": len(notes),
+            "cards": sum(not note.get("suspended") and not note.get("deleting") for note in notes),
             "read_at": self.store.get_setting("collection_read_at"),
             "searched_at": self.store.get_setting("clash_searched_at"),
             "running": search is not None,
             "progress": progress,
             "error": error,
-            "fixed": fixed,
-            "counts": {state: sum(pair["state"] == state for pair in pairs) for state in VERDICTS},
-            "groups": group(pairs),
+            "connected": connected,
+            "counts": {"clashes": sum(not pair["closed"] for pair in pairs), "changes": changes_view["open"], "dismissed": len(dismissals)},
+            "pairs": pairs,
+            "cardViews": {str(nid): self.card_view(by_id[nid], rows, connected) for nid in involved},
+            "changes": changes_view,
+            "asks": [pair for pair in pairs if pair["status"] in ("ask", "ai")],
+            "dismissed": [self._dismissal_view(item) for item in dismissals],
+            "learn": self._learn_line(pairs, dismissals),
+            "noRaw": any(note.get("raw_front") is None for note in notes),
         }
 
     @staticmethod
-    def _pair_view(pair, first, second):
+    def _dismissal_view(item):
+        return {"id": item["id"], "qa": item["front_a"], "qb": item["front_b"], "source": SOURCE_NAMES.get(item["source"], "")}
+
+    def _learn_line(self, pairs, dismissals):
+        real = len(self.store.clash_pairs((REAL,)))
+        if not real and not dismissals:
+            return ""
+        parts = [f"Learned from {_count(real, 'clash', 'clashes')} and {_count(len(dismissals), 'dismissed pair')}."]
+        last = self.store.get_setting(LAST_SEARCH_SETTING)
+        if last:
+            if last.get("left_out"):
+                parts.append(f"Left out {_count(last['left_out'], 'pair')} you already answered.")
+            listed = last.get("listed") or []
+            if listed:
+                states = {f"{p['a']}-{p['b']}": p["state"] for p in self.store.clash_pairs()}
+                acted = sum(states.get(key) == REAL for key in listed)
+                parts.append(f"On its last list you acted on {acted} of {len(listed)}.")
+        return " ".join(parts)
+
+    def card_view(self, note, rows, connected, now=None):
+        """A card as the screens show it, with what can be done to it."""
+        lock = changes.locks(note)
+        status = changes.card_status(rows, note["nid"], connected)
+        suspended = bool(note.get("suspended"))
+        view = {
+            **lock,
+            "nid": note["nid"], "deck": note.get("deck") or "", "front": note["front"], "back": note["back"],
+            "stats": _stats(note, (now or self._now())),
+            "frontText": changes.field_text(note.get("raw_front")) if note.get("raw_front") is not None else note["front"],
+            "backText": changes.field_text(note.get("raw_back")) if note.get("raw_back") is not None else note["back"],
+            "backLabel": "Extra context, if any" if lock["isCloze"] else "Answer",
+            "suspended": suspended,
+            "tagCls": "", "tagText": "SUSPENDED" if suspended else "", "was": "", "learnNote": False,
+            "canUndo": False, "undoLabel": "Undo", "change": None,
+        }
+        if suspended:
+            view.update(tagCls="tg done", canUndo=True, undoLabel="Unsuspend", canEdit=False)
+        if status:
+            row = status["row"]
+            view.update(tagCls=status["tagCls"], tagText=status["tagText"], change=row["id"])
+            if status["away"]:
+                view.update(canEdit=False, canSuspend=False, canUndo=True, undoLabel="Unsuspend")
+            elif status["isEdit"]:
+                view.update(canUndo=status["canUndo"], undoLabel="Undo", learnNote=bool(row["learn"]))
+                if row["stage"] in (changes.WAITING, changes.WRITTEN):
+                    old_front, old_back = plain(row["expect_front"] or ""), plain(row["expect_back"] or "")
+                    view["was"] = old_front if row["front"] is not None else old_back
+        return view
+
+    def _pair_view(self, pair, first, second):
+        current = fingerprint(first, second)
+        decided = pair["decision"] if pair["decision_fp"] == current else None
+        if pair["state"] == NOT_A_CLASH:
+            status = "dismissed"
+        elif first.get("suspended") or second.get("suspended"):
+            status = "settled"
+        elif decided == "fixed":
+            status = "fixed"
+        elif decided in ("still", "ai"):
+            status = decided
+        elif current != pair["fingerprint"]:
+            status = "ask"
+        else:
+            status = "open"
         return {
             "id": f"{pair['a']}-{pair['b']}",
             "a": pair["a"], "b": pair["b"],
             "state": pair["state"],
+            "status": status,
+            "closed": status in ("dismissed", "settled", "fixed"),
+            "msg": status_message(status, pair["ai_score"]),
             "score": pair["score"],
-            "percent": None if pair["score"] is None else round(pair["score"] * 100),
-            "why": pair["why"],
-            "first": {"front": first["front"], "back": first["back"], "deck": first["deck"]},
-            "second": {"front": second["front"], "back": second["back"], "deck": second["deck"]},
+            "qa": first["front"], "qb": second["front"],
         }
 
-    def set_verdict(self, pair_id, verdict):
-        """Records the user's answer. Returns False when there's no such pair."""
+    def _pair(self, pair_id):
         try:
             first, second = (int(part) for part in pair_id.split("-"))
         except ValueError:
+            return None
+        return self.store.clash_pair(first, second)
+
+    def _log(self, pair, verdict, source="find", score=None):
+        self.store.log_clash_verdict({
+            **{key: pair.get(key) for key in ("a", "b", "front_a", "back_a", "front_b", "back_b")},
+            "at": self._now(), "verdict": verdict, "source": source, "score": pair.get("score") if score is None else score,
+            "model": pair.get("model") or self._model_name(), "prompt": pair.get("prompt") or PROMPT_VERSION,
+        })
+
+    def _model_name(self):
+        try:
+            return self._model() if self._model else None
+        except Exception:
+            return None
+
+    def _current_pair_text(self, pair):
+        by_id = {note["nid"]: note for note in self.current_notes()}
+        first, second = by_id.get(pair["a"]), by_id.get(pair["b"])
+        if first is None or second is None:
+            return pair
+        return {**pair, "front_a": first["front"], "back_a": first["back"], "front_b": second["front"], "back_b": second["back"],
+                "current": fingerprint(first, second)}
+
+    def pair_action(self, pair_id, action):
+        """The user's answer about a pair. Returns False when there's no such pair or answer."""
+        pair = self._pair(pair_id)
+        if pair is None:
             return False
-        if verdict not in VERDICTS or not self.store.set_clash_verdict(first, second, verdict, self._now()):
-            return False
+        a, b = pair["a"], pair["b"]
+        current = self._current_pair_text(pair)
+        with self.store.transaction():
+            if action == "dismiss":
+                self.store.add_clash_dismissal({**current, "source": "find", "at": self._now()})
+                self.store.update_clash_pair(a, b, state=NOT_A_CLASH, decision=None, decision_fp=None, auto=0, decided_at=self._now())
+                self._log(current, NOT_A_CLASH)
+            elif action == "undo" and pair["state"] == NOT_A_CLASH:
+                for item in self.store.clash_dismissals():
+                    if item["a"] == a and item["b"] == b:
+                        self.store.remove_clash_dismissal(item["id"])
+                self.store.update_clash_pair(a, b, state=NEW, decided_at=None)
+                self._log(current, "undo-dismiss")
+            elif action == "undo":
+                self.store.update_clash_pair(a, b, decision=None, decision_fp=None)
+                self._log(current, "undo-fixed")
+            elif action in ("fixed", "still"):
+                self.store.update_clash_pair(a, b, state=REAL, decision=action, decision_fp=current.get("current"), auto=0, decided_at=self._now())
+                self._log(current, action)
+            else:
+                return False
         self._emit("verdict")
         return True
 
+    def undo_dismissal(self, dismissal_id):
+        """Takes a pair off the Dismissed list. A new card's warning comes back."""
+        item = self.store.clash_dismissal(dismissal_id)
+        if item is None:
+            return False
+        with self.store.transaction():
+            self.store.remove_clash_dismissal(dismissal_id)
+            if item["a"] is not None and self.store.clash_pair(item["a"], item["b"]):
+                self.store.update_clash_pair(item["a"], item["b"], state=NEW, decided_at=None)
+            if item["record"] and item["found_json"]:
+                self.store.set_card_clash(item["record"], item["question"], json.loads(item["found_json"]))
+            self._log(item, "undo-dismiss", item["source"])
+        self._emit("verdict")
+        return True
+
+    def changed(self, nid, verdict):
+        """A card was edited or suspended: its pairs without an answer count as real clashes."""
+        with self.store.transaction():
+            for pair in self.store.clash_pairs((NEW,)):
+                if nid in (pair["a"], pair["b"]):
+                    self.store.update_clash_pair(pair["a"], pair["b"], state=REAL, auto=1, decided_at=self._now())
+                    self._log(pair, REAL, verdict)
+        self._emit("verdict")
+
+    def change_taken_back(self):
+        """Pairs that only counted as real because of a change go back, unless another change still stands."""
+        changed = {row["nid"] for row in self.store.card_changes(open_only=True) if row["op"] != changes.UNSUSPEND}
+        with self.store.transaction():
+            for pair in self.store.clash_pairs((REAL,)):
+                if pair["auto"] and pair["a"] not in changed and pair["b"] not in changed:
+                    self.store.update_clash_pair(pair["a"], pair["b"], state=NEW, auto=0, decided_at=None)
+                    self._log(pair, "undo-real", "undo")
+        self._emit("verdict")
+
     def _examples(self):
-        decided = {state: [] for state in (REAL, NOT_A_CLASH)}
-        for pair in self.store.clash_pairs((REAL, NOT_A_CLASH)):
-            decided[pair["state"]].append(pair)
-        decided[NOT_A_CLASH].extend(self.store.get_setting(NOT_A_CLASH_SETTING, []))
+        decided = {REAL: self.store.clash_pairs((REAL,)), NOT_A_CLASH: []}
+        for item in self.store.clash_dismissals():
+            decided[NOT_A_CLASH].append({**item, "decided_at": item["at"]})
         for state, pairs in decided.items():
             pairs.sort(key=lambda pair: pair["decided_at"] or 0, reverse=True)
             decided[state] = pairs[:EXAMPLES_OF_EACH]
         return decided
 
-    def add_not_a_clash(self, front_a, back_a, front_b, back_b):
-        """Remembers the user's answer about a new card, as an example for later checks and searches."""
-        kept = self.store.get_setting(NOT_A_CLASH_SETTING, [])
-        kept.append({"front_a": front_a, "back_a": back_a, "front_b": front_b, "back_b": back_b,
-                     "state": NOT_A_CLASH, "decided_at": self._now()})
-        self.store.set_setting(NOT_A_CLASH_SETTING, kept[-NOT_A_CLASH_KEPT:])
+    @staticmethod
+    def _matches_dismissal(first, second, dismissals):
+        for item in dismissals:
+            if (read_alike(first, item["front_a"]) and read_alike(second, item["front_b"])) or (
+                    read_alike(first, item["front_b"]) and read_alike(second, item["front_a"])):
+                return True
+        return False
 
-    def _rejected(self):
-        # Question pairs the user said don't clash, both ways round
-        kept = self.store.get_setting(NOT_A_CLASH_SETTING, [])
-        return {pair for item in kept for pair in ((item["front_a"], item["front_b"]), (item["front_b"], item["front_a"]))}
+    def dismiss_new_card(self, record, question, front, back, found, source):
+        """Remembers that a new card and the card it was warned about don't clash, and clears the warning."""
+        stored = {"front": found["other_front"], "back": found["other_back"], "why": found["why"], "score": found["score"],
+                  "nid": found.get("other_nid")}
+        entry = {"front_a": front, "back_a": back, "front_b": found["other_front"], "back_b": found["other_back"] or "",
+                 "source": source, "record": record, "question": question, "found_json": json.dumps(stored, ensure_ascii=False),
+                 "at": self._now(), "b": found.get("other_nid")}
+        with self.store.transaction():
+            dismissal = self.store.add_clash_dismissal(entry)
+            self.store.set_card_clash(record, question)
+            self._log({**entry, "score": found["score"]}, NOT_A_CLASH, source)
+        self._emit("verdict")
+        return dismissal
 
     # Searching
 
-    def start_search(self):
-        """Starts a search in the background. Raises SearchBusy if one is running."""
+    def start_search(self, steps=None):
+        """Starts `steps` (a whole search when left out) in the background. Raises SearchBusy if one is running."""
         with self._lock:
             if self._closed:
                 raise SearchBusy("pbAnki is closing.")
             if self._search is not None:
                 raise SearchBusy("A search is already running.")
             self._error = None
-            search = {"token": ai.CancelToken(), "step": "Starting", "done": 0, "total": 0}
+            search = {"token": ai.CancelToken(), "step": "Starting", "done": 0, "total": 0, "steps": steps or self._search_steps}
             search["thread"] = threading.Thread(target=self._run_search, args=(search,), name="pbanki-clashes", daemon=True)
             self._search = search
         self._emit("search")
@@ -486,8 +736,7 @@ class Finder:
     def _run_search(self, search):
         error = None
         try:
-            self._search_steps(search)
-            self.store.set_setting("clash_searched_at", self._now())
+            search["steps"](search)
         except ai.AICancelled:
             pass
         except ai.AIError as e:
@@ -504,17 +753,12 @@ class Finder:
 
     def _search_steps(self, search):
         token = search["token"]
-        notes = self.store.collection_notes()
+        notes = self.active_notes()
         by_id = {note["nid"]: note for note in notes}
         examples = self._examples()
         requests = self._read_requests(notes, examples)
         self._step(search, "Reading your cards", len(requests))
-        known = {}
-        decided_or_kept = set()
-        for pair in self.store.clash_pairs():
-            first, second = by_id.get(pair["a"]), by_id.get(pair["b"])
-            if first is not None and second is not None and fingerprint(first, second) == pair["fingerprint"]:
-                decided_or_kept.add((pair["a"], pair["b"]))
+        found_all = {}
 
         def read(request):
             messages, numbers = request
@@ -525,9 +769,36 @@ class Finder:
         with ThreadPoolExecutor(PARALLEL) as pool:
             for found in pool.map(read, requests):
                 for key, why in found.items():
-                    if key not in decided_or_kept:
-                        known.setdefault(key, why)
-        self._check_candidates(search, known, by_id, examples, token)
+                    found_all.setdefault(key, why)
+        known, reopen, left_out, kept = self._sort_candidates(found_all, by_id)
+        listed = self._check_candidates(search, known, reopen, by_id, examples, token)
+        self.store.set_setting(LAST_SEARCH_SETTING, {"listed": [f"{a}-{b}" for a, b in [*listed, *kept]], "left_out": left_out})
+        self.store.set_setting("clash_searched_at", self._now())
+
+    def _sort_candidates(self, found, by_id):
+        """What a search's finds mean given what the user already answered: pairs to check, which of them
+        reopen a dismissal, how many were left out, and pairs already listed."""
+        dismissals = self.store.clash_dismissals()
+        pairs = {(pair["a"], pair["b"]): pair for pair in self.store.clash_pairs()}
+        known, reopen, kept = {}, set(), []
+        left_out = 0
+        for key, why in found.items():
+            first, second = by_id.get(key[0]), by_id.get(key[1])
+            if first is None or second is None:
+                continue
+            pair = pairs.get(key)
+            if self._matches_dismissal(first["front"], second["front"], dismissals):
+                left_out += 1
+            elif pair is None or (pair["state"] == NEW and pair["fingerprint"] != fingerprint(first, second)):
+                known[key] = why
+            elif pair["state"] == NEW:
+                kept.append(key)
+            elif pair["state"] == NOT_A_CLASH:
+                known[key] = why
+                reopen.add(key)
+            else:
+                left_out += 1
+        return known, reopen, left_out, kept
 
     @staticmethod
     def _read_requests(notes, examples):
@@ -540,10 +811,12 @@ class Finder:
                 requests.append((build_search(examples, numbers), numbers))
         return requests
 
-    def _check_candidates(self, search, candidates, by_id, examples, token):
+    def _check_candidates(self, search, candidates, reopen, by_id, examples, token):
         keys = sorted(candidates)
         batches = [keys[start:start + PAIRS_PER_CHECK] for start in range(0, len(keys), PAIRS_PER_CHECK)]
         self._step(search, "Checking what it found", len(batches))
+        model = self._model_name()
+        listed = []
 
         def snapshot(key):
             first, second = by_id[key[0]], by_id[key[1]]
@@ -562,16 +835,51 @@ class Finder:
                 with self.store.transaction():
                     for pair, score in rows:
                         if score is not None and score >= CHECK_CUTOFF:
+                            key = (pair["a"], pair["b"])
+                            if key in reopen:
+                                for item in self.store.clash_dismissals():
+                                    if (item["a"], item["b"]) == key:
+                                        self.store.remove_clash_dismissal(item["id"])
+                            listed.append(key)
                             self.store.set_clash_pair({**pair, "state": NEW, "score": score,
-                                                       "why": candidates[(pair["a"], pair["b"])],
-                                                       "found_at": self._now(), "decided_at": None})
+                                                       "why": candidates[key], "found_at": self._now(), "decided_at": None,
+                                                       "model": model, "prompt": PROMPT_VERSION}, overwrite=key in reopen)
                 self._emit("search")
+        return listed
+
+    def check_reworded(self, pair_ids=None):
+        """Asks the AI about reworded pairs still waiting for an answer, when the user asks it to."""
+        self.start_search(lambda search: self._reworded_steps(search, pair_ids))
+
+    def _reworded_steps(self, search, pair_ids):
+        by_id = {note["nid"]: note for note in self.current_notes()}
+        items = []
+        for pair in self.store.clash_pairs((NEW, REAL)):
+            first, second = by_id.get(pair["a"]), by_id.get(pair["b"])
+            if first is None or second is None or (pair_ids is not None and f"{pair['a']}-{pair['b']}" not in pair_ids):
+                continue
+            current = fingerprint(first, second)
+            if current != pair["fingerprint"] and pair["decision_fp"] != current:
+                items.append((pair, current, {"front_a": first["front"], "back_a": first["back"],
+                                              "front_b": second["front"], "back_b": second["back"]}))
+        batches = [items[start:start + PAIRS_PER_CHECK] for start in range(0, len(items), PAIRS_PER_CHECK)]
+        self._step(search, "Checking reworded pairs", len(batches))
+        examples = self._examples()
+        for batch in batches:
+            scores = parse_check(self._ask(build_check([item[2] for item in batch], examples), search["token"]), len(batch))
+            self._tick(search)
+            with self.store.transaction():
+                for number, (pair, current, text) in enumerate(batch, 1):
+                    if number in scores:
+                        self.store.update_clash_pair(pair["a"], pair["b"], decision="ai", decision_fp=current, ai_score=scores[number])
+                        self._log({**pair, **text}, "ai", score=scores[number])
+            self._emit("search")
 
     # New suggestions
 
     def shortlist(self, text):
         """The existing cards closest to a highlight, for the AI writing new ones."""
-        return [{"front": note["front"], "back": note["back"]} for note in closest(self.store.collection_notes(), text)]
+        return [{"front": note["front"], "back": note["back"]} for note in closest(self.active_notes(), text)]
 
     def checking(self, book_id):
         with self._lock:
@@ -645,9 +953,9 @@ class Finder:
             self.store.close()
 
     def _check_cards(self, cards, token, peers=()):
-        collection = self.store.collection_notes()
+        collection = self.active_notes()
         examples = self._examples()
-        rejected = self._rejected()
+        dismissals = self.store.clash_dismissals()
         everyone = [*cards, *peers]
         by_record = {card["record"]: card for card in everyone}
         for start in range(0, len(cards), NEW_CARDS_PER_CHECK):
@@ -658,7 +966,8 @@ class Finder:
             notes = [*collection, *({**card, "nid": -i} for i, card in enumerate(others, 1))]
             by_id = {note["nid"]: note for note in notes}
             found = parse_new_cards(self._ask(build_new_cards(chunk, notes, examples), token), chunk, by_id)
-            found = {position: hit for position, hit in found.items() if (chunk[position]["front"], hit["front"]) not in rejected}
+            found = {position: hit for position, hit in found.items()
+                     if not self._matches_dismissal(chunk[position]["front"], hit["front"], dismissals)}
             with self.store.transaction():
                 for position, card in enumerate(chunk):
                     # A clash the other card found earlier in this check stands

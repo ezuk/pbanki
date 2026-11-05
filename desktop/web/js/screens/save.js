@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "../../vendor/preact-htm.js";
 import { api } from "../api.js";
-import { useStore, store, go, here, mutate, removeRecord, editsSent, setUi, useEvent } from "../store.js";
+import { useStore, store, go, here, mutate, removeRecord, editsSent, setUi, showError, useEvent } from "../store.js";
 import { html, Top, Pulse, Waiting, Field, plural } from "../ui.js";
-import { ClashNote } from "./clash-note.js";
+import { ClashCard } from "./clash-card.js";
 
 const previewPath = (id) => `/api/books/${encodeURIComponent(id)}/save`;
 
@@ -69,32 +69,87 @@ const Group = ({ group, onRemove, onLater, onDecide }) => html`<div>
   ${group.rows.map((row, i) => html`<${Row} key=${row.path || i} row=${row} onRemove=${onRemove} onLater=${onLater} />`)}
 </div>`;
 
-// A card that clashed, with what it clashes with until an edit clears it.
-const ClashRow = ({ row, onRemove, onLater, onNotAClash }) => html`<div>
-  <div class="sgh" style="border-bottom:0;padding-bottom:0"><span>${row.group.head}</span><${WhereLink} group=${row.group} /></div>
-  <${Row} row=${row} onRemove=${onRemove} onLater=${onLater} />
-  ${row.clash
-    ? html`<${ClashNote} clash=${row.clash} onNotAClash=${() => onNotAClash(row)} />`
-    : html`<div class="setn" style="padding:4px 0">${row.unchecked ? "Checking this card again..." : "✓ No clash now."}</div>`}
-</div>`;
+// A card that clashed, side by side with what it clashes with, until an edit or an answer clears it.
+function ClashRow({ row, onRemove, onLater, onDismiss, onAnswer, saveHint, onDone }) {
+  const clash = row.clash;
+  const asking = clash && clash.status === "ask";
+  const answered = clash && (clash.status === "fixed" || clash.status === "still");
+  return html`<div>
+    <div class="sgh" style="border-bottom:0;padding-bottom:0"><span>${row.group.head}</span><${WhereLink} group=${row.group} /></div>
+    <div class="card clashp">
+      <div class="clashs">
+        <div class="clashc">
+          <div class="chead"><span class="clashd">New card</span></div>
+          <div class="fl" style="padding-top:4px">
+            <${Field} class="edta q" rows="2" value=${row.front_raw} path=${row.path} field="front" placeholder="Question" />
+            <${Field} class="edta a" rows="2" value=${row.back_raw} path=${row.path} field="back" placeholder=${row.cloze ? "Extra context, if any" : "Answer"} />
+            <div class="cact">
+              ${row.path.startsWith("/api/cards/")
+                ? html`<button class="lnk" title="Remove this card" onClick=${() => onRemove(row)}>Remove</button>`
+                : html`<button class="lnk" title="Leave it out of this save and keep it for later" onClick=${() => onLater(row)}>Later</button>
+                  <button class="lnk" title="Drop it for good" onClick=${() => onRemove(row)}>Dismiss</button>`}
+            </div>
+          </div>
+        </div>
+        ${clash && clash.card && html`<${ClashCard} card=${clash.card} saveHint=${saveHint} onDone=${onDone} onError=${showError} />`}
+        ${clash && !clash.card && html`<div class="clashc">
+          <div class="chead"><span class="clashd">New card</span></div>
+          <div class="clashq">${clash.front}</div>
+          ${clash.back && html`<div class="clasha">${clash.back}</div>`}
+        </div>`}
+        ${!clash && html`<div class="clashc"><div class="setn" style="padding:4px 0">${row.unchecked ? "Checking this card again..." : "✓ No clash now."}</div></div>`}
+      </div>
+      ${clash && html`<div class="prows"><div class="prow">
+        <div class="prm">${clash.msg && html`<span class=${asking ? "prmsg" : "prdone"}>${clash.msg}</span>`}</div>
+        <div class="rowg prb">
+          ${asking && html`<button class="btn pri" onClick=${() => onAnswer(row, "fixed")}>Yes, fixed</button>
+            <button class="btn" onClick=${() => onAnswer(row, "still")}>Still a clash</button>
+            <button class="btn" onClick=${() => onAnswer(row, "ask_ai")}>Ask the AI</button>`}
+          ${(clash.status === "open" || clash.status === "still") && html`<button class="btn" onClick=${() => onDismiss(row)}>Dismiss clash</button>`}
+          ${answered && clash.status === "fixed" && html`<button class="lnk" onClick=${() => onAnswer(row, "undo")}>Undo</button>`}
+        </div>
+      </div></div>`}
+    </div>
+  </div>`;
+}
 
 // The clash check's place in the save: running, failed, or what it found.
-function ClashCheck({ check, onCheck }) {
-  if (check.state === "checking" || check.state === "pending") {
-    return html`<div class="waitb"><div class="rowg"><${Pulse} /><b style="font-weight:600">Checking for clashes...</b></div><div style="font-size:13.5px">Comparing these cards with each other and the ${check.total} already on your reader. You can save when it's done.</div></div>`;
+function ClashCheck({ check, interrupted, onCheck, onSkip }) {
+  if (check.state === "checking" || (check.state === "pending" && !interrupted)) {
+    return html`<div class="waitb"><div class="rowg"><${Pulse} /><b style="font-weight:600">Checking for clashes...</b></div><div style="font-size:13.5px">Comparing these cards with each other and the ${check.total} already on your reader.</div><button class="lnk skip" onClick=${onSkip}>Save without checking</button></div>`;
+  }
+  if (check.state === "skipped" || interrupted) {
+    return html`<div class="errb"><span>Clashes won't be checked for this save.</span><button class="lnk" style="color:var(--ink)" onClick=${onCheck}>Check again</button></div>`;
   }
   if (check.state === "failed") {
     return html`<div class="errb"><span>Clashes weren't checked. ${check.error}</span><button class="lnk" style="color:var(--ink)" onClick=${onCheck}>Check again</button></div>`;
   }
   if (check.found) {
-    return html`<div class="errb"><span>${check.found === 1 ? "1 possible clash" : `${check.found} possible clashes`}. Resolve them at the top of the list, or save anyway.</span></div>`;
+    return html`<div class="errb"><span>${check.found === 1 ? "1 possible clash. Resolve it" : `${check.found} possible clashes. Resolve them`} at the top of the list, or save anyway.</span></div>`;
   }
   if (check.state === "done") return html`<div class="rowg" style="font-size:13.5px"><span>✓ No clashes among these cards or with the ${check.total} on your reader</span></div>`;
   return null;
 }
 
+// Which checks this tab has started. One that shows as not started after a restart stopped it.
+const startedKey = (id, key) => `pbanki-check-${id}-${key}`;
+function checkStarted(id, key) {
+  try {
+    return !!sessionStorage.getItem(startedKey(id, key));
+  } catch {
+    return false;
+  }
+}
+function markCheckStarted(id, key) {
+  try {
+    sessionStorage.setItem(startedKey(id, key), "1");
+  } catch {
+    // Without storage, a restart can start a check again
+  }
+}
+
 const Step = ({ step }) => html`<div class="step2">
-  <span class="stepn">${step.n}</span>${step.n === 4 ? html`<span class="rowg" style="gap:6px">${step.title}</span>` : html`<span>${step.title}</span>`}<span class="stepd">${step.detail}</span>
+  <span class="stepn">${step.n}</span><span>${step.title}</span><span class="stepd">${step.detail}</span>
 </div>`;
 
 export function SaveCards() {
@@ -135,16 +190,32 @@ export function SaveCards() {
     wasWaiting.current = preview.saveWaiting;
   }, [preview, finished]);
 
+  // What the last action did, and how to take it back
+  const [done, setDone] = useState(null);
+  useEvent(useCallback((event) => { if (event.topic === "clashes") load(); }, [load]));
+
   // The clash check runs once edits settle, and the page follows it until it ends
   const check = preview && preview.clashCheck;
   const clashPaths = useRef(new Set());
-  const notAClash = (row) => mutate("POST", `${previewPath(id)}/not-a-clash`, { path: row.path });
-  const startCheck = useCallback(() => mutate("POST", `${previewPath(id)}/check`), [id]);
+  const dismissClash = async (row) => {
+    const path = `${previewPath(id)}/not-a-clash`;
+    if (await mutate("POST", path, { path: row.path })) {
+      setDone({ text: "Dismissed. It won't warn about this pair again.", undo: () => mutate("POST", `${previewPath(id)}/undo-not-a-clash`, { path: row.path }) });
+    }
+  };
+  const answerClash = (row, action) => mutate("POST", `${previewPath(id)}/clash-answer`, { path: row.path, action });
+  const checkKey = check ? check.key : "";
+  const startCheck = useCallback(() => {
+    markCheckStarted(id, checkKey);
+    return mutate("POST", `${previewPath(id)}/check`);
+  }, [id, checkKey]);
+  const skipCheck = () => mutate("POST", `${previewPath(id)}/check-skip`);
+  const interrupted = !!check && check.state === "pending" && checkStarted(id, check.key);
   useEffect(() => {
-    if (!check || check.state !== "pending") return undefined;
+    if (!check || check.state !== "pending" || interrupted) return undefined;
     const timer = setTimeout(startCheck, 1500);
     return () => clearTimeout(timer);
-  }, [check && check.state, check && check.key, startCheck]);
+  }, [check && check.state, check && check.key, interrupted, startCheck]);
   useEffect(() => {
     if (!check || check.state !== "checking") return undefined;
     const timer = setInterval(load, 2000);
@@ -161,8 +232,6 @@ export function SaveCards() {
   };
   const save = () => send("save", previewPath(id), { mark_connection_sources: marks[id] ?? preview.markMeta });
   const retry = () => send("retry", `${previewPath(id)}/retry`);
-  // What the last action did, and how to take it back
-  const [done, setDone] = useState(null);
   const remove = async (row) => {
     if (!(await removeRecord(row.path))) return;
     const text = row.path.startsWith("/api/cards/") ? "Card removed." : row.path.startsWith("/api/ideas/") ? "Key idea dismissed." : "Connection dismissed.";
@@ -204,22 +273,22 @@ export function SaveCards() {
   const groups = preview.groups
     .map((group) => ({ ...group, rows: group.rows.filter((row) => !clashPaths.current.has(row.path)) }))
     .filter((group) => group.rows.length || group.emptied);
-  const checkBusy = check && (check.state === "checking" || check.state === "pending");
+  const checkBusy = check && (check.state === "checking" || (check.state === "pending" && !interrupted));
   return html`
     ${top}
     <div class="savew">
       <div class="savel"><div class="saveg">
         ${done && html`<div class="banner"><span>${done.text}</span><button class="lnk" onClick=${undo}>Undo</button></div>`}
         ${clashRows.length > 0 && html`<div>
-          <div class="sgh"><span>Clashes to resolve</span><span class="sgm">Edit a question or answer, remove the card, or mark it Not a clash</span></div>
-          ${clashRows.map((row) => html`<${ClashRow} key=${row.path} row=${row} onRemove=${remove} onLater=${later} onNotAClash=${notAClash} />`)}
+          <div class="sgh"><span>Clashes to resolve</span><span class="sgm">Edit either card, suspend one, or dismiss the clash</span></div>
+          ${clashRows.map((row) => html`<${ClashRow} key=${row.path} row=${row} onRemove=${remove} onLater=${later} onDismiss=${dismissClash} onAnswer=${answerClash} saveHint=${check ? check.saveHint : ""} onDone=${load} />`)}
         </div>`}
         ${groups.map((group) => html`<${Group} key=${group.type + group.id} group=${group} onRemove=${remove} onLater=${later} onDecide=${decide} />`)}
         ${!preview.groups.length && html`<div class="empty">There are no cards to save yet. Only the cards you open get saved.</div>`}
       </div></div>
       <aside class="saver">
         <div class="rowg" style="align-items:baseline"><span class="bignum">${preview.saveCount}</span><span>${preview.saveNoun}</span></div>
-        ${check && !preview.saveWaiting && preview.saveCount > 0 && html`<${ClashCheck} check=${check} onCheck=${startCheck} />`}
+        ${check && !preview.saveWaiting && preview.saveCount > 0 && html`<${ClashCheck} check=${check} interrupted=${interrupted} onCheck=${startCheck} onSkip=${skipCheck} />`}
         ${preview.needCount > 0 &&
         html`<div class="errb"><span>${preview.needText}</span><button class="lnk" style="color:var(--ink)" onClick=${() => go(here(preview.needLink.screen, preview.needLink.id))}>Go to it</button></div>`}
         ${failed && html`<div class="errb"><span>${safeError(preview.failed[0].error)}</span></div>`}

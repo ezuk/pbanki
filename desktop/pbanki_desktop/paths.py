@@ -11,6 +11,10 @@ PBANKI_DIR = "applications/pbanki"
 PLUGIN_DIR = "applications/koreader/plugins/pbanki.koplugin"
 INBOX_FILE = "applications/pbanki/inbox.jsonl"
 REVIEWED_FILE = "applications/pbanki/reviewed.jsonl"
+CHANGES_FILE = "applications/pbanki/changes.jsonl"
+CHANGES_APPLYING_FILE = "applications/pbanki/changes.applying.jsonl"
+CHANGES_RESULTS_FILE = "applications/pbanki/changes.results.jsonl"
+APP_FILE = "applications/pbanki/pbanki"
 
 
 def repo_root():

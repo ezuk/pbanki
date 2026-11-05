@@ -263,7 +263,10 @@ GET  /api/books/<id>/save            preview, including which highlights get mar
 POST /api/books/<id>/save            {mark_connection_sources}
 POST /api/books/<id>/save/retry
 POST /api/books/<id>/save/check      compares the cards about to be saved with the collection and each other
-POST /api/books/<id>/save/not-a-clash   {path}, clears a card's clash and remembers it for later checks
+POST /api/books/<id>/save/not-a-clash   {path, source}, clears a card's clash and adds it to the Dismissed list
+POST /api/books/<id>/save/undo-not-a-clash  {path}, brings the warning back
+POST /api/books/<id>/save/clash-answer  {path, action: "fixed"|"still"|"undo"}, after the other card was reworded
+POST /api/books/<id>/save/check-skip    Save without checking
 POST /api/reader/eject
 POST /api/reader/plugin/update
 POST /api/reader/choose-folder       opens the Mac's folder dialog, stores the pick as the mount
@@ -279,7 +282,17 @@ POST /api/books/<id>/companion/forget   stops treating a Create as running, afte
 GET  /api/clashes                    the cards read, search progress and pairs, grouped
 POST /api/clashes/find               reads the reader if it's there, then searches in the background
 POST /api/clashes/stop
-POST /api/clashes/pairs/<id>         {verdict: "real"|"no"|"new"}
+POST /api/clashes/pairs/<id>         {action: "dismiss"|"undo"|"fixed"|"still"|"ask_ai"}
+POST /api/clashes/check-reworded     asks the AI about every reworded pair
+POST /api/clashes/dismissed/<id>/undo
+POST /api/clashes/cards/<nid>/edit   {front, back, learn}
+POST /api/clashes/cards/<nid>/suspend
+POST /api/clashes/cards/<nid>/unsuspend
+POST /api/clashes/cards/<nid>/delete
+POST /api/clashes/changes/send       Try again, after a failed write
+POST /api/clashes/changes/<id>/undo
+POST /api/clashes/changes/<id>/use-mine
+POST /api/clashes/changes/<id>/drop
 ```
 
 The server watches the mount every 2 s in one background thread and pushes `reader` events.
@@ -317,18 +330,30 @@ The app routes by URL hash so reload keeps your place. Layout works from 1100 px
 5. Independent reviews, then fixes.
 6. End-to-end run, visual comparison with the mock, real AI smoke, proof page, READMEs (`desktop/web/README.md`, `desktop/tests/e2e/README.md`; the project's own README doesn't cover the desktop app yet).
 
-## 14a. Clashes (`clashes.py`, `web/js/screens/clashes.js`)
+## 14a. Clashes (`clashes.py`, `changes.py`, `web/js/screens/clashes.js`, `clash-card.js`)
 
-A clash is two cards whose questions read alike and whose answers differ, so a review can't tell which answer it wants. Same-answer repeats aren't clashes. The screen is `#/clashes`, linked from Pick a book.
+A clash is two cards whose questions read alike and whose answers differ, so a review can't tell which answer it wants. Same-answer repeats aren't clashes. The screen is `#/clashes`, linked from the first screen, with the tabs Clashes, Changes and Dismissed.
 
-- **Cards.** `collection.anki2` and its `-wal` are read from a copy on the Mac, each time the reader appears and at the start of a search, and kept in `collection_notes` so everything works unplugged. The reader is never written.
+- **Cards.** `collection.anki2` and its `-wal` are read from a copy on the Mac, each time the reader appears and at the start of a search, and kept in `collection_notes` so everything works unplugged. Each note keeps its raw fields, note type, review stats, suspended state and sync state.
 - **Search.** Three reads of the whole collection with the Companion model (`meta_model`), shuffled, split at 1500 cards a read. Then a checker scores each new candidate, 60 pairs a request, and pairs at 0.3 or more are kept. A real verdict is sent to reads as an example, and up to 30 of each verdict go to the checker. Pairs aren't filtered by how many reads flagged them, because in testing that didn't predict the user's verdict.
-- **Verdicts.** `clash_pairs` keeps each pair's text and a fingerprint of it. A pair whose text has changed no longer shows, and a real one counts as fixed. Connected pairs are shown together, because rewording one question may fix several.
-- **New cards.** The 25 existing questions sharing the most words with a highlight go into its request as `reader_collection`, and the AI may reply `{"cards":[]}` when they already cover it. After a run, Suggest cards, Define or Find connections, unchecked drafts are compared with the whole collection, and any at 0.3 or more show a note on the card. A note goes away when the question changes. Warnings never block a save. Connections and key ideas get the check, not the `reader_collection` section.
+- **Verdicts.** `clash_pairs` keeps each pair's text and a fingerprint of it. An answer holds only while the fingerprint matches. Editing or suspending a card marks its unanswered pairs as real, and undoing that change takes it back unless another change stands. `clash_verdicts` is an append-only log of every answer, with score, model and prompt version. Connected pairs are shown together, because rewording one question may fix several. After a rewording, only the user says whether it's fixed, and the AI runs only when asked.
+- **Dismissed.** `clash_dismissals` is shared by Find clashes, the Save check and Highlights. A dismissed pair stays hidden while its questions read about the same (0.8 or more by word match), in search, Save and the list. Undo works from the Dismissed tab.
+- **New cards.** The 25 existing questions sharing the most words with a highlight go into its request as `reader_collection`, and the AI may reply `{"cards":[]}` when they already cover it. After a run, Suggest cards, Define or Find connections, unchecked drafts are compared with the whole collection, and any at 0.3 or more show a note on the card. A note goes away when the question changes. Warnings never block a save, and Save without checking stops a check under way. A restart never starts one by itself. Known gaps: a check looks at the collection and one book's drafts, so it doesn't see cards from another book's drafts, or cards saved but still waiting in the reader's inbox.
+
+### Changing cards from the Mac
+
+The reader stays the only thing that changes its collection. The Mac writes a queue and the reader applies it.
+
+- **Queue.** `changes.jsonl` holds every change not yet taken, each with an id, the note id and the text the Mac expected. It's written whole through `device.write_files` (remount and read back) under the same lock as a save, and only when the app on the reader contains the `pbanki-changes-format-1` marker. Otherwise nothing is written and the Changes tab says to install the new version.
+- **Reader.** On opening, after the inbox import, pbAnki renames the queue to `changes.applying.jsonl`, applies each line it hasn't already reported, and appends to `changes.results.jsonl`. An interrupted apply resumes from the renamed file. An edit is refused if the card's text differs from what the Mac expected (`changed`), the card is gone (`gone`), a locked field has formatting (`formatted`), cloze numbers would change (`cloze`), a card would be left empty (`empty`), or the note type or card count isn't one it handles (`note_type`, `several_cards`).
+- **Stages.** `card_changes` moves from waiting to written, applied and synced. Applied comes from `changes.results.jsonl`, synced from the note and card no longer being marked unsynced (`usn == -1`) or a delete's grave being gone. Results are only ever read here. A queue file lost without a result sends its changes again.
+- **Review history.** Editing keeps the schedule and the log. Learn this card again resets the card to new and keeps the log, and comes on by default when the answer changes. Suspend uses Anki's own suspend. Delete for good is only offered on a suspended card and asks first. It keeps the review log and the Mac keeps a copy of the text.
+- **Undo.** Works while a change is on the Mac, or on a plugged-in reader that hasn't taken it. It reads results first, and rewrites the file without the change before forgetting it.
+- **Needs you.** A refused change, or one a sync later put back, shows both texts with Use my text and Keep the reader's text. Nothing overwrites a card the user didn't see.
 
 ## 15. Not in this version
 
-- Editing cards already in pbAnki's collection. The Clashes screen says which cards to reword, and that's done on the reader.
+- Editing cards with formatting or images from the Mac. Those sides are locked, and the screen says to edit them in Anki.
 - Writing to `.sdr` files, even though it would make reviewed status take effect immediately.
 - Cards with images.
 - Finding a reader mounted anywhere other than the configured path, beyond a Choose folder field.

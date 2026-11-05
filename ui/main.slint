@@ -55,6 +55,7 @@ export component MainWindow inherits Window {
     // AnkiWeb sync status on the deck list
     in-out property <bool> syncing;
     in property <string> sync_message;
+    in property <string> sync_notice;
     in property <bool> sync_failed;
     // AnkiWeb asks which collection to keep
     in property <bool> sync_choice;
@@ -149,6 +150,7 @@ export component MainWindow inherits Window {
             deck_nodes: deck_tree.deck_nodes;
             syncing: syncing;
             sync_message: sync_message;
+            sync_notice: sync_notice;
             sync_failed: sync_failed;
             sync_choice: sync_choice;
             sync_upload_ok: sync_upload_ok;

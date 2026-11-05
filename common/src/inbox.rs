@@ -16,6 +16,8 @@ use serde::Deserialize;
 pub const INBOX_FILE: &str = "inbox.jsonl";
 const IMPORTING_FILE: &str = "inbox.importing.jsonl";
 const FAILED_FILE: &str = "inbox.failed.jsonl";
+/// Imported lines kept until a sync has them, so a full download can't lose them.
+const UNSYNCED_FILE: &str = "inbox.unsynced.jsonl";
 
 pub const DECK_NAME: &str = "KOReader";
 pub const TAG: &str = "koreader";
@@ -126,6 +128,7 @@ pub fn import_inbox(col: &mut Collection, dir: &Path) -> Result<ImportSummary, S
 
     let mut summary = ImportSummary::default();
     let mut failed_lines = Vec::new();
+    let mut added_lines = Vec::new();
 
     for line in contents.lines().filter(|l| !l.trim().is_empty()) {
         let added = serde_json::from_str::<InboxCard>(line)
@@ -160,7 +163,10 @@ pub fn import_inbox(col: &mut Collection, dir: &Path) -> Result<ImportSummary, S
             });
 
         match added {
-            Ok(_) => summary.added += 1,
+            Ok(_) => {
+                added_lines.push(line);
+                summary.added += 1;
+            }
             Err(e) => {
                 eprintln!("Skipping inbox line ({e}): {line}");
                 failed_lines.push(line);
@@ -173,9 +179,37 @@ pub fn import_inbox(col: &mut Collection, dir: &Path) -> Result<ImportSummary, S
         append_lines(&dir.join(FAILED_FILE), &failed_lines)
             .map_err(|e| format!("Cannot save failed inbox lines: {e}"))?;
     }
+    if !added_lines.is_empty() {
+        append_lines(&dir.join(UNSYNCED_FILE), &added_lines)
+            .map_err(|e| format!("Cannot save imported inbox lines: {e}"))?;
+    }
     fs::remove_file(&importing).map_err(|e| format!("Cannot clear inbox: {e}"))?;
 
     Ok(summary)
+}
+
+/// Forgets imported lines once a sync has carried them to AnkiWeb.
+pub fn clear_unsynced(dir: &Path) -> Result<(), String> {
+    match fs::remove_file(dir.join(UNSYNCED_FILE)) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            Err(format!("Cannot clear imported inbox lines: {e}"))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Queues imported lines again after a full download replaced their notes.
+pub fn restore_unsynced(dir: &Path) -> Result<(), String> {
+    let unsynced = dir.join(UNSYNCED_FILE);
+    let contents = match fs::read_to_string(&unsynced) {
+        Ok(contents) => contents,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("Cannot read imported inbox lines: {e}")),
+    };
+    let lines: Vec<&str> = contents.lines().filter(|l| !l.trim().is_empty()).collect();
+    append_lines(&dir.join(INBOX_FILE), &lines)
+        .map_err(|e| format!("Cannot queue imported inbox lines: {e}"))?;
+    fs::remove_file(&unsynced).map_err(|e| format!("Cannot clear imported inbox lines: {e}"))
 }
 
 fn cached_notetype(
