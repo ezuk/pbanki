@@ -595,109 +595,6 @@ mod tests {
         assert_eq!(koreader_notes(&mut col).len(), 2);
     }
 
-    /// The exact lines the desktop app writes. desktop/tests/test_save.py checks that
-    /// save.py produces these, so the two can't drift apart.
-    const DESKTOP_SAVE_LINES: [&str; 4] = [
-        r#"{"front":"What is every rich single man said to need?","back":"A wife","quote":"IT is a truth universally acknowledged, that a single man in possession of a good fortune must be in want of a wife.","book":"Pride and Prejudice","author":"Jane Austen, Ann Other","chapter":"Chapter I.","page":35,"file":"/mnt/ext1/English/book.epub","position":"/body/DocFragment[2]/body/p[19]/span/text().0","batch":"0123456789abcdef"}"#,
-        r#"{"front":"A single man of fortune must be in want of a {{c1::wife}}.","back":"","quote":"IT is a truth universally acknowledged, that a single man in possession of a good fortune must be in want of a wife.","book":"Pride and Prejudice","author":"Jane Austen, Ann Other","chapter":"Chapter I.","page":35,"file":"/mnt/ext1/English/book.epub","position":"/body/DocFragment[2]/body/p[19]/span/text().0","batch":"0123456789abcdef"}"#,
-        r#"{"front":"How does Mrs. Bennet react to a rich neighbour and to a cough?","back":"Delight, then nerves","quote":"Chapter I. · p. 36: \"“Oh, single, my dear, to be sure!”\"\nChapter 2: Her nerves · p. 41: \"Mrs. Bennet deigned not to make any reply; “Don’t keep coughing so, Kitty”\"","book":"Pride and Prejudice","author":"Jane Austen, Ann Other","chapter":"Chapter I. · Chapter 2: Her nerves","file":"/mnt/ext1/English/book.epub","position":"","batch":"0123456789abcdef"}"#,
-        r#"{"front":"What does candour without design mean?","back":"Saying nothing of the bad","quote":"","book":"Pride and Prejudice","author":"Jane Austen, Ann Other","chapter":"CHAPTER IV.","file":"/mnt/ext1/English/book.epub","position":"","batch":"0123456789abcdef"}"#,
-    ];
-
-    #[test]
-    fn imports_the_lines_the_desktop_app_writes() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut col = collection(dir.path());
-        fs::write(
-            dir.path().join(INBOX_FILE),
-            DESKTOP_SAVE_LINES.join("\n") + "\n",
-        )
-        .unwrap();
-
-        assert_eq!(
-            import_inbox(&mut col, dir.path()).unwrap(),
-            ImportSummary {
-                added: 4,
-                failed: 0
-            }
-        );
-        assert!(!dir.path().join(FAILED_FILE).exists());
-
-        let book = "Pride and Prejudice";
-        let author = "Jane Austen, Ann Other";
-        let file = "/mnt/ext1/English/book.epub";
-        let quote = "IT is a truth universally acknowledged, that a single man in possession of a good fortune must be in want of a wife.";
-        let position = "/body/DocFragment[2]/body/p[19]/span/text().0";
-        assert_eq!(
-            koreader_notes(&mut col),
-            vec![
-                vec![
-                    "A single man of fortune must be in want of a {{c1::wife}}.",
-                    "",
-                    quote,
-                    book,
-                    author,
-                    "Chapter I.",
-                    "35",
-                    file,
-                    position,
-                ],
-                vec![
-                    "How does Mrs. Bennet react to a rich neighbour and to a cough?",
-                    "Delight, then nerves",
-                    "Chapter I. · p. 36: \"“Oh, single, my dear, to be sure!”\"<br>Chapter 2: Her nerves · p. 41: \"Mrs. Bennet deigned not to make any reply; “Don’t keep coughing so, Kitty”\"",
-                    book,
-                    author,
-                    "Chapter I. · Chapter 2: Her nerves",
-                    "",
-                    file,
-                    "",
-                ],
-                vec![
-                    "What does candour without design mean?",
-                    "Saying nothing of the bad",
-                    "",
-                    book,
-                    author,
-                    "CHAPTER IV.",
-                    "",
-                    file,
-                    "",
-                ],
-                vec![
-                    "What is every rich single man said to need?",
-                    "A wife",
-                    quote,
-                    book,
-                    author,
-                    "Chapter I.",
-                    "35",
-                    file,
-                    position,
-                ],
-            ]
-        );
-        let cloze = col
-            .search_notes_unordered(&format!("\"note:{CLOZE_NOTETYPE_NAME}\""))
-            .unwrap();
-        assert_eq!(cloze.len(), 1);
-        assert_eq!(
-            col.search_cards(
-                "\"deck:KOReader::Pride and Prejudice\"",
-                anki::search::SortMode::NoOrder
-            )
-            .unwrap()
-            .len(),
-            4
-        );
-
-        // Why save.py omits a missing page and writes "" for empty text
-        assert!(serde_json::from_str::<InboxCard>(r#"{"front":"x","back":null}"#).is_err());
-        assert!(serde_json::from_str::<InboxCard>(r#"{"front":"x","page":"35"}"#).is_err());
-        assert!(serde_json::from_str::<InboxCard>(r#"{"front":"x","back":"","page":35}"#).is_ok());
-        assert!(serde_json::from_str::<InboxCard>(r#"{"front":"x"}"#).is_ok());
-    }
-
     #[test]
     fn multiline_text_becomes_line_breaks() {
         let card: InboxCard =
@@ -730,9 +627,9 @@ mod tests {
         assert_eq!(context.to_html(), "<i>“To be”</i><hr>");
     }
 
-    // A line written by the real desktop app, with emoji, quotes, HTML characters and a backslash
+    // A line with emoji, quotes, HTML characters and a backslash
     #[test]
-    fn imports_emoji_quotes_and_html_from_a_real_save() {
+    fn imports_emoji_quotes_and_html() {
         let dir = tempfile::tempdir().unwrap();
         let mut col = collection(dir.path());
         let line = r#"{"front":"What does Mrs. Bennet call \"a fine thing\" 💰 for 'our girls'?","back":"A single man — “four or five thousand” a year 🎩 & <b>more</b>\nSecond line \\ backslash","quote":"“Oh, single!”","book":"Pride and Prejudice","author":"Jane Austen","chapter":"Chapter I.","page":36,"file":"/mnt/ext1/English/book.epub","position":"/body/DocFragment[3]/body/p[6]/text().0","batch":"b21d1958375bb317"}"#;

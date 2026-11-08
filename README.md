@@ -16,7 +16,7 @@ pbAnki started as a fork of [ananyatimalsina/pbanki](https://github.com/ananyati
 
 - [Part 1: making cards in KOReader](#part-1-making-cards-in-koreader)
 - [Part 2: studying in pbAnki](#part-2-studying-in-pbanki)
-- [Part 3: the desktop companion](#part-3-the-desktop-companion)
+- [Making cards on a computer](#making-cards-on-a-computer)
 - [Install on a PocketBook](#install-on-a-pocketbook)
 - [Building](#building)
 
@@ -328,62 +328,15 @@ The deck list and the study screen show the time in the top-right corner, update
 ### Under the hood
 
 - One Cargo workspace with a single lock file. The Anki dependency is pinned to an exact commit.
-- 105 Rust tests, covering card layout, config, the KOReader inbox and the study flow against real Anki collections, plus specs for the plugin's card prompts and prompt folders. The original had none.
+- 82 Rust tests, covering card layout, config, the KOReader inbox and the study flow against real Anki collections, plus specs for the plugin's card prompts and prompt folders. The original had none.
 - CI checks formatting, runs Clippy and the tests, and cross-builds for the PocketBook on every push.
 - Fixes to the original: sync could never log in with the default config (an empty token counted as a real one), settings were always saved to the device path, the sync status got stuck after a failure, and a page size of 0 crashed the app.
 - The launcher works around firmware 6.11 refusing to load `libinkview.so`.
 - If the collection can't be opened, pbAnki says why instead of quitting.
 
-## Part 3: the desktop companion
+## Making cards on a computer
 
-The plugin makes cards one highlight at a time on an e-ink screen. The desktop companion is for a whole book at once: a local web app on your Mac that reads your reader's highlights, has the AI suggest cards in the background, and lets you review them on a big screen with the book's text beside them.
-
-Plug in the reader and start it:
-
-```bash
-./run-desktop.sh
-```
-
-To try it with a fake reader, so your real reader and data aren't touched. AI cards still use your real AI command line:
-
-```bash
-./run-desktop.sh --practice
-```
-
-To work on the app itself, with saved code changes appearing in the browser right away (add `--practice` for fake data, or `--real-copy` to practice on a kept copy of your real data, and `--fresh-copy` to replace that copy):
-
-```bash
-./run-desktop.sh --live
-```
-
-It needs Python 3.11 or newer on a Mac, and nothing else to install. AI cards use your own [Claude Code](https://claude.com/claude-code) or Codex command line. The screenshots below use sample cards on a practice reader.
-
-<p align="center"><img src="docs/screenshots/desktop/07-highlights-cards-preview.png" width="800" alt="The Highlights screen: a list of highlights on the left, and on the right two AI cards with a preview of the question, answer and context pages as they look on the reader"></p>
-
-### What it adds
-
-- **Suggestions run when you say so.** Open a book, choose the kind of card, how many per highlight, the model, the prompt and how much the AI reads, then start. You can read through highlights while it works. Your work stays on the Mac, so you can keep going with the reader unplugged.
-- **A first screen with two paths:** make new cards from a book, or tidy up the cards you already have.
-- **A highlight list you can narrow down.** It opens on To do, with Reviewed and All beside it, and a search box that covers highlights and cards and marks the match in the passage. Previous and Next stay inside the current list.
-- **The passage around each highlight**, with your note, card checks, Rewrite, cloze and question-only cards, definition cards from selected words, and a preview of each card as it will look on the reader.
-- **Connections:** questions that take several highlights to answer, each naming its chapters by number and title.
-- **Key ideas:** with a Book Companion, important points your highlights missed, and a warning when later research questions a claim you highlighted.
-- **Tidy up cards:** finds cards in your collection whose questions read alike but whose answers differ. Reword one, suspend it or delete it from the Mac, or dismiss the pair so it stays away. Changes wait until you plug in your reader, pbAnki applies them when you open it, and your next sync takes them to AnkiWeb. The Changes tab shows how far each one has got.
-- **Prompts as files on your Mac**, reloaded when you edit them, in the same format as the plugin's.
-
-<p align="center"><img src="docs/screenshots/desktop/11-key-ideas.png" width="800" alt="The Key ideas screen: a point from the Book Companion that the highlights missed, with a quote from the book and a card"></p>
-
-### Saving to the reader
-
-Only what you opened gets saved. **Save to reader** backs up to your Mac, adds the cards to pbAnki's inbox, and marks those highlights as reviewed; the plugin picks that up the next time you open the book in KOReader. Your reader's disk has silently lost freshly copied files before, so the app ejects and remounts it and reads the files back before saying they landed.
-
-A card with no answer stays out of the save. Before you save, the AI checks new cards against your collection and against each other. Clashes appear at the top of the Save screen, where you can edit either card, suspend the one you already have, dismiss the clash, jump back to its highlight, or save anyway.
-
-It writes only `applications/pbanki/inbox.jsonl`, `reviewed.jsonl` and `changes.jsonl`, plus a Book Companion or the plugin if you click the button for it. It never opens your collection for writing, because pbAnki on the reader applies the changes itself. A card that changed since you edited it is left alone and shown to you with both versions. It never changes KOReader's own files, and never starts anything on the reader.
-
-<p align="center"><img src="docs/screenshots/desktop/12-save-review.png" width="800" alt="The Save cards screen: every card to be saved, grouped by highlight, with the steps that happen when you save"></p>
-
-Click **Update plugin** on the Reader check screen once, so the plugin can read desktop saves. More in [desktop/PLAN.md](desktop/PLAN.md).
+To turn a whole book's highlights into cards at once, on a big screen, see [Highlights to Flashcards](https://github.com/ezuk/highlights-to-flashcards). It reads highlights from Readwise and the book from Calibre, and adds cards through AnkiWeb. When your collection has the `pbAnki KOReader` note type, it uses it, so those cards show their context here too.
 
 ## Install on a PocketBook
 
@@ -470,7 +423,6 @@ common/      App logic: Anki backend, card layout, KOReader inbox, settings
 dev/         Desktop build, the emulator and the KOReader screenshot runner
 ui/          Slint UI and the bundled JetBrains Mono font
 koreader/    KOReader plugin and its specs (lua koreader/spec/cardgen_spec.lua, prompts_spec.lua)
-desktop/     Desktop companion: local server, browser app and their tests
 pocketbook/  Device launcher, app icon and icon build script
 docs/        README screenshots and the script that renders them
 ```

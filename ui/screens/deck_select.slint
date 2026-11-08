@@ -180,8 +180,6 @@ export component DeckSelectScreen {
     in property <[DeckNode]> deck_nodes;
     in property <bool> syncing;
     in property <string> sync_message;
-    // What queued changes from the desktop app did
-    in property <string> sync_notice;
     in property <bool> sync_failed;
     in property <bool> sync_choice;
     in property <bool> sync_upload_ok;
@@ -214,9 +212,9 @@ export component DeckSelectScreen {
             }
         }
 
-        if sync_message != "" || sync_notice != "": SyncBar {
+        if sync_message != "": SyncBar {
             vertical-stretch: 0;
-            message: sync_notice == "" ? sync_message : sync_message == "" ? sync_notice : sync_notice + "\n" + sync_message;
+            message: sync_message;
             busy: syncing;
             failed: sync_failed;
             choice: sync_choice;

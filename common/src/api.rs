@@ -32,8 +32,6 @@ pub struct LearnSession {
     pub start_time: RefCell<Option<Instant>>,
     /// Suspensions made from the learn screen that undo may reverse
     pub user_suspensions: RefCell<u32>,
-    /// What the last queued changes from the desktop app did, until shown
-    pub change_notice: RefCell<Option<String>>,
     /// Folder holding the collection directory and the KOReader inbox.
     pub app_dir: PathBuf,
 }
@@ -76,7 +74,6 @@ pub fn init_session(config: &Config) -> Result<Rc<LearnSession>, String> {
         states: RefCell::new(None),
         start_time: RefCell::new(None),
         user_suspensions: RefCell::new(0),
-        change_notice: RefCell::new(None),
         app_dir: collection_dir
             .parent()
             .map(Path::to_path_buf)
@@ -164,7 +161,7 @@ pub fn setup_ui(ui: &MainWindow, config: &Config, hooks: PlatformHooks) {
     let ui_weak = ui.as_weak();
     ui.on_update_deck_tree(move || {
         if let Some(ui) = ui_weak.upgrade() {
-            refresh_deck_tree(&ui, &session_for_deck_tree);
+            ui.set_deck_tree(update_deck_tree(&session_for_deck_tree));
         }
     });
 
@@ -173,7 +170,7 @@ pub fn setup_ui(ui: &MainWindow, config: &Config, hooks: PlatformHooks) {
     ui.on_toggle_deck(move |deck| {
         toggle_deck(&session_for_toggle, &deck);
         if let Some(ui) = ui_weak.upgrade() {
-            refresh_deck_tree(&ui, &session_for_toggle);
+            ui.set_deck_tree(update_deck_tree(&session_for_toggle));
         }
     });
 
@@ -217,19 +214,10 @@ pub fn setup_ui(ui: &MainWindow, config: &Config, hooks: PlatformHooks) {
         }
     });
 
-    refresh_deck_tree(ui, &session);
+    ui.set_deck_tree(update_deck_tree(&session));
 }
 
-/// Updates the deck list and shows what queued changes just did.
-pub fn refresh_deck_tree(ui: &MainWindow, session: &LearnSession) {
-    ui.set_deck_tree(update_deck_tree(session));
-    if let Some(notice) = session.change_notice.borrow_mut().take() {
-        ui.set_sync_notice(notice.into());
-    }
-}
-
-/// Imports cards queued by the KOReader plugin and applies queued changes
-/// from the desktop app.
+/// Imports cards queued by the KOReader plugin.
 pub fn import_inbox(session: &LearnSession) {
     let mut col = session.collection.lock();
     match crate::inbox::import_inbox(&mut col, &session.app_dir) {
@@ -241,22 +229,6 @@ pub fn import_inbox(session: &LearnSession) {
         }
         Ok(_) => {}
         Err(e) => eprintln!("Inbox import failed: {e}"),
-    }
-    match crate::changes::apply_changes(&mut col, &session.app_dir) {
-        Ok(summary) => {
-            if summary.applied + summary.refused > 0 {
-                eprintln!(
-                    "Changes: {} applied, {} refused",
-                    summary.applied, summary.refused
-                );
-                // Undo on the study screen must not reverse a queued change
-                *session.user_suspensions.borrow_mut() = 0;
-            }
-            if let Some(notice) = summary.notice() {
-                *session.change_notice.borrow_mut() = Some(notice);
-            }
-        }
-        Err(e) => eprintln!("Applying changes failed: {e}"),
     }
 }
 
@@ -502,7 +474,7 @@ fn setup_settings(
         {
             let saved = crate::limits::set_daily_limits(&mut session.collection.lock(), limits);
             match saved {
-                Ok(()) => refresh_deck_tree(&ui, session),
+                Ok(()) => ui.set_deck_tree(update_deck_tree(session)),
                 Err(e) => eprintln!("Failed to save daily limits: {e}"),
             }
         }
